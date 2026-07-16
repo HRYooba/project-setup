@@ -6,5 +6,7 @@
   "author": {
     "name": "hryooba"
   },
+  "license": "MIT",
+  "repository": "https://github.com/hryooba/hryooba-setup",
   "keywords": ["claude-code", "setup", "github", "git-flow", "unity"]
 }
