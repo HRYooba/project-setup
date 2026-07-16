@@ -20,7 +20,8 @@
 //     - .github/workflows/agents-md-sync.yml（AGENTS.md 乖離の CI ガード。--no-verify や
 //       Web UI 編集などローカル pre-commit が効かない経路のドリフトを PR で検出）
 //     - .claude/settings.json へ PostToolUse(Bash) を登録
-//     - .claude/CLAUDE.md へレビュー運用ガイドを追記
+//     - （旧版が CLAUDE.md へ撒いた「## PR レビュー」節は再実行時に除去する。watch-pr の
+//       起動トリガーは after-pr-create.mjs の additionalContext に一本化）
 //
 // 使い方: node apply.mjs [target-dir] [--pr-copilot] [--review-targets=src,shared]
 //         [--review-excludes=.claude,.github]
@@ -330,18 +331,6 @@ if (prCopilot) {
 const claudeMdJoinSep = (content) =>
   content.endsWith("\n\n") ? "" : content.endsWith("\n") ? "\n" : "\n\n";
 
-// マーカー検知で冪等にセクションを追記する（created / already-present / appended）。
-function appendSection(mdPath, mark, section) {
-  if (!existsSync(mdPath)) {
-    writeFileSync(mdPath, section, "utf8");
-    return "created";
-  }
-  const content = readFileSync(mdPath, "utf8");
-  if (content.includes(mark)) return "already-present";
-  writeFileSync(mdPath, content + claudeMdJoinSep(content) + section, "utf8");
-  return "appended";
-}
-
 // `## 開発ワークフロー` 見出しの下へ箇条書きをマージ（冪等・単一見出し）。
 // bullets: [{ mark, text }]（mark = 冪等判定の一意な部分文字列 / text = 追記する 1 行）。
 // 返り値: { bullets: [{ mark, state }] }（state = "present" | "added"）。
@@ -408,11 +397,22 @@ const REVIEW_GUARD_LINES_OLD = [
 const BRANCH_BULLET =
   "- **ブランチ**: 実装前に必ずデフォルトブランチから作業ブランチを切る。デフォルトブランチへの直接コミット・直接 push は禁止。変更は必ず作業ブランチ経由の PR で入れる";
 
+// 旧 pr-copilot テンプレが CLAUDE.md へ撒いていた「## PR レビュー」節は配布を廃止した。
+// watch-pr の起動トリガーは after-pr-create.mjs hook の additionalContext のみ
+// （コード変更を含む PR に限る条件付き）。CLAUDE.md 側の無条件「PR 作成後 /watch-pr」は
+// hook のガードを迂回し、レビューが来ない PR への空監視（30 分 TIMEOUT）を生んでいた。
+// 「1 PR 1 回のみ」の制約は watch-pr skill 本体へ移した。ここでは配備済みの旧節を
+// 再実行時に除去する（旧テンプレと完全一致のときだけ。手編集された節は触らない）。
 const REVIEW_MARK = "**レビュー対応**:";
-const REVIEW_SECTION = `## PR レビュー
-
-**レビュー対応**: PR 作成後 \`/watch-pr\` でレビューを監視し、指摘があれば \`/resolve-pr\` で対応。\`/watch-pr\` は 1 PR につき 1 回のみ（Copilot は 1 PR に 1 回しかレビューしないため）
-`;
+// 旧文面の 2 形態を除去対象にする。節形（テンプレそのまま）と箇条書き形
+// （導入時に既存の「## 開発ワークフロー」節へ手動マージされた配備が実在する）。
+// 文面本体が完全一致するときだけ消す（それ以外の手編集は kept-custom で警告）。
+const REVIEW_LINE_OLD =
+  "\\*\\*レビュー対応\\*\\*: PR 作成後 `\\/watch-pr` でレビューを監視し、指摘があれば `\\/resolve-pr` で対応。`\\/watch-pr` は 1 PR につき 1 回のみ（Copilot は 1 PR に 1 回しかレビューしないため）";
+const REVIEW_SECTION_OLD_RES = [
+  new RegExp(`## PR レビュー\\r?\\n(?:\\r?\\n)?${REVIEW_LINE_OLD}(?:\\r?\\n)?`),
+  new RegExp(`^- ${REVIEW_LINE_OLD}\\r?\\n?`, "m"),
+];
 
 // 旧文面の移行: 旧テンプレのレビュー行を最新文面へ置き換える。
 // hook 本体は cpSync で毎回最新化されるため、案内文だけ古いまま残ると運用が食い違う。
@@ -428,6 +428,26 @@ if (existsSync(claudeMdPath)) {
   }
 }
 
+// 旧「## PR レビュー」節の除去移行（配布廃止の後始末。理由は REVIEW_SECTION_OLD_RES 上部を参照）。
+let reviewSectionState = null;
+if (existsSync(claudeMdPath)) {
+  const content = readFileSync(claudeMdPath, "utf8");
+  const matched = REVIEW_SECTION_OLD_RES.find((re) => re.test(content));
+  if (matched) {
+    const removed = content
+      .replace(matched, "")
+      .replace(/(\r?\n){3,}/g, "\n\n")
+      .replace(/(\r?\n)+$/, "\n");
+    writeFileSync(claudeMdPath, removed, "utf8");
+    reviewSectionState = "removed";
+  } else if (content.includes(REVIEW_MARK)) {
+    reviewSectionState = "kept-custom";
+    warnings.push(
+      "CLAUDE.md の「**レビュー対応**:」節が旧テンプレ文面と異なるため除去しませんでした（watch-pr の起動は hook 指示のみで行う方針です。無条件の「PR 作成後 /watch-pr」が残っていないか手動で確認してください）"
+    );
+  }
+}
+
 const workflow = upsertWorkflowSection(claudeMdPath, WORKFLOW_HEADING, [
   { mark: BRANCH_MARK, text: BRANCH_BULLET },
   { mark: REVIEW_GUARD_MARK, text: REVIEW_GUARD_LINE },
@@ -435,7 +455,7 @@ const workflow = upsertWorkflowSection(claudeMdPath, WORKFLOW_HEADING, [
 const wfState = (mark) => workflow.bullets.find((b) => b.mark === mark)?.state ?? "?";
 const claudeMdStates = [`ブランチ規約: ${wfState(BRANCH_MARK)}`];
 claudeMdStates.push(`レビュー必須: ${reviewLineMigrated ? "updated" : wfState(REVIEW_GUARD_MARK)}`);
-if (prCopilot) claudeMdStates.push(`レビュー運用: ${appendSection(claudeMdPath, REVIEW_MARK, REVIEW_SECTION)}`);
+if (reviewSectionState) claudeMdStates.push(`レビュー運用(旧節): ${reviewSectionState}`);
 
 // ---- 5. .claude/settings.json へのフック登録（マージ・冪等） ----
 const settingsPath = join(claudeDir, "settings.json");

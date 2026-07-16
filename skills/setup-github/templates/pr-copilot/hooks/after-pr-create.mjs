@@ -80,12 +80,17 @@ const requested = gh([
   "-f",
   "reviewers[]=copilot-pull-request-reviewer[bot]",
 ]);
-const copilotMsg =
-  requested !== null
-    ? `Copilot レビューを自動依頼しました。`
-    : `Copilot レビュー依頼に失敗しました（既に依頼済み等）。`;
+
+// 依頼に失敗した PR には Copilot レビューが来ないため、watch-pr を起動させない
+// （起動しても誰も来ない PR を 30 分ポーリングして TIMEOUT するだけ）。
+// 失敗の典型: リポジトリ/組織で Copilot code review が無効、権限不足。
+if (requested === null) {
+  emitContext(
+    `PR #${prNumber}: Copilot レビュー依頼に失敗しました（Copilot code review が無効・権限不足等の可能性）。レビューが来ないため watch-pr は起動しないでください。`
+  );
+}
 
 // 2. watch-pr 起動を促す
 emitContext(
-  `PR #${prNumber}: ${copilotMsg} 続けて watch-pr スキルを必ず起動してください: Skill(skill: "watch-pr", args: "${prNumber}")`
+  `PR #${prNumber}: Copilot レビューを自動依頼しました。続けて watch-pr スキルを必ず起動してください: Skill(skill: "watch-pr", args: "${prNumber}")`
 );

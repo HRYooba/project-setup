@@ -4,7 +4,7 @@ description: >
   PR作成後に Claude が自動で起動するスキル。
   Monitor ツールで PR のレビューをポーリング監視し、指摘があれば resolve-pr を自動実行する。
   PR番号またはURLを指定。
-version: 1.0.0
+version: 1.1.0
 user-invocable: false
 argument-hint: [PR番号 or URL]
 ---
@@ -23,11 +23,23 @@ argument-hint: [PR番号 or URL]
 Skill(skill: "watch-pr", args: "{pr_number}")
 ```
 
-## Step 1: PR 特定 + 開始時刻記録
+## 制約
+
+- **1 PR につき 1 回のみ**起動する。Copilot は 1 PR に 1 回しか自動レビューしないため、resolve-pr 対応後に再度 watch-pr を起動しない
+- 起動は原則 after-pr-create hook の指示による。指示が無い PR は Copilot レビュー対象外（コード変更なし等）なので自発的に起動しない
+
+## Step 1: PR 特定 + Copilot レビュアー確認 + 開始時刻記録
 
 1. **PR特定**: `gh pr view --json number,url` で自動検出、または引数から抽出
 2. **リポジトリ情報取得**: `gh repo view --json owner,name`
-3. **開始時刻記録**: `date -u +%Y-%m-%dT%H:%M:%SZ` → `{start_time}`
+3. **Copilot レビュアー確認**（監視前ガード）:
+
+   ```
+   gh api "repos/{owner}/{repo}/pulls/{pr}" --jq '[.requested_reviewers[].login | select(test("copilot"; "i"))] | length'
+   ```
+
+   結果が `0` なら「PR #{pr} に Copilot レビュアーが付いていないため監視しません」と報告して**ここで終了する**（Monitor を起動しない）。レビューが来ない PR を 30 分ポーリングする無駄を防ぐガード
+4. **開始時刻記録**: `date -u +%Y-%m-%dT%H:%M:%SZ` → `{start_time}`
 
 ---
 
