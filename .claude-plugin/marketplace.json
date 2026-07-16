@@ -1,0 +1,14 @@
+{
+  "name": "hryooba",
+  "description": "hryooba の Claude Code plugin marketplace",
+  "owner": {
+    "name": "hryooba"
+  },
+  "plugins": [
+    {
+      "name": "hryooba-setup",
+      "source": "./",
+      "description": "GitHub 開発フロー / Unity 開発規約を対象プロジェクトへ導入するセットアップ skill 集"
+    }
+  ]
+}

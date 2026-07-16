@@ -1,0 +1,46 @@
+#!/bin/sh
+# 保護ブランチ（default branch + develop）への直 push を拒否する pre-push hook。
+# setup-github が配布する。有効化は clone ごとに必要:
+#   git config core.hooksPath .githooks
+# （Claude Code 利用者は .claude/settings.json の SessionStart hook が自動で設定する）
+#
+# - 保護ブランチは実行時に検出する: origin/HEAD の指す default branch + develop
+#   （repo ごとの hardcode をしない。master 運用や develop 無しにも自動対応）
+# - リモートに存在しないブランチの初回 push（repo 初期化時の main 作成等）は許可
+# - 緊急時のスキップ: git push --no-verify
+
+# default branch を検出（origin/HEAD → 無ければ main/master へフォールバック）
+default_branch=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+if [ -z "$default_branch" ]; then
+  for b in main master; do
+    if git show-ref --verify --quiet "refs/remotes/origin/$b" || git show-ref --verify --quiet "refs/heads/$b"; then
+      default_branch=$b
+      break
+    fi
+  done
+fi
+
+# 検出失敗はフェイルオープン（default branch が保護されない）になるため、気付けるよう警告する
+if [ -z "$default_branch" ]; then
+  echo "pre-push: warning: default branch を特定できませんでした（保護対象が develop のみになっています）。'git remote set-head origin --auto' を実行してください。" >&2
+fi
+
+protected="$default_branch develop"
+
+zero=0000000000000000000000000000000000000000
+
+# stdin: <local ref> <local sha> <remote ref> <remote sha> が push 対象ごとに 1 行
+while read -r local_ref local_sha remote_ref remote_sha; do
+  branch=${remote_ref#refs/heads/}
+  [ "$branch" = "$remote_ref" ] && continue # ブランチ以外（タグ等）は対象外
+  [ "$remote_sha" = "$zero" ] && continue   # リモート新規作成（初回 push）は許可
+  for p in $protected; do
+    [ -z "$p" ] && continue
+    if [ "$branch" = "$p" ]; then
+      echo "pre-push: '$branch' への直 push は禁止されています。作業ブランチから PR を作成してください。" >&2
+      exit 1
+    fi
+  done
+done
+
+exit 0

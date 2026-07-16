@@ -1,0 +1,42 @@
+#!/bin/sh
+# AGENTS.md 自動同期 pre-commit hook（setup-github --pr-copilot が配布）。
+# .claude/rules/ のマーカー付きファイルから AGENTS.md を再生成し、変わっていれば stage する。
+# Copilot code review が読む AGENTS.md を rules と常に一致させるための仕組み。
+#
+# - 生成に失敗してもコミットは止めない（fail-open。コミットを人質にしない）
+# - 手書きの AGENTS.md は生成スクリプト側が検知して保護する（skipped を返す）
+# - 有効化は pre-push と同じ core.hooksPath=.githooks（SessionStart hook が自動設定）
+
+[ -f .githooks/generate-agents-md.mjs ] || exit 0
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: warning: node が無いため AGENTS.md を再生成できませんでした（.claude/rules との同期ズレに注意）" >&2
+  exit 0
+fi
+
+if status=$(node .githooks/generate-agents-md.mjs); then
+  # 機械判定は stdout の「先頭行」だけを見る。将来 generator が警告等を stdout に
+  # 足しても（先頭行が status でなくなる誤判定を避け）手書き保護分岐を守るため。
+  status=$(printf '%s\n' "$status" | head -n 1)
+  case "$status" in
+    skipped*)
+      # 手書き AGENTS.md（生成ヘッダー無し）は触らない
+      ;;
+    *)
+      # generated / unchanged を問わず毎回 add する（index と一致していれば no-op）。
+      # generated 限定にすると: `git commit -- <path>` 中は GIT_INDEX_FILE が一時 index を
+      # 指すため生成時の add が実 index に届かず、古い AGENTS.md が staged のまま残る。
+      # 次のコミットで生成器は working tree 比較により unchanged を返すので re-stage されず、
+      # staged の古い内容がコミットされて黙って巻き戻る。無条件 add なら次のコミットで
+      # index が同期され自己修復する。
+      git add AGENTS.md
+      case "$status" in
+        generated*) echo "pre-commit: AGENTS.md を再生成して stage しました" ;;
+      esac
+      ;;
+  esac
+else
+  echo "pre-commit: warning: AGENTS.md の生成に失敗しました（コミットは継続）" >&2
+fi
+
+exit 0

@@ -1,0 +1,48 @@
+# AGENTS.md 乖離ガード（setup-github --pr-copilot が配布）。
+#
+# AGENTS.md は .githooks/generate-agents-md.mjs が .claude/rules/ から機械生成する。
+# ローカルの .githooks/pre-commit が同期を担うが、次の経路では黙って乖離する:
+#   - git commit --no-verify
+#   - GitHub Web UI での直接編集
+#   - core.hooksPath を設定していない clone からのコミット
+#   - node が無い環境（pre-commit は fail-open）
+# 乖離すると Copilot code review が古い規約でレビューし続けるため、PR でも検証する。
+#
+# 失敗したら: ローカルで `node .githooks/generate-agents-md.mjs` を実行してコミットする。
+name: agents-md-sync
+
+# pull_request と push（保護ブランチ）の両方で走らせる。core.hooksPath 未設定の clone は
+# pre-commit も pre-push も効かないため、そこから保護ブランチへ直 push された乖離は PR を
+# 経ないと検出できない。push トリガーで直 push 経路も事後検出する（乖離が赤で可視化される）。
+on:
+  pull_request:
+    # 乖離が生じうる変更のときだけ走らせる（Actions 分数の節約）
+    paths:
+      - "AGENTS.md"
+      - ".claude/rules/**"
+      - ".githooks/generate-agents-md.mjs"
+  push:
+    branches: [main, master, develop]
+    paths:
+      - "AGENTS.md"
+      - ".claude/rules/**"
+      - ".githooks/generate-agents-md.mjs"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: AGENTS.md が .claude/rules と同期しているか検証
+        # generator は LF 固定出力・冪等（同一入力なら unchanged を返す）なので、
+        # 再生成して diff が出る＝コミット内容が rules と乖離している。
+        # git add -N で未追跡の AGENTS.md も diff 対象に含める（PR が AGENTS.md を削除した／
+        # マーカー付き rules を足したが AGENTS.md を未コミットのケースを取りこぼさない。
+        # git diff は既定で未追跡ファイルを報告しないため）。
+        run: |
+          node .githooks/generate-agents-md.mjs
+          git add -N -- AGENTS.md
+          if ! git diff --exit-code -- AGENTS.md; then
+            echo "::error::AGENTS.md が .claude/rules と乖離しています。ローカルで node .githooks/generate-agents-md.mjs を実行してコミットしてください"
+            exit 1
+          fi
