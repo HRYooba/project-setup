@@ -1,0 +1,2 @@
+# 配布テンプレートに CRLF を混入させない（githooks は CRLF だと shebang が壊れる環境がある）
+* text=auto eol=lf
