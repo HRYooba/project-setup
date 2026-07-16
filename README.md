@@ -1,4 +1,4 @@
-# hryooba-setup
+# project-setup
 
 Claude Code 用のプロジェクト初期セットアップ plugin。2 つの skill を提供する。
 
@@ -12,8 +12,8 @@ Claude Code 用のプロジェクト初期セットアップ plugin。2 つの s
 ## インストール
 
 ```
-/plugin marketplace add hryooba/hryooba-setup
-/plugin install hryooba-setup@hryooba
+/plugin marketplace add hryooba/project-setup
+/plugin install project-setup@hryooba
 ```
 
 scope は `user`（デフォルト）を推奨。全プロジェクトで skill が使えるようになる。
@@ -23,8 +23,8 @@ scope は `user`（デフォルト）を推奨。全プロジェクトで skill 
 対象プロジェクトを開いた Claude Code セッションで:
 
 ```
-/hryooba-setup:setup-github
-/hryooba-setup:setup-unity
+/project-setup:setup-github
+/project-setup:setup-unity
 ```
 
 または「GitHub 運用ルールを導入して」「Unity 規約を入れて」のように依頼する。
