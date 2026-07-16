@@ -9,7 +9,7 @@ description: >
   PR 自動レビュー3機能（Copilot 自動アサイン / watch-pr / resolve-pr）と
   AGENTS.md 自動生成（Copilot code review にプロジェクト規約を教える）の
   導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.5.0
+version: 1.6.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -45,7 +45,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ### Step 1: 導入先の確認とセットアップ質問
 
 - 引数があればそのディレクトリ、なければカレントを導入先とする
-- `git -C {target} remote get-url origin`（あれば `gh repo view --json nameWithOwner`）でリポジトリを確認し、想定どおりか報告する
+- `git -C {target} remote get-url origin`（あれば `gh repo view --json nameWithOwner,viewerPermission,deleteBranchOnMerge`）でリポジトリを確認し、想定どおりか報告する。`viewerPermission` が `ADMIN` かどうかで「ブランチ自動削除」の質問を出すかを決める（下表参照）
 - **セットアップ質問**: 下表の全項目を **AskUserQuestion 1 回にまとめて必ず確認**する。ユーザーからオプションフラグは受け取らない（依頼文に書かれていても、再実行でも質問は省略しない）。回答から Claude が apply.mjs のフラグを組み立てる。**再実行時は配備済みの現在値を先に調べ、「現在のまま維持」を推奨選択肢として先頭に置く**（回答次第で上書きはされるが、黙って消えることはない）。質問の直前に、調べた現状（リポジトリ・現在値・Copilot 可否）を本文テキストで提示する
 
 | 項目 | 質問内容 | 選択肢 | 現在値の調べ方（再実行時） |
@@ -53,8 +53,10 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 | PR 自動レビュー | Copilot 自動アサイン / watch-pr / resolve-pr / AGENTS.md 自動生成を入れるか。そのリポジトリで Copilot code review が使えるかを判断材料として添える。※導入済み（`after-pr-create.mjs` がある）なら、フラグ無し再実行でも apply.mjs が自動継承する | 入れる / 入れない | `.claude/hooks/after-pr-create.mjs` の有無 |
 | レビュー対象フォルダ | code-review 要求・Copilot アサインの対象フォルダを絞るか（ベンダーコードの一括導入 PR にレビューを要求しないための絞り込み）。質問前にリポジトリ構成を見て自作コードのフォルダ候補（例: `src` `shared`、Unity なら `Assets/App`）を挙げる | 候補フォルダ（multiSelect 可）/ 絞らない（全フォルダ対象） | `.claude/hooks/review-config.json` の `reviewTargets` |
 | レビュー除外フォルダ | 対象から常に外すフォルダ。デフォルトは `.claude/` `.github/` `.githooks/`（ツール設定系。setup-github の導入 PR を素通しする）。対象フォルダ指定より優先 | デフォルトのまま / 追加除外あり / 除外なし | `.claude/hooks/review-config.json` の `reviewExcludes` |
+| ブランチ自動削除 | PR マージ後に head ブランチを GitHub が自動削除するか（リポジトリ設定 `delete_branch_on_merge`）。**実行者が admin（`viewerPermission: ADMIN`）のときのみ質問する**（admin 以外は設定を変更できないため質問せず、現在値を Step 3 で報告するに留める）。ローカルに残る gone ブランチの掃除は git-refresh 等の運用側の役割である旨を判断材料として添える | 有効にする / 無効のまま（再実行時は現在値の維持を推奨選択肢に） | Step 1 で取得済みの `deleteBranchOnMerge` |
 
 - 回答 → フラグ変換: 「入れる」= `--pr-copilot` / フォルダ指定 = `--review-targets=<csv>` / 「絞らない」= `--review-targets=`（空値で明示解除。再実行時に旧値が温存されないように必ず明示する） / 除外の変更 = `--review-excludes=<csv>` / 「除外なし」= `--review-excludes=`（空値で明示解除） / 「デフォルトのまま」= フラグを渡さない（テンプレートのデフォルト or 配備済み値の温存）
+- ブランチ自動削除の回答は apply.mjs のフラグにはしない（GitHub API 設定でありファイル配置ではないため）。Step 2.5 で gh により反映する
 
 ### Step 2: インストール実行
 
@@ -62,9 +64,19 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 node "${CLAUDE_PLUGIN_ROOT}/skills/setup-github/apply.mjs" {target} [--pr-copilot] [--review-targets=src,shared]
 ```
 
+### Step 2.5: ブランチ自動削除の反映（admin で質問した場合のみ）
+
+回答が現在値（`deleteBranchOnMerge`）と異なるときだけ実行する:
+
+```bash
+gh repo edit {nameWithOwner} --delete-branch-on-merge         # 有効にする
+gh repo edit {nameWithOwner} --delete-branch-on-merge=false   # 無効へ戻す
+```
+
 ### Step 3: 結果報告
 
 apply.mjs の出力（配置ファイル・settings.json 登録状態・git 設定状態・警告）をそのまま伝える。
+ブランチ自動削除は設定結果（変更した / 現在値のまま / 非 admin のため現在値の報告のみ）を添える。
 併せて次を案内する:
 
 - 反映には**新しいセッションでの再読み込みが必要**（hook・skill・agent はセッション開始時に読み込まれる）
