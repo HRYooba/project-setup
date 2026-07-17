@@ -1,0 +1,73 @@
+name: release
+
+# skills/ または .claude-plugin/ 配下が変わる push（=マージ）ごとに、
+# Conventional Commits の type から semver を判定して plugin.json を更新し、
+# tag と GitHub Release を自動作成する。
+# バージョンは手で触らない（このワークフローだけが書き換える）。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "skills/**"
+      - ".claude-plugin/**"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # bump コミット自身では走らせない（[skip ci] が第一ガード、これは保険）
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: バンプ種別を判定（Conventional Commits）
+        id: bump
+        run: |
+          before="${{ github.event.before }}"
+          if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            msgs=$(git log --format=%s -1 "${{ github.sha }}")
+          else
+            msgs=$(git log --format=%s "$before..${{ github.sha }}")
+          fi
+          level=patch
+          if echo "$msgs" | grep -qE '^[a-z]+(\([^)]*\))?!:' || echo "$msgs" | grep -q 'BREAKING CHANGE'; then
+            level=major
+          elif echo "$msgs" | grep -qE '^feat(\([^)]*\))?:'; then
+            level=minor
+          fi
+          echo "level=$level" >> "$GITHUB_OUTPUT"
+
+      - name: plugin.json のバージョンを更新
+        id: ver
+        run: |
+          plugin_json=".claude-plugin/plugin.json"
+          cur=$(jq -r .version "$plugin_json")
+          ma=$(echo "$cur" | cut -d. -f1)
+          mi=$(echo "$cur" | cut -d. -f2)
+          pa=$(echo "$cur" | cut -d. -f3)
+          case "${{ steps.bump.outputs.level }}" in
+            major) ma=$((ma+1)); mi=0; pa=0 ;;
+            minor) mi=$((mi+1)); pa=0 ;;
+            *)     pa=$((pa+1)) ;;
+          esac
+          new="$ma.$mi.$pa"
+          jq --arg v "$new" '.version = $v' "$plugin_json" > "$plugin_json.tmp" && mv "$plugin_json.tmp" "$plugin_json"
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+
+      - name: コミット・タグ・Release 作成
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .claude-plugin/plugin.json
+          git commit -m "chore(release): v${v} [skip ci]"
+          git tag "v${v}"
+          git push origin HEAD:main --follow-tags
+          gh release create "v${v}" --generate-notes
