@@ -1,4 +1,5 @@
-// PreToolUse hook: PR 作成（gh pr create）前に code-review 済みかを確認する関門。
+// PreToolUse hook: PR 作成（gh pr create）前に code-review / security-review 済みかを
+// 確認する関門。
 //
 // 2 つの入口:
 //   - hook 実行（stdin に JSON）: gh pr create をブロック/許可する門番（下記仕様）。
@@ -13,9 +14,17 @@
 //     （これは Claude Code 側の仕様に依存する）。仮に if を素通りしても、下記
 //     PR_CREATE_ATTEMPT_RE による入口判定が二重の防波堤になる。
 //   - stdin(JSON) の transcript_path で会話ログを読み、「今回の PR 作業（＝直近の
-//     "成功した" gh pr create 以降）で /code-review が実行されたか」を判定する。
+//     "成功した" gh pr create 以降）で /code-review と /security-review が実行されたか」
+//     を判定する。
 //   - PR の diff にスクリプト/シェーダ等の "reviewable なコード" を含み、かつ
-//     未レビューなら permissionDecision:"deny" で PR 作成をブロックする。
+//     どちらかが未実行なら permissionDecision:"deny" で PR 作成をブロックする。
+//     不足分は 1 回の deny にまとめて提示する（レビュー種別ごとに別 hook / 別 deny に
+//     分けると「code-review を済ませて再試行 → 今度は security-review で deny」という
+//     二段の差し戻しになり、1 往復で済む修正が 2 往復になるため）。
+//   - security-review の要否判定は code-review と同一（lib/reviewable-files.mjs の
+//     isReviewableFile が唯一の基準）。docs のみ等のセキュリティ的に無意味な差分は
+//     コードレビュー同様に素通りする。判定を分けない理由: 「gate は要求するのに
+//     対象基準が食い違う」政策の不一致を作らないため（lib 冒頭コメントと同じ思想）。
 //
 // 合否は「実行の有無」だけ。effort は強制しない（重要）:
 //   以前は種別・規模から必要 effort を算出し、達成 effort の不足も deny していた。
@@ -240,8 +249,30 @@ function resultText(content) {
   return "";
 }
 
-// transcript を走査し「今回の PR 作業で /code-review が完了しているか」を返す。
-// 読めなければ false（安全側＝未レビュー扱い）。
+// 検出するレビュー種別。key は戻り値のフラグ名。
+//   skillRe: Skill ツールの skill 名 / slashRe: SlashCommand の command /
+//   typedRe: ユーザー手打ち（content が文字列の user メッセージ）。
+// 判定は「スキル名 / コマンド名そのものがレビューコマンドであること」に限定する。
+// input 全体や引数文字列に名前が含まれるだけの別コマンド（例: /create-issue
+// "code-review の max 対応"）を拾って幻のレビュー実績を作ってしまわないため。
+const REVIEW_KINDS = [
+  {
+    key: "codeReview",
+    skillRe: /(^|[:/])code-?review$/i,
+    slashRe: /^\s*\/?code-?review(\s|$)/i,
+    typedRe: /^\s*<command-name>\/?code-?review\b/i,
+  },
+  {
+    key: "securityReview",
+    skillRe: /(^|[:/])security-review$/i,
+    slashRe: /^\s*\/?security-review(\s|$)/i,
+    typedRe: /^\s*<command-name>\/?security-review\b/i,
+  },
+];
+
+// transcript を走査し「今回の PR 作業で各レビューが完了しているか」をレビュー種別ごとの
+// フラグ（{ codeReview, securityReview }）で返す。
+// 読めなければ全 false（安全側＝未レビュー扱い）。
 //
 // anchor（今回の PR 作業の起点）の決め方:
 //   gh pr create の試行を tool_result と突き合わせ、「成功した試行」（結果に PR URL が
@@ -258,15 +289,16 @@ function resultText(content) {
 //   Skill / SlashCommand 経由のレビューは、対応する tool_result が存在し
 //   is_error でないものだけを数える（ESC 中断・起動失敗を合格扱いしない）。
 //   手打ち /code-review（content が文字列の user メッセージ）もカウントする。
-function hasReviewSincePrCreate(transcriptPath) {
+function reviewsSincePrCreate(transcriptPath) {
+  const done = Object.fromEntries(REVIEW_KINDS.map((k) => [k.key, false]));
   let lines;
   try {
     lines = readFileSync(transcriptPath, "utf8").split(/\r?\n/);
   } catch {
-    return false;
+    return done;
   }
   const attempts = []; // { idx, id } — gh pr create 試行（deny された過去の試行も残る）
-  const reviews = []; // { idx, id } — code-review イベント（手打ちは id: null）
+  const reviews = []; // { idx, id, kind } — レビューイベント（手打ちは id: null）
   const results = new Map(); // tool_use_id → { error, text }
   lines.forEach((line, idx) => {
     if (!line) return;
@@ -277,17 +309,16 @@ function hasReviewSincePrCreate(transcriptPath) {
       return;
     }
     const content = obj?.message?.content;
-    // 手打ちの /code-review の検出。ユーザーが直接スラッシュコマンドを打った場合、
-    // transcript には tool_use ではなく「content が文字列の user メッセージ」
+    // 手打ちの /code-review・/security-review の検出。ユーザーが直接スラッシュコマンドを
+    // 打った場合、transcript には tool_use ではなく「content が文字列の user メッセージ」
     // （<command-name>/code-review</command-name> ... <command-args>max</command-args>）
     // として残る。これを見逃すと、手打ちレビュー済みでも未レビュー扱いで deny し続ける。
-    if (
-      obj?.message?.role === "user" &&
-      typeof content === "string" &&
-      /^\s*<command-name>\/?code-?review\b/i.test(content)
-    ) {
-      reviews.push({ idx, id: null });
-      return;
+    if (obj?.message?.role === "user" && typeof content === "string") {
+      const typed = REVIEW_KINDS.find((k) => k.typedRe.test(content));
+      if (typed) {
+        reviews.push({ idx, id: null, kind: typed.key });
+        return;
+      }
     }
     if (!Array.isArray(content)) return;
     for (const block of content) {
@@ -311,16 +342,14 @@ function hasReviewSincePrCreate(transcriptPath) {
       ) {
         attempts.push({ idx, id: block.id, command: input.command });
       }
-      // code-review の検出（Skill 実行 or SlashCommand）。
-      // 判定は「スキル名 / コマンド名そのものが code-review であること」に限定する。
-      // input 全体や引数文字列に "code-review" が含まれるだけの別コマンド
-      // （例: /create-issue "code-review の max 対応"）を拾って幻のレビュー実績を
-      // 作ってしまわないため。
-      if (
-        (name === "Skill" && /(^|[:/])code-?review$/i.test(String(input.skill || "").trim())) ||
-        (name === "SlashCommand" && /^\s*\/?code-?review(\s|$)/i.test(String(input.command || "")))
-      ) {
-        reviews.push({ idx, id: block.id || null });
+      // レビューの検出（Skill 実行 or SlashCommand）。名前限定の理由は REVIEW_KINDS を参照。
+      const kind = REVIEW_KINDS.find(
+        (k) =>
+          (name === "Skill" && k.skillRe.test(String(input.skill || "").trim())) ||
+          (name === "SlashCommand" && k.slashRe.test(String(input.command || "")))
+      );
+      if (kind) {
+        reviews.push({ idx, id: block.id || null, kind: kind.key });
       }
     }
   });
@@ -339,15 +368,16 @@ function hasReviewSincePrCreate(transcriptPath) {
   // 直近の成功試行を anchor にする。成功が無ければ anchor 無し（セッション全体）。
   while (attempts.length && !succeeded(attempts[attempts.length - 1])) attempts.pop();
   const anchor = attempts.length ? attempts[attempts.length - 1].idx : -1;
-  // anchor 以降に「完了した」レビューが 1 つでもあれば合格。
-  return reviews.some((r) => {
-    if (r.idx <= anchor) return false;
+  // anchor 以降に「完了した」レビューがあれば、その種別を合格にする。
+  for (const r of reviews) {
+    if (r.idx <= anchor) continue;
     if (r.id !== null) {
       const res = results.get(r.id);
-      if (!res || res.error) return false; // 中断・起動失敗は数えない
+      if (!res || res.error) continue; // 中断・起動失敗は数えない
     }
-    return true;
-  });
+    done[r.kind] = true;
+  }
+  return done;
 }
 
 // ---- 照会モード: node pr-code-review-gate.mjs --required [--base <branch>] ----
@@ -383,10 +413,13 @@ try {
 const command = data?.tool_input?.command || "";
 if (!PR_CREATE_ATTEMPT_RE.test(command)) allow(); // gh pr create 以外は無関係
 
-// レビュー済み判定を先に行う（レビュー済みなら通すので、その場合 git を一切叩かない）。
-// 未レビューの初回 gh pr create でだけ detectBase / git diff の spawn を払う。
+// レビュー済み判定を先に行う（全レビュー済みなら通すので、その場合 git を一切叩かない）。
+// 不足がある初回 gh pr create でだけ detectBase / git diff の spawn を払う。
 const transcriptPath = data?.transcript_path || "";
-if (transcriptPath && hasReviewSincePrCreate(transcriptPath)) allow(); // レビュー済みなら通す
+const reviews = transcriptPath
+  ? reviewsSincePrCreate(transcriptPath)
+  : Object.fromEntries(REVIEW_KINDS.map((k) => [k.key, false])); // path 不明は安全側＝未実行扱い
+if (reviews.codeReview && reviews.securityReview) allow(); // 両レビュー済みなら通す
 
 const cwd = data?.cwd || process.cwd();
 const base = detectBase(cwd, command);
@@ -394,10 +427,18 @@ const { files, lines } = changedStats(cwd, base);
 const summary = summarize(files);
 if (!summary.hasScript) allow(); // レビュー対象コードを含まない PR は素通り
 
-// 未レビュー: 推奨 effort（種別 base ＋ 規模の加算）を添えて差し戻す。
-const { reco, note } = recommendation(summary, lines);
+// 不足レビューをまとめて 1 回で差し戻す（code-review には推奨 effort を添える）。
+const missing = [];
+if (!reviews.codeReview) {
+  const { reco, note } = recommendation(summary, lines);
+  missing.push(`\`/code-review ${reco}\`（推奨 effort: ${reco}。${note}）`);
+}
+if (!reviews.securityReview) {
+  missing.push("`/security-review`（セキュリティレビュー。引数なし）");
+}
 
 deny(
-  `この PR にはレビュー対象のコード変更（.cs/.ts/shader やスクリプト等）が含まれますが、今回の PR 作業で /code-review が実行されていません。` +
-    `\`/code-review ${reco}\` を実行し（推奨 effort: ${reco}。${note}）、指摘に対応してから PR 作成を再実行してください。`
+  `この PR にはレビュー対象のコード変更（.cs/.ts/shader やスクリプト等）が含まれますが、` +
+    `今回の PR 作業で次のレビューが実行されていません: ${missing.join(" と ")}。` +
+    `不足分をすべて実行し、指摘に対応してから PR 作成を再実行してください。`
 );
