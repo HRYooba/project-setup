@@ -4,11 +4,11 @@
 //
 //   base（常時）:
 //     - .githooks/pre-push（保護ブランチへの直 push 拒否。全ツール対象・実行時にブランチ検出）
-//     - .claude/hooks/pr-code-review-gate.mjs（PR 作成前の code-review 門番。CR_GATE_DISABLE=1 で一時無効化可）
+//     - .claude/hooks/pr-code-review-gate.mjs（PR 作成前の code-review / security-review 門番。CR_GATE_DISABLE=1 で一時無効化可）
 //     - .claude/hooks/code-review-effort-nudge.mjs（effort 未指定の /code-review 起動を差し戻し、推奨 effort を提示）
 //     - .claude/rules/git-conventions.md（templates/base/rules の同梱スナップショットをコピー）
 //     - .claude/skills/create-issue/（templates/base/skills の同梱スナップショットをコピー）
-//     - .claude/CLAUDE.md へブランチ規約を追記
+//     - .claude/CLAUDE.md へブランチ規約とレビュー（code-review / security-review）の運用を追記
 //     - .claude/settings.json へ gate(PreToolUse) と hooksPath 自動設定(SessionStart) を登録
 //     - 実行者の clone へ core.hooksPath を即時設定 + pre-push へ exec bit 付与（mac/linux 対策）
 //
@@ -396,6 +396,9 @@ const REVIEW_GUARD_LINES_OLD = [
 ];
 const BRANCH_BULLET =
   "- **ブランチ**: 実装前に必ずデフォルトブランチから作業ブランチを切る。デフォルトブランチへの直接コミット・直接 push は禁止。変更は必ず作業ブランチ経由の PR で入れる";
+const SECURITY_GUARD_MARK = "**セキュリティレビュー**:";
+const SECURITY_GUARD_LINE =
+  "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する（コード変更を含む PR での実行漏れは PR 作成時にブロック）";
 
 // 旧 pr-copilot テンプレが CLAUDE.md へ撒いていた「## PR レビュー」節は配布を廃止した。
 // watch-pr の起動トリガーは after-pr-create.mjs hook の additionalContext のみ
@@ -451,10 +454,12 @@ if (existsSync(claudeMdPath)) {
 const workflow = upsertWorkflowSection(claudeMdPath, WORKFLOW_HEADING, [
   { mark: BRANCH_MARK, text: BRANCH_BULLET },
   { mark: REVIEW_GUARD_MARK, text: REVIEW_GUARD_LINE },
+  { mark: SECURITY_GUARD_MARK, text: SECURITY_GUARD_LINE },
 ]);
 const wfState = (mark) => workflow.bullets.find((b) => b.mark === mark)?.state ?? "?";
 const claudeMdStates = [`ブランチ規約: ${wfState(BRANCH_MARK)}`];
 claudeMdStates.push(`レビュー必須: ${reviewLineMigrated ? "updated" : wfState(REVIEW_GUARD_MARK)}`);
+claudeMdStates.push(`セキュリティレビュー必須: ${wfState(SECURITY_GUARD_MARK)}`);
 if (reviewSectionState) claudeMdStates.push(`レビュー運用(旧節): ${reviewSectionState}`);
 
 // ---- 5. .claude/settings.json へのフック登録（マージ・冪等） ----
