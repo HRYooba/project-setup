@@ -114,6 +114,39 @@ function git(...a) {
   }
 }
 
+// このプラグインの現行版を読む（`.claude-plugin/plugin.json`）。apply.mjs は
+// skills/setup-github/ にあるので plugin root は 2 つ上。cache 版（.../<version>/skills/...）でも
+// dev repo（project-setup/skills/...）でも同じ相対で当たる。読めなければ null。
+function readPluginVersion() {
+  try {
+    const pj = JSON.parse(
+      readFileSync(join(here, "..", "..", ".claude-plugin", "plugin.json"), "utf8").replace(/^﻿/, "")
+    );
+    return typeof pj.version === "string" ? pj.version : null;
+  } catch {
+    return null;
+  }
+}
+
+// 状態ファイル `.claude/.setup-sync.json` へ自分のキー（skillKey）をマージ更新する。
+// setup-github / setup-unity が同じファイルに各自のキーで書くため、相手のキーや未知フィールドは
+// 消さない（読み → 該当キーだけ差し替え → 書き戻し）。SessionStart hook（setup-sync-check.mjs）が
+// このファイルの記録版と現行版を比較して、更新時に無人同期を促す。
+function writeSyncState(skillKey, version, flags) {
+  const p = join(claudeDir, ".setup-sync.json");
+  let obj = {};
+  if (existsSync(p)) {
+    try {
+      const parsed = JSON.parse(readFileSync(p, "utf8").replace(/^﻿/, ""));
+      if (parsed && typeof parsed === "object") obj = parsed;
+    } catch {
+      warnings.push(".setup-sync.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）");
+    }
+  }
+  obj[skillKey] = { version, flags };
+  writeFileSync(p, JSON.stringify(obj, null, 2) + "\n", "utf8");
+}
+
 // ---- 1. base テンプレートのコピー ----
 mkdirSync(claudeDir, { recursive: true });
 
@@ -206,6 +239,7 @@ cpSync(join(templatesDir, "base", "hooks"), join(claudeDir, "hooks"), { recursiv
 copied.push(
   ".claude/hooks/pr-code-review-gate.mjs",
   ".claude/hooks/code-review-effort-nudge.mjs",
+  ".claude/hooks/setup-sync-check.mjs",
   ".claude/hooks/lib/reviewable-files.mjs"
 );
 
@@ -568,6 +602,21 @@ if (settingsReadable) {
     },
   });
 
+  register("SessionStart", {
+    label: "setup-sync-check.mjs",
+    owns: (cmd) => cmd.includes("setup-sync-check.mjs"),
+    entry: {
+      hooks: [
+        {
+          type: "command",
+          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/setup-sync-check.mjs"',
+          // 差が無ければ即 exit する軽量比較のみ。念のため短めのタイムアウトを付ける。
+          timeout: 10,
+        },
+      ],
+    },
+  });
+
   if (prCopilot) {
     register("PostToolUse", {
       label: "after-pr-create.mjs",
@@ -590,6 +639,28 @@ if (settingsReadable) {
   if (settingsChanged) {
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
   }
+}
+
+// ---- 5b. 状態ファイル .setup-sync.json の書き込み ----
+// 適用時のプラグイン版と有効フラグを記録する。SessionStart hook がこれと現行版を比較し、
+// 更新時に無人同期（worktree サブエージェント）を促す。フラグは「有効値」を明示保存する
+// （配備済み設定からの継承に依存せず、無人再適用が決定的に同じ構成を再現できるように）。
+const syncStates = [];
+const pluginVersion = readPluginVersion();
+if (pluginVersion) {
+  // csv 化は末尾スラッシュを外して可読性を上げる（apply.mjs 側の normTarget が付け直す）。
+  const csv = (arr) => arr.map((s) => s.replace(/\/+$/, "")).join(",");
+  const syncFlags = [];
+  if (prCopilot) syncFlags.push("--pr-copilot");
+  syncFlags.push(`--review-targets=${csv(effectiveTargets)}`);
+  syncFlags.push(`--review-excludes=${csv(effectiveExcludes)}`);
+  writeSyncState("setup-github", pluginVersion, syncFlags);
+  copied.push(".claude/.setup-sync.json");
+  syncStates.push(`setup-github v${pluginVersion}（flags: ${syncFlags.join(" ") || "なし"}）`);
+} else {
+  warnings.push(
+    ".claude-plugin/plugin.json のバージョンを読めなかったため .setup-sync.json を書きませんでした（テンプレ自動追随は無効のまま）"
+  );
 }
 
 // ---- 6. git 操作: 実行者の clone へ即時 opt-in + pre-push の exec bit ----
@@ -648,6 +719,10 @@ console.log("settings.json:");
 for (const s of hookStates) console.log(`  - ${s}`);
 console.log("git:");
 for (const s of gitStates) console.log(`  - ${s}`);
+if (syncStates.length) {
+  console.log("状態ファイル(.setup-sync.json):");
+  for (const s of syncStates) console.log(`  - ${s}`);
+}
 if (agentsState) {
   console.log("AGENTS.md:");
   console.log(`  - ${agentsState}`);

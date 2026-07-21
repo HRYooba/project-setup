@@ -21,7 +21,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const HOOKS_DIR = join(here, "..", "skills", "setup-github", "templates", "base", "hooks");
 export const GATE = join(HOOKS_DIR, "pr-code-review-gate.mjs");
 export const NUDGE = join(HOOKS_DIR, "code-review-effort-nudge.mjs");
+export const SYNC_HOOK = join(HOOKS_DIR, "setup-sync-check.mjs");
 export const APPLY = join(here, "..", "skills", "setup-github", "apply.mjs");
+export const APPLY_UNITY = join(here, "..", "skills", "setup-unity", "apply.mjs");
 
 export function tempDir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
