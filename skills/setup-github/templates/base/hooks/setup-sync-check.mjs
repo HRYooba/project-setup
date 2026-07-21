@@ -18,7 +18,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-/* global process */
+/* global process, Buffer */
 
 function done() {
   process.exit(0);
@@ -39,6 +39,12 @@ function emitContext(text) {
 // 誤動作時の一時無効化。
 if (process.env.SETUP_SYNC_DISABLE === "1") done();
 
+// 先頭 BOM（U+FEFF）を除去する。正規表現にリテラル BOM を書くと eslint の
+// no-irregular-whitespace に触れるため、コードポイント比較で剥がす。
+function stripBom(s) {
+  return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
+}
+
 // "1.2.0" 同士を数値比較。a > b で正。パースできない値（"unknown" 等）は 0.0.0 扱い。
 function cmpVer(a, b) {
   const pa = String(a).split(".").map((n) => parseInt(n, 10));
@@ -53,7 +59,7 @@ function cmpVer(a, b) {
 
 function readJson(path) {
   try {
-    return JSON.parse(readFileSync(path, "utf8").replace(/^﻿/, ""));
+    return JSON.parse(stripBom(readFileSync(path, "utf8")));
   } catch {
     return null;
   }
@@ -68,7 +74,7 @@ async function readStdin() {
 // ---- 1. プロジェクトディレクトリの解決 ----
 let stdin = {};
 try {
-  stdin = JSON.parse((await readStdin()).replace(/^﻿/, "")) || {};
+  stdin = JSON.parse(stripBom(await readStdin())) || {};
 } catch {
   stdin = {};
 }
@@ -93,9 +99,9 @@ if (!key) done();
 const entries = installed.plugins[key];
 if (!Array.isArray(entries) || entries.length === 0) done();
 // 複数エントリ（scope 違い等）は最終更新が新しいものを採用。
-const entry = entries.slice().sort((a, b) =>
-  String(b.lastUpdated || "").localeCompare(String(a.lastUpdated || ""))
-)[0];
+const entry = entries
+  .slice()
+  .sort((a, b) => String(b.lastUpdated || "").localeCompare(String(a.lastUpdated || "")))[0];
 const installPath = entry.installPath;
 let currentVersion = entry.version;
 // version が "unknown"/欠落なら installPath の plugin.json から読む。
