@@ -1,7 +1,8 @@
 name: test
 
-# hook（PR 前門番・effort nudge）と apply.mjs のユニットテスト。
-# 依存なし（Node 標準の test runner）なので checkout + node のみで走る。
+# lint（eslint）とユニットテスト（Node 標準の test runner）。
+# eslint はテンプレート .mjs（配備先へコピーされる hook / installer）が配備先の CI を
+# 壊さないよう source 側で検証する。テスト対象は hook（PR 前門番・effort nudge）と apply.mjs。
 
 on:
   pull_request:
@@ -16,4 +17,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --test "tests/*.test.mjs"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test

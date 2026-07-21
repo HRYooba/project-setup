@@ -16,6 +16,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+/* global process, console */
 
 // `## 開発ワークフロー` 見出しの下へ箇条書きをマージする（冪等・単一見出し）。
 // bullets: [{ mark, text }]（mark = 冪等判定の一意な部分文字列 / text = 追記する 1 行）。
@@ -267,7 +268,7 @@ if (pluginVersion) {
 function readPluginVersion() {
   try {
     const pj = JSON.parse(
-      readFileSync(join(here, "..", "..", ".claude-plugin", "plugin.json"), "utf8").replace(/^﻿/, "")
+      readFileSync(join(here, "..", "..", ".claude-plugin", "plugin.json"), "utf8").replace(/^\uFEFF/, "")
     );
     return typeof pj.version === "string" ? pj.version : null;
   } catch {
@@ -282,7 +283,7 @@ function writeSyncState(skillKey, version, flags) {
   let obj = {};
   if (existsSync(p)) {
     try {
-      const parsed = JSON.parse(readFileSync(p, "utf8").replace(/^﻿/, ""));
+      const parsed = JSON.parse(readFileSync(p, "utf8").replace(/^\uFEFF/, ""));
       if (parsed && typeof parsed === "object") obj = parsed;
     } catch {
       console.log("注意: setup-sync-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）。");

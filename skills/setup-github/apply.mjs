@@ -45,6 +45,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+/* global process, console */
 
 const here = dirname(fileURLToPath(import.meta.url));
 const templatesDir = join(here, "templates");
@@ -120,7 +121,7 @@ function git(...a) {
 function readPluginVersion() {
   try {
     const pj = JSON.parse(
-      readFileSync(join(here, "..", "..", ".claude-plugin", "plugin.json"), "utf8").replace(/^﻿/, "")
+      readFileSync(join(here, "..", "..", ".claude-plugin", "plugin.json"), "utf8").replace(/^\uFEFF/, "")
     );
     return typeof pj.version === "string" ? pj.version : null;
   } catch {
@@ -137,7 +138,7 @@ function writeSyncState(skillKey, version, flags) {
   let obj = {};
   if (existsSync(p)) {
     try {
-      const parsed = JSON.parse(readFileSync(p, "utf8").replace(/^﻿/, ""));
+      const parsed = JSON.parse(readFileSync(p, "utf8").replace(/^\uFEFF/, ""));
       if (parsed && typeof parsed === "object") obj = parsed;
     } catch {
       warnings.push("setup-sync-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）");
@@ -165,7 +166,7 @@ const libPath = join(claudeDir, "hooks", "lib", "reviewable-files.mjs");
 function readDeployedConfig() {
   if (!existsSync(configPath)) return null;
   try {
-    const cfg = JSON.parse(readFileSync(configPath, "utf8").replace(/^﻿/, ""));
+    const cfg = JSON.parse(readFileSync(configPath, "utf8").replace(/^\uFEFF/, ""));
     return {
       targets: Array.isArray(cfg.reviewTargets)
         ? cfg.reviewTargets.map(normTarget).filter(Boolean)
@@ -502,7 +503,7 @@ let settings = {};
 let settingsReadable = true;
 if (existsSync(settingsPath)) {
   try {
-    settings = JSON.parse(readFileSync(settingsPath, "utf8").replace(/^﻿/, ""));
+    settings = JSON.parse(readFileSync(settingsPath, "utf8").replace(/^\uFEFF/, ""));
   } catch {
     settingsReadable = false;
     warnings.push(`settings.json が不正な JSON のためフック登録をスキップしました: ${settingsPath}`);
