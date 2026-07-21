@@ -128,19 +128,19 @@ function readPluginVersion() {
   }
 }
 
-// 状態ファイル `.claude/.setup-sync.json` へ自分のキー（skillKey）をマージ更新する。
+// 状態ファイル `.claude/setup-sync-state.json` へ自分のキー（skillKey）をマージ更新する。
 // setup-github / setup-unity が同じファイルに各自のキーで書くため、相手のキーや未知フィールドは
 // 消さない（読み → 該当キーだけ差し替え → 書き戻し）。SessionStart hook（setup-sync-check.mjs）が
 // このファイルの記録版と現行版を比較して、更新時に無人同期を促す。
 function writeSyncState(skillKey, version, flags) {
-  const p = join(claudeDir, ".setup-sync.json");
+  const p = join(claudeDir, "setup-sync-state.json");
   let obj = {};
   if (existsSync(p)) {
     try {
       const parsed = JSON.parse(readFileSync(p, "utf8").replace(/^﻿/, ""));
       if (parsed && typeof parsed === "object") obj = parsed;
     } catch {
-      warnings.push(".setup-sync.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）");
+      warnings.push("setup-sync-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）");
     }
   }
   obj[skillKey] = { version, flags };
@@ -641,7 +641,7 @@ if (settingsReadable) {
   }
 }
 
-// ---- 5b. 状態ファイル .setup-sync.json の書き込み ----
+// ---- 5b. 状態ファイル setup-sync-state.json の書き込み ----
 // 適用時のプラグイン版と有効フラグを記録する。SessionStart hook がこれと現行版を比較し、
 // 更新時に無人同期（worktree サブエージェント）を促す。フラグは「有効値」を明示保存する
 // （配備済み設定からの継承に依存せず、無人再適用が決定的に同じ構成を再現できるように）。
@@ -655,11 +655,11 @@ if (pluginVersion) {
   syncFlags.push(`--review-targets=${csv(effectiveTargets)}`);
   syncFlags.push(`--review-excludes=${csv(effectiveExcludes)}`);
   writeSyncState("setup-github", pluginVersion, syncFlags);
-  copied.push(".claude/.setup-sync.json");
+  copied.push(".claude/setup-sync-state.json");
   syncStates.push(`setup-github v${pluginVersion}（flags: ${syncFlags.join(" ") || "なし"}）`);
 } else {
   warnings.push(
-    ".claude-plugin/plugin.json のバージョンを読めなかったため .setup-sync.json を書きませんでした（テンプレ自動追随は無効のまま）"
+    ".claude-plugin/plugin.json のバージョンを読めなかったため setup-sync-state.json を書きませんでした（テンプレ自動追随は無効のまま）"
   );
 }
 
@@ -720,7 +720,7 @@ for (const s of hookStates) console.log(`  - ${s}`);
 console.log("git:");
 for (const s of gitStates) console.log(`  - ${s}`);
 if (syncStates.length) {
-  console.log("状態ファイル(.setup-sync.json):");
+  console.log("状態ファイル(setup-sync-state.json):");
   for (const s of syncStates) console.log(`  - ${s}`);
 }
 if (agentsState) {

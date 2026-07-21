@@ -1,6 +1,6 @@
 // SessionStart hook: setup-github / setup-unity テンプレートの更新を検知する。
 //
-// 対象プロジェクトの `.claude/.setup-sync.json`（apply.mjs が記録した適用時のプラグイン版と
+// 対象プロジェクトの `.claude/setup-sync-state.json`（apply.mjs が記録した適用時のプラグイン版と
 // フラグ）と、いまインストールされている project-setup プラグインの現行版を比較する。
 // 現行版のほうが新しければ additionalContext で「バックグラウンドの worktree 分離サブエージェントを
 // 起動し、保存フラグで apply.mjs を無人適用 → commit → push → PR 作成（merge はしない）」を促す。
@@ -81,7 +81,7 @@ try {
 const projectDir = process.env.CLAUDE_PROJECT_DIR || stdin.cwd || process.cwd();
 
 // ---- 2. 状態ファイル ----
-const statePath = join(projectDir, ".claude", ".setup-sync.json");
+const statePath = join(projectDir, ".claude", "setup-sync-state.json");
 if (!existsSync(statePath)) done(); // 未セットアップ or バックフィル前 → 対象外
 const state = readJson(statePath);
 if (!state || typeof state !== "object") done(); // 壊れた状態ファイルは黙って無視（毎回煽らない）

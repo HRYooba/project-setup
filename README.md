@@ -13,7 +13,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。2 つの s
 
 プラグインのテンプレートを更新すると、展開済みの各プロジェクトへ手作業で「更新を適用して」と個別依頼する運用になりがちだった。これを自動化する:
 
-- apply.mjs は適用時のプラグイン版と有効フラグを `.claude/.setup-sync.json` に記録する（setup-github / setup-unity が同じファイルへ各自のキーでマージ）。
+- apply.mjs は適用時のプラグイン版と有効フラグを `.claude/setup-sync-state.json` に記録する（setup-github / setup-unity が同じファイルへ各自のキーでマージ）。
 - setup-github が配る SessionStart hook `setup-sync-check.mjs` が、セッション開始時にこの記録版と現行プラグイン版を比較する（差が無ければ即終了）。
 - 現行版が新しければ、`isolation: worktree` のバックグラウンドサブエージェントが保存フラグで apply.mjs を無人適用し、commit → push → **PR 作成まで**を自動で行う。**merge は人間が行う**（PR diff で戻し・警告を確認できる）。
 - 重複 PR 防止（`gh pr list`）と暴走防止（同一版 最大2回）を備える。無効化は環境変数 `SETUP_SYNC_DISABLE=1`。
