@@ -146,7 +146,7 @@ function readPluginVersion() {
 // 状態ファイル `.claude/setup-sync-state.json` へ自分のキー（skillKey）をマージ更新する。
 // setup-github / setup-unity が同じファイルに各自のキーで書くため、相手のキーや未知フィールドは
 // 消さない（読み → 該当キーだけ差し替え → 書き戻し）。SessionStart hook（setup-sync-check.mjs）が
-// このファイルの記録版と現行版を比較して、更新時に無人同期を促す。
+// このファイルの記録版と現行版を比較して、更新時に `/setup-sync`（sync-run.mjs）の実行を促す。
 function writeSyncState(skillKey, version, flags) {
   const p = join(claudeDir, "setup-sync-state.json");
   let obj = {};
@@ -713,7 +713,7 @@ if (settingsReadable) {
 
 // ---- 5b. 状態ファイル setup-sync-state.json の書き込み ----
 // 適用時のプラグイン版と有効フラグを記録する。SessionStart hook がこれと現行版を比較し、
-// 更新時に無人同期（worktree サブエージェント）を促す。フラグは「有効値」を明示保存する
+// 更新時に `/setup-sync`（sync-run.mjs）の実行を促す。フラグは「有効値」を明示保存する
 // （配備済み設定からの継承に依存せず、無人再適用が決定的に同じ構成を再現できるように）。
 const syncStates = [];
 const pluginVersion = readPluginVersion();
