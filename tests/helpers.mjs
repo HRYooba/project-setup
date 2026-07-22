@@ -51,12 +51,15 @@ export function toolResult(id, text, isError = false) {
 }
 
 // ユーザー手打ちのスラッシュコマンド（tool_use を経由しない形）。
+// 新しめの Claude Code は content 先頭へ <command-message> を前置きする（実測）。
+// gate の typedRe はこの前置きの有無に依存しないが、テストは実形式に合わせておく。
 export function typedCommand(commandName, args = "") {
+  const bare = commandName.replace(/^\//, "");
   return JSON.stringify({
     type: "user",
     message: {
       role: "user",
-      content: `<command-name>${commandName}</command-name>\n<command-args>${args}</command-args>`,
+      content: `<command-message>${bare}</command-message>\n<command-name>${commandName}</command-name>\n<command-args>${args}</command-args>`,
     },
   });
 }

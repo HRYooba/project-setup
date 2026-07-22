@@ -4,12 +4,16 @@
 //
 //   base（常時）:
 //     - .githooks/pre-push（保護ブランチへの直 push 拒否。全ツール対象・実行時にブランチ検出）
-//     - .claude/hooks/pr-code-review-gate.mjs（PR 作成前の code-review / security-review 門番。CR_GATE_DISABLE=1 で一時無効化可）
-//     - .claude/hooks/code-review-effort-nudge.mjs（effort 未指定の /code-review 起動を差し戻し、推奨 effort を提示）
+//     - .claude/hooks/pr-code-review-gate.mjs（PR 作成前 gate。ファイルは配るが settings.json
+//       からは登録解除して休眠させる。手動再登録で再有効化可。CR_GATE_DISABLE=1 で無効化可）
+//     - .claude/hooks/code-review-effort-nudge.mjs（同上・休眠。code-review がユーザー手打ち
+//       専用になり Claude 発の起動を前提にした nudge は発火しないため）
 //     - .claude/rules/git-conventions.md（templates/base/rules の同梱スナップショットをコピー）
 //     - .claude/skills/create-issue/（templates/base/skills の同梱スナップショットをコピー）
-//     - .claude/CLAUDE.md へブランチ規約とレビュー（code-review / security-review）の運用を追記
-//     - .claude/settings.json へ gate(PreToolUse) と hooksPath 自動設定(SessionStart) を登録
+//     - .claude/CLAUDE.md へブランチ規約と PR 前レビュー運用（/simplify + /security-review の
+//       ソフト運用。強制はしない）を追記
+//     - .claude/settings.json へ hooksPath 自動設定(SessionStart) とテンプレ追随(SessionStart)を
+//       登録し、旧版が撒いた gate/nudge(PreToolUse) を登録解除する
 //     - 実行者の clone へ core.hooksPath を即時設定 + pre-push へ exec bit 付与（mac/linux 対策）
 //
 //   --pr-copilot（任意）:
@@ -420,20 +424,31 @@ const claudeMdPath = join(claudeDir, "CLAUDE.md");
 
 const WORKFLOW_HEADING = "## 開発ワークフロー";
 const BRANCH_MARK = "**ブランチ**:";
-const REVIEW_GUARD_MARK = "**レビュー**:";
-const REVIEW_GUARD_LINE =
-  "- **レビュー**: PR 作成前（変更コミット後）に `node .claude/hooks/pr-code-review-gate.mjs --required` で推奨 effort を確認し、`/code-review <effort>` と effort を明示して 1 回実行する（effort 未指定の起動は hook が差し戻す。実行漏れは PR 作成時にブロック）";
-// 旧テンプレの文面（古い順）。移行検出の完全一致にのみ使う。
+const BRANCH_BULLET =
+  "- **ブランチ**: 実装前に必ずデフォルトブランチから作業ブランチを切る。デフォルトブランチへの直接コミット・直接 push は禁止。変更は必ず作業ブランチ経由の PR で入れる";
+
+// 簡素化レビュー: PR 作成前に /simplify を 1 回。gate 登録解除に伴いソフト運用（強制なし）。
+// 旧テンプレは code-review 必須（gate 強制）だったが、code-review が原則ユーザー手打ち専用に
+// なったため、Claude が自走で回せる /simplify（品質整理）へ差し替える。バグ探索が要る変更は
+// ユーザーが手動で /code-review を回す運用。
+const SIMPLIFY_MARK = "**簡素化**:";
+const SIMPLIFY_LINE =
+  "- **簡素化**: PR 作成前（変更コミット後）に `/simplify` を 1 回実行し、再利用・簡素化・効率の観点でコードを整理する";
+// 旧 code-review 運用行（古い順）。gate 登録解除に伴い /simplify 行へ移行する。完全一致のみ。
 const REVIEW_GUARD_LINES_OLD = [
+  "- **レビュー**: PR 作成前（変更コミット後）に `node .claude/hooks/pr-code-review-gate.mjs --required` で推奨 effort を確認し、`/code-review <effort>` と effort を明示して 1 回実行する（effort 未指定の起動は hook が差し戻す。実行漏れは PR 作成時にブロック）",
   "- **レビュー**: PR 作成前に `/code-review` を実行する（実行漏れ・effort 不足は hook が PR 作成時にブロックして知らせる）",
   "- **レビュー**: PR 作成前（変更コミット後）に `node .claude/hooks/pr-code-review-gate.mjs --required` で必要 effort を確認し、その effort で `/code-review` を実行する（実行漏れ・effort 不足は hook が PR 作成時にブロックして知らせる）",
   "- **レビュー**: PR 作成前（変更コミット後）に `/code-review` を 1 回実行する。effort は `node .claude/hooks/pr-code-review-gate.mjs --required` の算出値を推奨（実行漏れは hook が PR 作成時にブロックして知らせる）",
 ];
-const BRANCH_BULLET =
-  "- **ブランチ**: 実装前に必ずデフォルトブランチから作業ブランチを切る。デフォルトブランチへの直接コミット・直接 push は禁止。変更は必ず作業ブランチ経由の PR で入れる";
+
 const SECURITY_GUARD_MARK = "**セキュリティレビュー**:";
 const SECURITY_GUARD_LINE =
-  "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する（コード変更を含む PR での実行漏れは PR 作成時にブロック）";
+  "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する";
+// 旧 security 運用行（ブロック文言つき）。gate 登録解除でソフト版へ移行する。完全一致のみ。
+const SECURITY_GUARD_LINES_OLD = [
+  "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する（コード変更を含む PR での実行漏れは PR 作成時にブロック）",
+];
 
 // 旧 pr-copilot テンプレが CLAUDE.md へ撒いていた「## PR レビュー」節は配布を廃止した。
 // watch-pr の起動トリガーは after-pr-create.mjs hook の additionalContext のみ
@@ -452,17 +467,34 @@ const REVIEW_SECTION_OLD_RES = [
   new RegExp(`^- ${REVIEW_LINE_OLD}\\r?\\n?`, "m"),
 ];
 
-// 旧文面の移行: 旧テンプレのレビュー行を最新文面へ置き換える。
-// hook 本体は cpSync で毎回最新化されるため、案内文だけ古いまま残ると運用が食い違う。
-// ユーザーが文面を独自に編集している可能性があるので、旧テンプレと完全一致のときだけ置換。
-// upsert より前に行い、置換後は「**レビュー**:」マーカーが在るので二重追記されない。
+// 旧文面の移行: 旧 code-review 行を /simplify 行へ、旧 security 行（ブロック文言つき）を
+// soft 版へ置き換える。gate を登録解除するので「PR 作成時にブロック」の案内が残ると運用が
+// 食い違う。ユーザーが文面を独自編集している可能性があるので、旧テンプレと完全一致のときだけ
+// 置換する。upsert より前に行い、置換後は各マーカーが在るので二重追記されない。
 let reviewLineMigrated = false;
+let securityLineMigrated = false;
 if (existsSync(claudeMdPath)) {
-  const content = readFileSync(claudeMdPath, "utf8");
-  const old = REVIEW_GUARD_LINES_OLD.find((l) => content.includes(l));
-  if (old) {
-    writeFileSync(claudeMdPath, content.replace(old, REVIEW_GUARD_LINE), "utf8");
+  let content = readFileSync(claudeMdPath, "utf8");
+  let changed = false;
+  const oldReview = REVIEW_GUARD_LINES_OLD.find((l) => content.includes(l));
+  if (oldReview) {
+    content = content.replace(oldReview, SIMPLIFY_LINE);
     reviewLineMigrated = true;
+    changed = true;
+  }
+  const oldSecurity = SECURITY_GUARD_LINES_OLD.find((l) => content.includes(l));
+  if (oldSecurity) {
+    content = content.replace(oldSecurity, SECURITY_GUARD_LINE);
+    securityLineMigrated = true;
+    changed = true;
+  }
+  if (changed) writeFileSync(claudeMdPath, content, "utf8");
+  // 移行しきれない旧 code-review 行（手編集で完全一致しない）が残っていれば警告する。
+  // マーカーが変わった（レビュー→簡素化）ので、放置すると重複行になり得る。
+  if (!reviewLineMigrated && content.includes("**レビュー**:")) {
+    warnings.push(
+      "CLAUDE.md に旧「**レビュー**:」行（code-review 運用）が残っています。gate 登録解除に伴い /simplify へ移行する方針なので、手動で `**簡素化**: /simplify` 行へ置き換えてください"
+    );
   }
 }
 
@@ -488,13 +520,13 @@ if (existsSync(claudeMdPath)) {
 
 const workflow = upsertWorkflowSection(claudeMdPath, WORKFLOW_HEADING, [
   { mark: BRANCH_MARK, text: BRANCH_BULLET },
-  { mark: REVIEW_GUARD_MARK, text: REVIEW_GUARD_LINE },
+  { mark: SIMPLIFY_MARK, text: SIMPLIFY_LINE },
   { mark: SECURITY_GUARD_MARK, text: SECURITY_GUARD_LINE },
 ]);
 const wfState = (mark) => workflow.bullets.find((b) => b.mark === mark)?.state ?? "?";
 const claudeMdStates = [`ブランチ規約: ${wfState(BRANCH_MARK)}`];
-claudeMdStates.push(`レビュー必須: ${reviewLineMigrated ? "updated" : wfState(REVIEW_GUARD_MARK)}`);
-claudeMdStates.push(`セキュリティレビュー必須: ${wfState(SECURITY_GUARD_MARK)}`);
+claudeMdStates.push(`簡素化(/simplify): ${reviewLineMigrated ? "migrated-from-code-review" : wfState(SIMPLIFY_MARK)}`);
+claudeMdStates.push(`セキュリティレビュー: ${securityLineMigrated ? "updated" : wfState(SECURITY_GUARD_MARK)}`);
 if (reviewSectionState) claudeMdStates.push(`レビュー運用(旧節): ${reviewSectionState}`);
 
 // ---- 5. .claude/settings.json へのフック登録（マージ・冪等） ----
@@ -552,42 +584,47 @@ if (settingsReadable) {
     hookStates.push(`${event}(${label}): registered`);
   };
 
-  register("PreToolUse", {
+  // 登録解除: 自分が過去に撒いた hook を settings.json から外す（owns 一致で除去し、
+  // 空になったグループは畳む）。既存配備先の再実行で「休眠化」を貫徹するため。
+  // 自分の hook だけを外し、他人の hook や未知構造のグループには触れない。
+  const deregister = (event, { label, owns }) => {
+    const groups = settings.hooks[event];
+    if (!Array.isArray(groups)) {
+      hookStates.push(`${event}(${label}): not-present`);
+      return;
+    }
+    let removed = false;
+    for (const g of groups) {
+      if (!Array.isArray(g?.hooks)) continue;
+      const before = g.hooks.length;
+      g.hooks = g.hooks.filter((h) => !(typeof h?.command === "string" && owns(h.command)));
+      if (g.hooks.length !== before) removed = true;
+    }
+    if (!removed) {
+      hookStates.push(`${event}(${label}): not-present`);
+      return;
+    }
+    // 自分の hook を抜いて空になったグループだけ落とす（他人の空グループも巻き添えに
+    // なり得るが害はない）。イベント配列ごと空なら key を消す。
+    settings.hooks[event] = groups.filter((g) => !Array.isArray(g?.hooks) || g.hooks.length > 0);
+    if (settings.hooks[event].length === 0) delete settings.hooks[event];
+    settingsChanged = true;
+    hookStates.push(`${event}(${label}): deregistered`);
+  };
+
+  // PR 作成 gate / effort nudge は登録解除して休眠させる（ファイルは cpSync で残すが
+  // settings.json からは外す）。理由: 最新の Claude Code では /code-review が原則ユーザー
+  // 手打ち専用になり、Claude 発の起動を前提にした nudge は発火しない。gate 本体の
+  // typedRe バグ（手打ちレビューの取りこぼし→ループ）は修正済みだが、レビュー強制は
+  // CLAUDE.md のソフト運用（/simplify + /security-review）へ移行するため既定では無効化する。
+  // 再有効化したい場合はこの 2 hook を settings.json へ手動登録すればよい。
+  deregister("PreToolUse", {
     label: "pr-code-review-gate.mjs",
     owns: (cmd) => cmd.includes("pr-code-review-gate.mjs"),
-    entry: {
-      matcher: "Bash",
-      hooks: [
-        {
-          type: "command",
-          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/pr-code-review-gate.mjs"',
-          if: "Bash(gh pr create *)",
-          // transcript 全読み + git diff を含むため既定より明示的に長めへ。
-          // これを超えて kill されると hook は fail-open（判定なし＝許可）になる。
-          timeout: 30,
-        },
-      ],
-    },
   });
-
-  register("PreToolUse", {
+  deregister("PreToolUse", {
     label: "code-review-effort-nudge.mjs",
     owns: (cmd) => cmd.includes("code-review-effort-nudge.mjs"),
-    entry: {
-      // Skill / SlashCommand の全起動で発火する（`if` に Skill(...) 構文が使えるかは
-      // 未確認のため使わない）。起動頻度は Bash と桁違いに低く、対象外スキルは
-      // スクリプト冒頭の名前判定で git を叩かず即 exit するので税は無視できる。
-      matcher: "Skill|SlashCommand",
-      hooks: [
-        {
-          type: "command",
-          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/code-review-effort-nudge.mjs"',
-          // 内部で gate --required（git diff）を spawn するため gate と同じ長さへ。
-          // 超過 kill 時は fail-open（nudge 無し＝許可）。
-          timeout: 30,
-        },
-      ],
-    },
   });
 
   register("SessionStart", {
