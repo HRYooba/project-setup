@@ -51,7 +51,9 @@ import {
   EFFORT_RANK,
   PR_CREATE_ATTEMPT_RE,
   RANK_LABEL,
+  detectBase,
   execTrim,
+  expandRename,
   isReviewableFile,
   rankOf,
   readStdin,
@@ -96,63 +98,8 @@ function git(cwd, args) {
   return execTrim("git", ["-C", cwd, ...args]);
 }
 
-// diff のベースを検出。優先順:
-//   1. gh pr create の --base / -B フラグ（PR が default 以外を向くケースに対応）
-//   2. origin/HEAD（デフォルトブランチ）
-//   3. origin/main / origin/master / main / master へのフォールバック
-// 取れなければ null（呼び出し側で fail-safe＝要レビュー）。
-//
-// クォート除去: --title/--body の本文に "…--base develop…" と書かれた文字列を base
-// フラグと誤認しないよう、"..." / '...' の中身を除いてから走査する。副作用として
-// `--base "develop"` のようにクォート付きで渡した base 値は拾えず origin/HEAD 等へ
-// フォールバックするが、これは安全側（大半の PR は default ブランチ向き）。
-//
-// ref 照会は for-each-ref 1 回で ref 名の集合を作り membership 判定する（旧実装の
-// rev-parse 逐次 spawn 最大 4 回を回避）。集合は必要になったときだけ 1 度だけ引く。
-function detectBase(cwd, command) {
-  const unquoted = String(command || "")
-    .replace(/"[^"]*"/g, " ")
-    .replace(/'[^']*'/g, " ");
-  let refs = null;
-  const knownRefs = () => {
-    if (refs === null) {
-      const out = git(cwd, [
-        "for-each-ref",
-        "--format=%(refname:short)",
-        "refs/remotes/origin",
-        "refs/heads",
-      ]);
-      refs = new Set(out ? out.split(/\r?\n/).filter(Boolean) : []);
-    }
-    return refs;
-  };
-  const m = unquoted.match(/(?:--base|-B)[=\s]+([^\s"']+)/);
-  if (m) {
-    for (const cand of [`origin/${m[1]}`, m[1]]) {
-      if (knownRefs().has(cand)) return cand;
-    }
-  }
-  const head = git(cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]); // 例: origin/main
-  if (head) return head;
-  for (const b of ["origin/main", "origin/master", "main", "master"]) {
-    if (knownRefs().has(b)) return b;
-  }
-  return null;
-}
-
-// numstat の rename 表記を新パスへ展開する。rename 検出は git デフォルトで有効なため、
-// リネームは "src/{old.ts => new.ts}"（共通部分あり）や "old.ts => new.ts"（共通部分なし）
-// の形で出力される。展開しないと末尾が "}" になり拡張子判定が外れる
-// （.ts のリネームが medium 扱い / リネームのみの docs PR が「コードあり」と誤判定）。
-// --no-renames 案は不採用: 純リネームの全行が追加+削除として計上され、リネーム主体の
-// リファクタ PR で推奨 effort が不当に跳ね上がるため。
-function expandRename(path) {
-  if (!path.includes(" => ")) return path;
-  let p = path.replace(/\{([^{}]*) => ([^{}]*)\}/g, "$2").replace(/\/{2,}/g, "/");
-  const i = p.indexOf(" => "); // ブレース無し形式（パス全体のリネーム）
-  if (i !== -1) p = p.slice(i + 4);
-  return p;
-}
+// detectBase / expandRename は lib/reviewable-files.mjs から import（security-review-nudge.mjs と
+// 走査範囲・rename 展開を共有する。二重定義すると片方だけ直して判定が食い違うため）。
 
 // PR の変更ファイル一覧と変更行数（追加+削除）を 1 回の git diff --numstat で取得。
 // 行数はレビュー対象ファイル（rankOf が定義されるもの）だけを数える。対象外

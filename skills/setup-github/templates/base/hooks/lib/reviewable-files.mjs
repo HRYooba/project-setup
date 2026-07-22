@@ -203,3 +203,64 @@ export function execTrim(bin, args) {
     return null;
   }
 }
+
+// hook 共通: git をシェル非経由で実行し trim した stdout を返す。失敗時は null。
+export function gitIn(cwd, args) {
+  return execTrim("git", ["-C", cwd, ...args]);
+}
+
+// PR の diff ベースを検出。gate（合否）と security-review-nudge（感応判定）が同じ範囲を
+// 見るよう共有する（二重定義すると片方だけ直して走査範囲が食い違うため）。優先順:
+//   1. gh pr create の --base / -B フラグ（PR が default 以外を向くケースに対応）
+//   2. origin/HEAD（デフォルトブランチ）
+//   3. origin/main / origin/master / main / master へのフォールバック
+// 取れなければ null（呼び出し側で fail-safe を選ぶ）。
+//
+// クォート除去: --title/--body の本文に "…--base develop…" と書かれた文字列を base
+// フラグと誤認しないよう、"..." / '...' の中身を除いてから走査する。副作用として
+// `--base "develop"` のようにクォート付きで渡した base 値は拾えず origin/HEAD 等へ
+// フォールバックするが、これは安全側（大半の PR は default ブランチ向き）。
+//
+// ref 照会は for-each-ref 1 回で ref 名の集合を作り membership 判定する（旧実装の
+// rev-parse 逐次 spawn 最大 4 回を回避）。集合は必要になったときだけ 1 度だけ引く。
+export function detectBase(cwd, command) {
+  const unquoted = String(command || "")
+    .replace(/"[^"]*"/g, " ")
+    .replace(/'[^']*'/g, " ");
+  let refs = null;
+  const knownRefs = () => {
+    if (refs === null) {
+      const out = gitIn(cwd, [
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/remotes/origin",
+        "refs/heads",
+      ]);
+      refs = new Set(out ? out.split(/\r?\n/).filter(Boolean) : []);
+    }
+    return refs;
+  };
+  const m = unquoted.match(/(?:--base|-B)[=\s]+([^\s"']+)/);
+  if (m) {
+    for (const cand of [`origin/${m[1]}`, m[1]]) {
+      if (knownRefs().has(cand)) return cand;
+    }
+  }
+  const head = gitIn(cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]); // 例: origin/main
+  if (head) return head;
+  for (const b of ["origin/main", "origin/master", "main", "master"]) {
+    if (knownRefs().has(b)) return b;
+  }
+  return null;
+}
+
+// numstat / name の rename 表記を新パスへ展開する。rename 検出は git デフォルトで有効なため、
+// リネームは "src/{old.ts => new.ts}"（共通部分あり）や "old.ts => new.ts"（共通部分なし）
+// の形で出力される。展開しないと末尾が "}" になり拡張子判定が外れる。
+export function expandRename(path) {
+  if (!path.includes(" => ")) return path;
+  let p = path.replace(/\{([^{}]*) => ([^{}]*)\}/g, "$2").replace(/\/{2,}/g, "/");
+  const i = p.indexOf(" => "); // ブレース無し形式（パス全体のリネーム）
+  if (i !== -1) p = p.slice(i + 4);
+  return p;
+}

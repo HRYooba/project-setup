@@ -10,10 +10,14 @@
 //       からは登録解除して休眠させる。手動再登録で再有効化可。CR_GATE_DISABLE=1 で無効化可）
 //     - .claude/hooks/code-review-effort-nudge.mjs（同上・休眠。code-review がユーザー手打ち
 //       専用になり Claude 発の起動を前提にした nudge は発火しないため）
+//     - .claude/hooks/security-review-nudge.mjs（PostToolUse・常時有効。gh pr create 成功後、
+//       感応な変更を含む PR でだけ /security-review を促す非ブロック nudge。休眠とは逆に登録
+//       する＝発火させるのが目的。無効化は SECURITY_NUDGE_DISABLE=1）
 //     - .claude/rules/git-conventions.md（templates/base/rules の同梱スナップショットをコピー）
 //     - .claude/skills/create-issue/（templates/base/skills の同梱スナップショットをコピー）
-//     - .claude/CLAUDE.md へブランチ規約と PR 前レビュー運用（/simplify + /security-review の
-//       ソフト運用。強制はしない）を追記
+//     - .claude/CLAUDE.md へブランチ規約と PR 前レビュー運用（/simplify のソフト運用。強制
+//       はしない）を追記。無条件のセキュリティレビュー行は撒かない（security-review-nudge が
+//       感応 PR でだけ促す。旧テンプレの無条件行は再実行時に削除する）
 //     - .claude/settings.json へ hooksPath 自動設定(SessionStart) とテンプレ追随(SessionStart)を
 //       登録し、旧版が撒いた gate/nudge(PreToolUse) を登録解除する
 //     - 実行者の clone へ core.hooksPath を即時設定 + pre-push へ exec bit 付与（mac/linux 対策）
@@ -254,8 +258,10 @@ cpSync(join(templatesDir, "base", "hooks"), join(claudeDir, "hooks"), { recursiv
 copied.push(
   ".claude/hooks/pr-code-review-gate.mjs",
   ".claude/hooks/code-review-effort-nudge.mjs",
+  ".claude/hooks/security-review-nudge.mjs",
   ".claude/hooks/setup-sync-check.mjs",
-  ".claude/hooks/lib/reviewable-files.mjs"
+  ".claude/hooks/lib/reviewable-files.mjs",
+  ".claude/hooks/lib/security-signals.mjs"
 );
 
 // ---- 1b. review-config.json の書き込み ----
@@ -465,10 +471,12 @@ const REVIEW_GUARD_LINES_OLD = [
 ];
 
 const SECURITY_GUARD_MARK = "**セキュリティレビュー**:";
-const SECURITY_GUARD_LINE =
-  "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する";
-// 旧 security 運用行（ブロック文言つき）。gate 登録解除でソフト版へ移行する。完全一致のみ。
+// 旧テンプレが CLAUDE.md へ撒いた「無条件で毎 PR に /security-review」行。
+// security-review-nudge.mjs（感応な変更を含む PR でだけ促す条件付き nudge）が肩代わりする
+// ため、再実行時に削除する（残すと「毎 PR で /security-review」を指示し続け、nudge の
+// 目的＝必要な時だけ発火を潰す）。完全一致のときだけ消す（手編集された行は触らず警告）。
 const SECURITY_GUARD_LINES_OLD = [
+  "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する",
   "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する（コード変更を含む PR での実行漏れは PR 作成時にブロック）",
 ];
 
@@ -494,7 +502,7 @@ const REVIEW_SECTION_OLD_RES = [
 // 食い違う。ユーザーが文面を独自編集している可能性があるので、旧テンプレと完全一致のときだけ
 // 置換する。upsert より前に行い、置換後は各マーカーが在るので二重追記されない。
 let reviewLineMigrated = false;
-let securityLineMigrated = false;
+let securityLineRemoved = false;
 if (existsSync(claudeMdPath)) {
   let content = readFileSync(claudeMdPath, "utf8");
   let changed = false;
@@ -504,11 +512,14 @@ if (existsSync(claudeMdPath)) {
     reviewLineMigrated = true;
     changed = true;
   }
-  const oldSecurity = SECURITY_GUARD_LINES_OLD.find((l) => content.includes(l));
-  if (oldSecurity) {
-    content = content.replace(oldSecurity, SECURITY_GUARD_LINE);
-    securityLineMigrated = true;
-    changed = true;
+  // 無条件セキュリティレビュー行は削除（条件付き nudge が肩代わり）。行＋直後の改行を
+  // 消す（末尾行にも対応するため二段で replace）。完全一致のみ。
+  for (const oldSecurity of SECURITY_GUARD_LINES_OLD) {
+    if (content.includes(oldSecurity)) {
+      content = content.replace(oldSecurity + "\n", "").replace(oldSecurity, "");
+      securityLineRemoved = true;
+      changed = true;
+    }
   }
   if (changed) writeFileSync(claudeMdPath, content, "utf8");
   // 移行しきれない旧 code-review 行（手編集で完全一致しない）が残っていれば警告する。
@@ -516,6 +527,13 @@ if (existsSync(claudeMdPath)) {
   if (!reviewLineMigrated && content.includes("**レビュー**:")) {
     warnings.push(
       "CLAUDE.md に旧「**レビュー**:」行（code-review 運用）が残っています。gate 登録解除に伴い /simplify へ移行する方針なので、手動で `**簡素化**: /simplify` 行へ置き換えてください"
+    );
+  }
+  // 手編集で完全一致しないセキュリティレビュー行が残っていれば警告（無条件の毎 PR 指示なら
+  // nudge と重複するため手動削除を促す）。
+  if (!securityLineRemoved && content.includes(SECURITY_GUARD_MARK)) {
+    warnings.push(
+      "CLAUDE.md に「**セキュリティレビュー**:」行が残っています。security-review-nudge.mjs が感応な変更を含む PR でだけ /security-review を促す方針なので、無条件の毎 PR 指示であれば手動で削除してください"
     );
   }
 }
@@ -543,12 +561,13 @@ if (existsSync(claudeMdPath)) {
 const workflow = upsertWorkflowSection(claudeMdPath, WORKFLOW_HEADING, [
   { mark: BRANCH_MARK, text: BRANCH_BULLET },
   { mark: SIMPLIFY_MARK, text: SIMPLIFY_LINE },
-  { mark: SECURITY_GUARD_MARK, text: SECURITY_GUARD_LINE },
 ]);
 const wfState = (mark) => workflow.bullets.find((b) => b.mark === mark)?.state ?? "?";
 const claudeMdStates = [`ブランチ規約: ${wfState(BRANCH_MARK)}`];
 claudeMdStates.push(`簡素化(/simplify): ${reviewLineMigrated ? "migrated-from-code-review" : wfState(SIMPLIFY_MARK)}`);
-claudeMdStates.push(`セキュリティレビュー: ${securityLineMigrated ? "updated" : wfState(SECURITY_GUARD_MARK)}`);
+claudeMdStates.push(
+  `セキュリティレビュー行: ${securityLineRemoved ? "removed(→ security-review-nudge)" : "none"}`
+);
 if (reviewSectionState) claudeMdStates.push(`レビュー運用(旧節): ${reviewSectionState}`);
 
 // ---- 5. .claude/settings.json へのフック登録（マージ・冪等） ----
@@ -682,6 +701,25 @@ if (settingsReadable) {
           command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/setup-sync-check.mjs"',
           // 差が無ければ即 exit する軽量比較のみ。念のため短めのタイムアウトを付ける。
           timeout: 10,
+        },
+      ],
+    },
+  });
+
+  // セキュリティレビュー nudge（base・常時有効）。gh pr create 成功後、感応な変更を含む PR で
+  // だけ /security-review を促す（非ブロック）。gate/nudge の休眠とは逆に「発火させる」のが
+  // 目的なので settings.json へ登録する。無効化は SECURITY_NUDGE_DISABLE=1。
+  register("PostToolUse", {
+    label: "security-review-nudge.mjs",
+    owns: (cmd) => cmd.includes("security-review-nudge.mjs"),
+    entry: {
+      matcher: "Bash",
+      hooks: [
+        {
+          type: "command",
+          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/security-review-nudge.mjs"',
+          if: "Bash(gh pr create *)",
+          timeout: 15,
         },
       ],
     },
