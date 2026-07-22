@@ -107,23 +107,24 @@ test("hook: 壊れた状態ファイルは黙って無視する", () => {
   assert.equal(runSyncHook(target, "9.9.9"), "");
 });
 
-test("hook: 現行版が新しければ同期指示を注入する（スキル・ブランチ・apply コマンド込み）", () => {
+test("hook: 現行版が新しければ /setup-sync の実行を通知する（スキル・版・merge しない旨込み）", () => {
   const target = tempDir("sync-drift-");
   writeState(target, {
     "setup-github": { version: "1.0.0", flags: ["--pr-copilot", "--review-targets=Assets/App"] },
     "setup-unity": { version: "1.0.0", flags: ["--architecture", "--mcp", "mcp-for-unity"] },
   });
   const out = runSyncHook(target, "1.3.0", { installPath: "C:/plugins/project-setup/1.3.0" });
-  assert.ok(out, "同期指示が注入されていない");
+  assert.ok(out, "同期通知が注入されていない");
   const parsed = JSON.parse(out);
   const ctx = parsed.hookSpecificOutput.additionalContext;
   assert.equal(parsed.hookSpecificOutput.hookEventName, "SessionStart");
   assert.match(ctx, /setup-github v1\.0\.0→v1\.3\.0/);
   assert.match(ctx, /setup-unity v1\.0\.0→v1\.3\.0/);
-  assert.match(ctx, /chore\/setup-sync-v1\.3\.0/);
-  assert.match(ctx, /setup-github\/apply\.mjs/);
-  assert.match(ctx, /--pr-copilot --review-targets=Assets\/App/);
-  assert.match(ctx, /merge はしない/);
+  // 通知のみ: 実行は /setup-sync に委ねる。apply コマンドや subagent 起動指示は注入しない。
+  assert.match(ctx, /\/setup-sync/);
+  assert.match(ctx, /merge はしません/);
+  assert.doesNotMatch(ctx, /apply\.mjs/);
+  assert.doesNotMatch(ctx, /worktree/);
 });
 
 test("hook: 片方のスキルだけドリフトしていればそのスキルだけ対象にする", () => {

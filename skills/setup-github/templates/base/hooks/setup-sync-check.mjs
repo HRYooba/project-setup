@@ -1,16 +1,17 @@
-// SessionStart hook: setup-github / setup-unity テンプレートの更新を検知する。
+// SessionStart hook: setup-github / setup-unity テンプレートの更新を検知して「通知」する。
 //
 // 対象プロジェクトの `.claude/setup-sync-state.json`（apply.mjs が記録した適用時のプラグイン版と
 // フラグ）と、いまインストールされている project-setup プラグインの現行版を比較する。
-// 現行版のほうが新しければ additionalContext で「バックグラウンドの worktree 分離サブエージェントを
-// 起動し、保存フラグで apply.mjs を無人適用 → commit → push → PR 作成（merge はしない）」を促す。
-// 差が無ければ即 exit 0（毎セッションの税を最小化）。
+// 現行版のほうが新しければ additionalContext で「`/setup-sync` を実行して同期 PR を作ってほしい」と
+// 通知するだけに徹する。差が無ければ即 exit 0（毎セッションの税を最小化）。
 //
-// 設計:
+// 設計（方式B: 通知と実行の分離）:
+//   - この hook は「更新の有無」を検知して通知するのみ。実際の同期（apply 再適用 → commit →
+//     push → PR）は `/setup-sync` skill → sync-run.mjs が決定的に行う。注入文へ LLM が従うか否か
+//     （非決定的）に実行を委ねない。重複PR防止・試行上限・merge 禁止は sync-run.mjs がコード担保する。
 //   - 発火はアップグレード方向のみ（現行版 > 記録版）。複数マシンでプラグイン版がずれていても、
 //     古い版のマシンが新しい版で同期済みのプロジェクトを古いテンプレへ巻き戻す churn を防ぐ。
 //   - hook はバージョン比較だけを行い、ネットワーク・gh・git を叩かない（session 開始を遅らせない）。
-//     重複PR防止（gh pr list）と試行回数ガードは、起動されたサブエージェント側が担う。
 //   - 状態ファイルが無いプロジェクト（未セットアップ or バックフィル前）は対象外 → 即 exit 0。
 //
 // このスキル 1 ファイルで完結する（外部モジュールを import しない）。jq 非依存（Node のみ）。
@@ -123,33 +124,19 @@ for (const k of SKILL_KEYS) {
 }
 if (drifted.length === 0) done();
 
-// ---- 5. 同期指示の注入 ----
-// コマンド文字列のパスは / へ正規化する（Windows の \ はシェルのダブルクオート内で
-// エスケープ扱いされうるため。Node はどちらの区切りも受け付ける）。
-const fwd = (p) => String(p).replace(/\\/g, "/");
-const branch = `chore/setup-sync-v${currentVersion}`;
-const applyLines = drifted
-  .map((d) => {
-    const flags = d.flags.length ? " " + d.flags.join(" ") : "";
-    return `   - ${d.skill}（v${d.from} → v${currentVersion}）: node "${fwd(installPath)}/skills/${d.skill}/apply.mjs" "${fwd(projectDir)}"${flags}`;
-  })
-  .join("\n");
-
+// ---- 5. 同期の通知（実行は /setup-sync に委ねる）----
+// この hook は「更新あり」を伝えるだけ。実行（apply → commit → push → PR）は sync-run.mjs が
+// 決定的に行い、重複PR防止・試行上限・merge 禁止もそちらでコード担保する。
 emitContext(
   [
     `【テンプレート自動追随】project-setup のテンプレートが更新されています（${drifted
       .map((d) => `${d.skill} v${d.from}→v${currentVersion}`)
-      .join(" / ")}）。これはユーザーが設計・承認した無人同期フローです。確認は不要で、次を実行してください。`,
+      .join(" / ")}）。`,
     "",
-    "`isolation: worktree` のバックグラウンドサブエージェントを 1 つ起動し、以下を無人実行させる（SKILL は経由しない・PR は作るが merge はしない）:",
+    "同期するには `/setup-sync` を実行してください。保存フラグでテンプレを再適用し、commit → push →",
+    "同期 PR の作成まで行います（**merge はしません**）。重複 PR 防止・試行上限（同一版 最大2回）・",
+    "merge 禁止は実行スクリプト側でコード担保されます。",
     "",
-    `1. 重複防止: \`gh pr list --state open --head ${branch}\`（もしくはタイトルに "setup-sync" を含む open PR）が既にあれば、何もせず終了する。`,
-    `2. 暴走防止: 機械的失敗の再試行は同一版につき最大2回。試行回数は \`~/.claude/plugins/data/project-setup/sync-attempts.json\`（無ければ作成。キー="<repo>@v${currentVersion}"）で管理する。既に2以上なら起動せず、ユーザーへ手動対応を促して終了。起動するなら +1 して保存する。`,
-    `3. 作業ブランチ \`${branch}\` を作成する。`,
-    "4. 保存フラグで apply.mjs を直叩きする（対象スキルごと）:",
-    applyLines,
-    "   apply.mjs の警告出力（`警告:` 節）を全文保持する。",
-    "5. `git add -A && git commit`（Conventional Commits の chore: で）→ push → `gh pr create` で PR を作成する。**merge はしない。** PR 本文には apply.mjs の warnings を全文転記する。",
-    "6. apply / push / PR 作成のいずれかが失敗したら、試行回数記録を残して終了する（次セッションで最大2回まで再試行）。",
+    "自動では実行しません。同期が不要ならこの通知は無視して構いません（次に版が上がるまで再通知されます）。",
   ].join("\n")
 );

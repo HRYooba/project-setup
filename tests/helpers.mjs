@@ -24,6 +24,7 @@ export const NUDGE = join(HOOKS_DIR, "code-review-effort-nudge.mjs");
 export const SYNC_HOOK = join(HOOKS_DIR, "setup-sync-check.mjs");
 export const APPLY = join(here, "..", "skills", "setup-github", "apply.mjs");
 export const APPLY_UNITY = join(here, "..", "skills", "setup-unity", "apply.mjs");
+export const SYNC_RUN = join(here, "..", "skills", "setup-sync", "sync-run.mjs");
 
 export function tempDir(prefix) {
   return mkdtempSync(join(tmpdir(), prefix));
