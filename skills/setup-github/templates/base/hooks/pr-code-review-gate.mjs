@@ -33,7 +33,9 @@
 //   （レビュー済みコードの再レビューに価値は無い）。effort の算出は残すが、
 //   deny 文言と --required 照会で「推奨」として示すだけにする。
 //     推奨の算出: 種別 base（最大）＋ 変更行数 > 300 で +1 ＋ 対象ファイル数 > 10 で
-//     +1、下限 medium・上限 max（ultra はクラウド手動なので自動推奨しない）。
+//     +1、下限 high・上限 xhigh。基本は high、量が多ければ xhigh。max は「かなり重要な
+//     とき」に人が手動指定するもので自動推奨はしない（規模から重要度は測れないため）。
+//     ultra はクラウド手動の最上位で、同様に自動推奨しない。
 //
 // ループ回避（重要）:
 //   合格判定の基準を「最後のコミット以降」ではなく「gh pr create 試行以降」に置く。
@@ -65,8 +67,8 @@ if (process.env.CR_GATE_DISABLE === "1") process.exit(0);
 // 推奨 effort 算出の閾値（合否には使わない）。
 const LINES_BUMP = 300; // 変更行数（追加+削除）がこれを超えたら +1 ランク
 const FILES_BUMP = 10; // レビュー対象ファイル数がこれを超えたら +1 ランク
-const FLOOR_RANK = EFFORT_RANK.medium; // 推奨 effort の下限
-const CAP_RANK = EFFORT_RANK.max; // 推奨 effort の上限（ultra は自動推奨しない）
+const FLOOR_RANK = EFFORT_RANK.high; // 推奨 effort の下限（基本は high）
+const CAP_RANK = EFFORT_RANK.xhigh; // 推奨 effort の上限（自動は xhigh 止まり。max/ultra は手動）
 
 // gh pr create「試行」の検出は lib の PR_CREATE_ATTEMPT_RE を共有（after-pr-create.mjs と
 // 同一定義。二重定義すると片方だけ拡張して gate と Copilot の判定が食い違うため）。
@@ -255,18 +257,26 @@ function resultText(content) {
 // 判定は「スキル名 / コマンド名そのものがレビューコマンドであること」に限定する。
 // input 全体や引数文字列に名前が含まれるだけの別コマンド（例: /create-issue
 // "code-review の max 対応"）を拾って幻のレビュー実績を作ってしまわないため。
+//
+// typedRe は `<command-name>` タグを本文中で捕捉する（行頭固定にしない）。理由:
+// 新しめの Claude Code は手打ちコマンドの content 先頭へ `<command-message>…</command-message>`
+// を前置きするようになり（実測: `<command-message>code-review</command-message>\n
+// <command-name>/code-review</command-name>\n<command-args>max</command-args>`）、
+// `^\s*<command-name>` 固定だとマッチせず、手打ちレビューを取りこぼして deny し続けた
+// （＝「レビュー後 HEAD が動く→再レビュー」に見えるループの正体）。タグ全体
+// （`<command-name>…</command-name>`）で一致させるので引数や別コマンドの誤ヒットは起きない。
 const REVIEW_KINDS = [
   {
     key: "codeReview",
     skillRe: /(^|[:/])code-?review$/i,
     slashRe: /^\s*\/?code-?review(\s|$)/i,
-    typedRe: /^\s*<command-name>\/?code-?review\b/i,
+    typedRe: /<command-name>\s*\/?code-?review\s*<\/command-name>/i,
   },
   {
     key: "securityReview",
     skillRe: /(^|[:/])security-review$/i,
     slashRe: /^\s*\/?security-review(\s|$)/i,
-    typedRe: /^\s*<command-name>\/?security-review\b/i,
+    typedRe: /<command-name>\s*\/?security-review\s*<\/command-name>/i,
   },
 ];
 
@@ -311,8 +321,10 @@ function reviewsSincePrCreate(transcriptPath) {
     const content = obj?.message?.content;
     // 手打ちの /code-review・/security-review の検出。ユーザーが直接スラッシュコマンドを
     // 打った場合、transcript には tool_use ではなく「content が文字列の user メッセージ」
-    // （<command-name>/code-review</command-name> ... <command-args>max</command-args>）
-    // として残る。これを見逃すと、手打ちレビュー済みでも未レビュー扱いで deny し続ける。
+    // （新しめの版では先頭に <command-message> が前置きされる:
+    //  <command-message>code-review</command-message> <command-name>/code-review</command-name>
+    //  ... <command-args>max</command-args>）として残る。typedRe はタグを本文中で捕捉する
+    // ので前置きの有無に依存しない。これを見逃すと手打ちレビュー済みでも deny し続ける。
     if (obj?.message?.role === "user" && typeof content === "string") {
       const typed = REVIEW_KINDS.find((k) => k.typedRe.test(content));
       if (typed) {
