@@ -2,8 +2,10 @@
 //
 // 対象プロジェクトに GitHub 開発フロー一式を撒く。冪等（再実行安全）。
 //
-//   base（常時）:
-//     - .githooks/pre-push（保護ブランチへの直 push 拒否。全ツール対象・実行時にブランチ検出）
+//   base（常時。ただし pre-push は既定 ON で --no-pre-push で外せる）:
+//     - .githooks/pre-push（保護ブランチへの直 push 拒否。全ツール対象・実行時にブランチ検出。
+//       既定 ON。--no-pre-push で opt-out。配備済みの場合は削除して選択を貫徹し、撒く githook が
+//       他に無ければ core.hooksPath も解除する）
 //     - .claude/hooks/pr-code-review-gate.mjs（PR 作成前 gate。ファイルは配るが settings.json
 //       からは登録解除して休眠させる。手動再登録で再有効化可。CR_GATE_DISABLE=1 で無効化可）
 //     - .claude/hooks/code-review-effort-nudge.mjs（同上・休眠。code-review がユーザー手打ち
@@ -27,11 +29,14 @@
 //     - （旧版が CLAUDE.md へ撒いた「## PR レビュー」節は再実行時に除去する。watch-pr の
 //       起動トリガーは after-pr-create.mjs の additionalContext に一本化）
 //
-// 使い方: node apply.mjs [target-dir] [--pr-copilot] [--review-targets=src,shared]
+// 使い方: node apply.mjs [target-dir] [--pr-copilot] [--no-pre-push] [--review-targets=src,shared]
 //         [--review-excludes=.claude,.github]
 //   (target-dir 省略時は cwd)
 //   --pr-copilot: PR 自動レビュー一式を入れる。省略しても配備済み（after-pr-create.mjs が
 //     ある）なら自動継承する（base のみ再実行で pr-copilot が黙って剥がれる巻き戻りを防ぐ）。
+//   --no-pre-push: ブランチ保護 pre-push を入れない（既定は入れる）。配備済みなら削除する。
+//     自動継承はしない（既定 ON なのでフラグ無し再実行で入り直す。opt-out の維持は sync-state の
+//     記録フラグ経由で無人再適用へ引き継がれる）。
 //   --review-targets: レビュー対象フォルダ（カンマ区切り）。配備先の
 //     .claude/hooks/review-config.json へ書き込む（reviewable-files.mjs がこれを読む）。
 //     ここに無いフォルダのコードは gate・Copilot アサインとも対象外（ベンダーコード導入
@@ -46,7 +51,7 @@
 // 完結する（外部モジュールを import しない＝単体コピーで動く）。
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 /* global process, console */
@@ -55,7 +60,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const templatesDir = join(here, "templates");
 
 const args = process.argv.slice(2);
-const KNOWN_FLAGS = new Set(["--pr-copilot"]);
+const KNOWN_FLAGS = new Set(["--pr-copilot", "--no-pre-push"]);
 const unknownFlags = args.filter(
   (a) =>
     a.startsWith("--") &&
@@ -65,10 +70,14 @@ const unknownFlags = args.filter(
 );
 if (unknownFlags.length) {
   console.error(
-    `不明なオプション: ${unknownFlags.join(" ")}（使用可能: --pr-copilot / --review-targets=<csv> / --review-excludes=<csv>）`
+    `不明なオプション: ${unknownFlags.join(" ")}（使用可能: --pr-copilot / --no-pre-push / --review-targets=<csv> / --review-excludes=<csv>）`
   );
   process.exit(1);
 }
+// ブランチ保護 pre-push は既定 ON。--no-pre-push で opt-out する（配備済みなら削除して選択を貫徹）。
+// pr-copilot と違い自動継承はしない（既定 ON なのでフラグ無し再実行で常に入り直す。opt-out を
+// 維持したいときは sync-state に記録された --no-pre-push が無人再適用へ引き継がれる）。
+const prePush = !args.includes("--no-pre-push");
 // pr-copilot は明示指定 or 配備済み（after-pr-create.mjs がある）なら自動継承する。
 // base のみで再実行すると lib だけ最新化され、それを import する pr-copilot hook が
 // 旧版のまま残ってバージョンスキュー（import エラー等）を起こすため、剥がさない。
@@ -105,6 +114,7 @@ if (!existsSync(join(templatesDir, "base"))) {
 }
 
 const copied = [];
+const removed = [];
 const warnings = [];
 
 // git をシェル非経由で実行。失敗時は null。
@@ -257,37 +267,49 @@ writeFileSync(
 );
 copied.push(".claude/hooks/review-config.json");
 
-cpSync(join(templatesDir, "base", "githooks"), join(target, ".githooks"), { recursive: true });
-copied.push(".githooks/pre-push");
-
-// pre-push は拡張子が無く、一般的な `*.sh eol=lf` ルールに載らない。core.autocrlf=true の
-// Windows で fresh clone が CRLF になるのを防ぐため、.gitattributes に LF 固定を追記する
-// （現行 Git for Windows は CRLF の hook も動くが、ツールチェーン依存にしない）。
-const gaPath = join(target, ".gitattributes");
-if (!existsSync(gaPath) || !readFileSync(gaPath, "utf8").includes(".githooks/")) {
-  const ga = existsSync(gaPath) ? readFileSync(gaPath, "utf8") : "";
-  const sep = ga === "" || ga.endsWith("\n") ? "" : "\n";
-  writeFileSync(
-    gaPath,
-    ga + sep + "\n# git hooks（拡張子なし）は LF 固定。CRLF だと shebang が壊れる環境があるため。\n.githooks/* text eol=lf\n",
-    "utf8"
-  );
-  copied.push(".gitattributes（.githooks の LF 固定を追記）");
+// ブランチ保護 pre-push（既定 ON）。opt-out（--no-pre-push）時は配備済みファイルを削除する。
+// 削除の stage は Step 6 の git ブロックで行う（コミットに乗せるため）。
+const prePushDst = join(target, ".githooks", "pre-push");
+if (prePush) {
+  cpSync(join(templatesDir, "base", "githooks"), join(target, ".githooks"), { recursive: true });
+  copied.push(".githooks/pre-push");
+} else if (existsSync(prePushDst)) {
+  rmSync(prePushDst);
+  removed.push(".githooks/pre-push（ブランチ保護 opt-out）");
 }
 
-// .githooks/ 配下はテンプレート由来（再実行で上書きされる）ため、プロジェクトの
-// Prettier に整形させない。ただし .prettierignore が既に存在するプロジェクトだけ追記する
-// （Prettier を使わないプロジェクトへ無意味なファイルを作らないため）。
-const piPath = join(target, ".prettierignore");
-if (existsSync(piPath) && !readFileSync(piPath, "utf8").includes(".githooks/")) {
-  const pi = readFileSync(piPath, "utf8");
-  const sep = pi === "" || pi.endsWith("\n") ? "" : "\n";
-  writeFileSync(
-    piPath,
-    pi + sep + "\n# setup-github が配布するテンプレート（再実行で上書きされるため整形しない）\n.githooks/\n",
-    "utf8"
-  );
-  copied.push(".prettierignore（.githooks/ の除外を追記）");
+// .githooks/ 配下（pre-push / pr-copilot の pre-commit 等）を撒く構成のときだけ、
+// git 属性と整形除外を整える。撒く githook が無ければ何もしない。
+if (prePush || prCopilot) {
+  // git hook は拡張子が無く、一般的な `*.sh eol=lf` ルールに載らない。core.autocrlf=true の
+  // Windows で fresh clone が CRLF になるのを防ぐため、.gitattributes に LF 固定を追記する
+  // （現行 Git for Windows は CRLF の hook も動くが、ツールチェーン依存にしない）。
+  const gaPath = join(target, ".gitattributes");
+  if (!existsSync(gaPath) || !readFileSync(gaPath, "utf8").includes(".githooks/")) {
+    const ga = existsSync(gaPath) ? readFileSync(gaPath, "utf8") : "";
+    const sep = ga === "" || ga.endsWith("\n") ? "" : "\n";
+    writeFileSync(
+      gaPath,
+      ga + sep + "\n# git hooks（拡張子なし）は LF 固定。CRLF だと shebang が壊れる環境があるため。\n.githooks/* text eol=lf\n",
+      "utf8"
+    );
+    copied.push(".gitattributes（.githooks の LF 固定を追記）");
+  }
+
+  // .githooks/ 配下はテンプレート由来（再実行で上書きされる）ため、プロジェクトの
+  // Prettier に整形させない。ただし .prettierignore が既に存在するプロジェクトだけ追記する
+  // （Prettier を使わないプロジェクトへ無意味なファイルを作らないため）。
+  const piPath = join(target, ".prettierignore");
+  if (existsSync(piPath) && !readFileSync(piPath, "utf8").includes(".githooks/")) {
+    const pi = readFileSync(piPath, "utf8");
+    const sep = pi === "" || pi.endsWith("\n") ? "" : "\n";
+    writeFileSync(
+      piPath,
+      pi + sep + "\n# setup-github が配布するテンプレート（再実行で上書きされるため整形しない）\n.githooks/\n",
+      "utf8"
+    );
+    copied.push(".prettierignore（.githooks/ の除外を追記）");
+  }
 }
 
 // ---- 2. 同梱スナップショットのコピー（plugin 単体で完結。~/.claude は参照しない） ----
@@ -627,18 +649,28 @@ if (settingsReadable) {
     owns: (cmd) => cmd.includes("code-review-effort-nudge.mjs"),
   });
 
-  register("SessionStart", {
-    label: "core.hooksPath",
-    // 完全一致のみ「自分」とみなす。core.hooksPath を含む別コマンド（ユーザーの独自設定）は
-    // conflicts で検出して上書きせずスキップする。
-    owns: (cmd) => cmd.trim() === "git config core.hooksPath .githooks",
-    conflicts: (cmd) => cmd.includes("core.hooksPath"),
-    conflictWarn:
-      "SessionStart に既存の core.hooksPath 設定 hook があるため上書きしませんでした。手動で .githooks への設定を確認してください",
-    entry: {
-      hooks: [{ type: "command", command: "git config core.hooksPath .githooks", timeout: 10 }],
-    },
-  });
+  // core.hooksPath 自動設定は「撒く githook がある」構成でだけ登録する。pre-push を opt-out し
+  // pr-copilot も入れない構成では .githooks/ が空になるため、自分が撒いた設定 hook を登録解除する
+  // （空 dir を指す無意味な hook を残さない。他ツールの core.hooksPath 設定には触れない）。
+  if (prePush || prCopilot) {
+    register("SessionStart", {
+      label: "core.hooksPath",
+      // 完全一致のみ「自分」とみなす。core.hooksPath を含む別コマンド（ユーザーの独自設定）は
+      // conflicts で検出して上書きせずスキップする。
+      owns: (cmd) => cmd.trim() === "git config core.hooksPath .githooks",
+      conflicts: (cmd) => cmd.includes("core.hooksPath"),
+      conflictWarn:
+        "SessionStart に既存の core.hooksPath 設定 hook があるため上書きしませんでした。手動で .githooks への設定を確認してください",
+      entry: {
+        hooks: [{ type: "command", command: "git config core.hooksPath .githooks", timeout: 10 }],
+      },
+    });
+  } else {
+    deregister("SessionStart", {
+      label: "core.hooksPath",
+      owns: (cmd) => cmd.trim() === "git config core.hooksPath .githooks",
+    });
+  }
 
   register("SessionStart", {
     label: "setup-sync-check.mjs",
@@ -690,6 +722,7 @@ if (pluginVersion) {
   const csv = (arr) => arr.map((s) => s.replace(/\/+$/, "")).join(",");
   const syncFlags = [];
   if (prCopilot) syncFlags.push("--pr-copilot");
+  if (!prePush) syncFlags.push("--no-pre-push");
   syncFlags.push(`--review-targets=${csv(effectiveTargets)}`);
   syncFlags.push(`--review-excludes=${csv(effectiveExcludes)}`);
   writeSyncState("setup-github", pluginVersion, syncFlags);
@@ -704,19 +737,40 @@ if (pluginVersion) {
 // ---- 6. git 操作: 実行者の clone へ即時 opt-in + pre-push の exec bit ----
 const gitStates = [];
 if (git("rev-parse", "--is-inside-work-tree") === "true") {
-  gitStates.push(
-    git("config", "core.hooksPath", ".githooks") !== null
-      ? "core.hooksPath=.githooks を設定しました（この clone で pre-push が有効）"
-      : "core.hooksPath の設定に失敗しました"
-  );
-  // mac/linux の clone で hook が実行可能になるよう index に exec bit を立てる。
-  // 副作用として .githooks/pre-push が stage される。
-  const hookFiles = [".githooks/pre-push", ...(prCopilot ? [".githooks/pre-commit"] : [])];
+  if (prePush || prCopilot) {
+    gitStates.push(
+      git("config", "core.hooksPath", ".githooks") !== null
+        ? "core.hooksPath=.githooks を設定しました（この clone で git hook が有効）"
+        : "core.hooksPath の設定に失敗しました"
+    );
+  } else {
+    // 撒く githook が無い構成: 自分が設定した .githooks 指定だけ外す（他値・未設定は触らない）。
+    const cur = git("config", "core.hooksPath");
+    if (cur === ".githooks") {
+      gitStates.push(
+        git("config", "--unset", "core.hooksPath") !== null
+          ? "core.hooksPath（.githooks）を解除しました（撒く git hook が無いため）"
+          : "core.hooksPath の解除に失敗しました"
+      );
+    }
+  }
+  // mac/linux の clone で hook が実行可能になるよう、撒いた hook に index の exec bit を立てる。
+  // 副作用として対象 hook が stage される。
+  const hookFiles = [
+    ...(prePush ? [".githooks/pre-push"] : []),
+    ...(prCopilot ? [".githooks/pre-commit"] : []),
+  ];
   for (const hf of hookFiles) {
     if (git("add", hf) !== null && git("update-index", "--chmod=+x", hf) !== null) {
       gitStates.push(`${hf} に exec bit を付与しました（stage されています）`);
     } else {
       gitStates.push(`${hf} への exec bit 付与に失敗しました（mac/linux では手動で chmod +x が必要）`);
+    }
+  }
+  // opt-out で削除した pre-push は削除を stage する（コミットに乗せて配布先からも消えるように）。
+  if (!prePush && removed.some((r) => r.startsWith(".githooks/pre-push"))) {
+    if (git("add", ".githooks/pre-push") !== null) {
+      gitStates.push(".githooks/pre-push の削除を stage しました");
     }
   }
 } else {
@@ -735,6 +789,7 @@ console.log(`インストール先: ${claudeDir}`);
 console.log(
   `モード: base${prCopilot ? " + pr-copilot" : ""}${prCopilotInherited ? "（pr-copilot は配備済みを自動継承）" : ""}`
 );
+console.log(`ブランチ保護 pre-push: ${prePush ? "有効" : "無効（--no-pre-push）"}`);
 console.log(
   `レビュー対象フォルダ: ${
     effectiveTargets.length
@@ -751,6 +806,10 @@ console.log(
 );
 console.log("配置ファイル:");
 for (const f of copied) console.log(`  - ${f}`);
+if (removed.length) {
+  console.log("削除ファイル:");
+  for (const f of removed) console.log(`  - ${f}`);
+}
 console.log("CLAUDE.md:");
 for (const s of claudeMdStates) console.log(`  - ${s}`);
 console.log("settings.json:");
