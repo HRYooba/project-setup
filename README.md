@@ -4,7 +4,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。2 つの s
 
 | skill | 内容 |
 |:------|:-----|
-| `setup-github` | GitHub 開発フロー一式を導入する。ブランチ保護（pre-push）、PR 前レビュー運用（`/simplify` + `/security-review` のソフト指示）、git 運用規約（Git Flow / Conventional Commits）、create-issue skill。任意で Copilot PR 自動レビュー（自動アサイン / watch-pr / resolve-pr）と AGENTS.md 自動生成 |
+| `setup-github` | GitHub 開発フロー一式を導入する。ブランチ保護（pre-push。既定 ON・質問で外せる）、PR 前レビュー運用（`/simplify` + `/security-review` のソフト指示）、git 運用規約（Git Flow / Conventional Commits）、create-issue skill。任意で Copilot PR 自動レビュー（自動アサイン / watch-pr / resolve-pr）と AGENTS.md 自動生成 |
 | `setup-unity` | Unity 開発規約一式を導入する。rules（フォルダ構成 / Hierarchy / アセット命名 / コーディング規約 / テスト）、skills（test-unity / lint-unity）、agents（unity-tester / unity-linter）。任意でレイヤードアーキテクチャ規約と MCP バインディング |
 
 どちらも**冪等**（再実行安全）で、導入オプションは実行時に対話で確認する。配置物は対象リポジトリの `.claude/` などにコミットされるため、plugin を持たないチームメイトにもそのまま効く。
