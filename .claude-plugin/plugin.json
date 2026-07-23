@@ -1,7 +1,7 @@
 {
   "name": "project-setup",
   "description": "プロジェクト初期セットアップ skill 集。setup-github（GitHub 開発フロー一式: ブランチ保護 / PR 前レビュー運用 / git 規約 / create-issue、任意で Copilot PR 自動レビュー + AGENTS.md 生成）と setup-unity（Unity 開発規約: rules / test-unity / lint-unity / サブエージェント、任意でレイヤードアーキテクチャ規約）を対象リポジトリへ冪等に導入する。setup-sync でテンプレート更新への追随（同期 PR 作成、merge はしない）を行う。",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "author": {
     "name": "hryooba"
   },
