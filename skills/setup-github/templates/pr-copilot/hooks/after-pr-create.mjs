@@ -6,8 +6,8 @@
 //
 // なぜコード変更を含む PR に限るか: docs/設定のみの PR に Copilot を付けて watch-pr を
 // 起動しても、実質レビューが入らず 30 分タイムアウトを待つだけで無駄なため。
-// 「コードとみなすファイル」の定義は pr-code-review-gate.mjs と共有する
-// （lib/reviewable-files.mjs が単一ソース。二重管理すると gate と Copilot の判定が食い違う）。
+// 「コードとみなすファイル」の定義は lib/reviewable-files.mjs が単一ソース
+// （この hook が唯一の消費者。判定を分散させると Copilot の対象基準が食い違う）。
 //
 // jq 非依存（Node のみ）。ツール非依存（Unity 等の前提を持たない）。
 

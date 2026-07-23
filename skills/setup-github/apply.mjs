@@ -6,10 +6,9 @@
 //     - .githooks/pre-push（保護ブランチへの直 push 拒否。全ツール対象・実行時にブランチ検出。
 //       既定 ON。--no-pre-push で opt-out。配備済みの場合は削除して選択を貫徹し、撒く githook が
 //       他に無ければ core.hooksPath も解除する）
-//     - .claude/hooks/pr-code-review-gate.mjs（PR 作成前 gate。ファイルは配るが settings.json
-//       からは登録解除して休眠させる。手動再登録で再有効化可。CR_GATE_DISABLE=1 で無効化可）
-//     - .claude/hooks/code-review-effort-nudge.mjs（同上・休眠。code-review がユーザー手打ち
-//       専用になり Claude 発の起動を前提にした nudge は発火しないため）
+//     - .claude/hooks/lib/reviewable-files.mjs + review-config.json（Copilot 自動アサインの
+//       対象判定に使う。旧 code-review 用 hook = pr-code-review-gate.mjs / code-review-effort-nudge.mjs
+//       は配布廃止し、既存配備先の実体も削除、settings.json の登録も解除する）
 //     - .claude/rules/git-conventions.md（templates/base/rules の同梱スナップショットをコピー）
 //     - .claude/skills/create-issue/（templates/base/skills の同梱スナップショットをコピー）
 //     - .claude/CLAUDE.md へブランチ規約と PR 前レビュー運用（/simplify + /security-review の
@@ -251,12 +250,21 @@ if (rxArg !== undefined) {
 }
 
 cpSync(join(templatesDir, "base", "hooks"), join(claudeDir, "hooks"), { recursive: true });
-copied.push(
-  ".claude/hooks/pr-code-review-gate.mjs",
-  ".claude/hooks/code-review-effort-nudge.mjs",
-  ".claude/hooks/setup-sync-check.mjs",
-  ".claude/hooks/lib/reviewable-files.mjs"
-);
+copied.push(".claude/hooks/setup-sync-check.mjs", ".claude/hooks/lib/reviewable-files.mjs");
+
+// 旧版が配っていた code-review 用 hook（PR 作成 gate / effort nudge）は配布廃止。
+// /code-review が原則ユーザー手打ち専用になり Claude 自走で回せなくなったため、レビュー運用は
+// CLAUDE.md のソフト指示（/simplify + /security-review）へ移行した。テンプレートから実体を
+// 消したので新規配備では配られないが、既存配備先には残っているため削除する（settings.json
+// からの登録解除は下の deregister が担当）。reviewable-files.mjs は Copilot 自動アサインの
+// 対象判定に引き続き使うので残す。
+for (const f of ["pr-code-review-gate.mjs", "code-review-effort-nudge.mjs"]) {
+  const p = join(claudeDir, "hooks", f);
+  if (existsSync(p)) {
+    rmSync(p);
+    removed.push(`.claude/hooks/${f}（配布廃止）`);
+  }
+}
 
 // ---- 1b. review-config.json の書き込み ----
 // テンプレートには含めず apply.mjs が生成・更新する（cpSync で消えない独立ファイル）。
@@ -449,27 +457,36 @@ const BRANCH_MARK = "**ブランチ**:";
 const BRANCH_BULLET =
   "- **ブランチ**: 実装前に必ずデフォルトブランチから作業ブランチを切る。デフォルトブランチへの直接コミット・直接 push は禁止。変更は必ず作業ブランチ経由の PR で入れる";
 
-// 簡素化レビュー: PR 作成前に /simplify を 1 回。gate 登録解除に伴いソフト運用（強制なし）。
-// 旧テンプレは code-review 必須（gate 強制）だったが、code-review が原則ユーザー手打ち専用に
-// なったため、Claude が自走で回せる /simplify（品質整理）へ差し替える。バグ探索が要る変更は
-// ユーザーが手動で /code-review を回す運用。
+// 簡素化レビュー: コード変更を含む PR で /simplify を 1 回。gate 登録解除に伴いソフト運用
+// （強制なし）。旧テンプレは code-review 必須（gate 強制）だったが、code-review が原則ユーザー
+// 手打ち専用になったため、Claude が自走で回せる /simplify（品質整理）へ差し替えた。起動条件は
+// 「スクリプト等のコード変更を含むとき」に限定する（docs/設定のみの PR には不要なため）。
+// バグ探索が要る変更はユーザーが手動で /code-review を回す運用。
 const SIMPLIFY_MARK = "**簡素化**:";
 const SIMPLIFY_LINE =
-  "- **簡素化**: PR 作成前（変更コミット後）に `/simplify` を 1 回実行し、再利用・簡素化・効率の観点でコードを整理する";
-// 旧 code-review 運用行（古い順）。gate 登録解除に伴い /simplify 行へ移行する。完全一致のみ。
+  "- **簡素化**: スクリプト等のコード変更を含む PR は、作成前（変更コミット後）に `/simplify` を 1 回実行し、再利用・簡素化・効率の観点でコードを整理する（`.claude/` `.github/` `.githooks/` のみの変更は対象外）";
+// 現行の簡素化行へ移行させる旧運用行（古い順）。完全一致のみ移行する:
+//   - 旧 code-review 必須行（gate 強制時代）
+//   - 旧・無条件の簡素化行（コード変更条件を持たなかった版）
 const REVIEW_GUARD_LINES_OLD = [
   "- **レビュー**: PR 作成前（変更コミット後）に `node .claude/hooks/pr-code-review-gate.mjs --required` で推奨 effort を確認し、`/code-review <effort>` と effort を明示して 1 回実行する（effort 未指定の起動は hook が差し戻す。実行漏れは PR 作成時にブロック）",
   "- **レビュー**: PR 作成前に `/code-review` を実行する（実行漏れ・effort 不足は hook が PR 作成時にブロックして知らせる）",
   "- **レビュー**: PR 作成前（変更コミット後）に `node .claude/hooks/pr-code-review-gate.mjs --required` で必要 effort を確認し、その effort で `/code-review` を実行する（実行漏れ・effort 不足は hook が PR 作成時にブロックして知らせる）",
   "- **レビュー**: PR 作成前（変更コミット後）に `/code-review` を 1 回実行する。effort は `node .claude/hooks/pr-code-review-gate.mjs --required` の算出値を推奨（実行漏れは hook が PR 作成時にブロックして知らせる）",
+  "- **簡素化**: PR 作成前（変更コミット後）に `/simplify` を 1 回実行し、再利用・簡素化・効率の観点でコードを整理する",
 ];
 
+// セキュリティレビュー: セキュリティに関わる変更のときだけ /security-review を 1 回。
+// 無条件（全 PR）ではなく、認証・入力処理・機密・外部通信などの変更に限定する。
 const SECURITY_GUARD_MARK = "**セキュリティレビュー**:";
 const SECURITY_GUARD_LINE =
-  "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する";
-// 旧 security 運用行（ブロック文言つき）。gate 登録解除でソフト版へ移行する。完全一致のみ。
+  "- **セキュリティレビュー**: 認証・入力処理・機密情報・外部通信などセキュリティに関わる変更のときは、PR 作成前（変更コミット後）に `/security-review` を 1 回実行する";
+// 現行のセキュリティ行へ移行させる旧運用行。完全一致のみ移行する:
+//   - 旧・ブロック文言つき（gate 強制時代）
+//   - 旧・無条件のソフト版（セキュリティ関連という条件を持たなかった版）
 const SECURITY_GUARD_LINES_OLD = [
   "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する（コード変更を含む PR での実行漏れは PR 作成時にブロック）",
+  "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する",
 ];
 
 // 旧 pr-copilot テンプレが CLAUDE.md へ撒いていた「## PR レビュー」節は配布を廃止した。
@@ -547,7 +564,7 @@ const workflow = upsertWorkflowSection(claudeMdPath, WORKFLOW_HEADING, [
 ]);
 const wfState = (mark) => workflow.bullets.find((b) => b.mark === mark)?.state ?? "?";
 const claudeMdStates = [`ブランチ規約: ${wfState(BRANCH_MARK)}`];
-claudeMdStates.push(`簡素化(/simplify): ${reviewLineMigrated ? "migrated-from-code-review" : wfState(SIMPLIFY_MARK)}`);
+claudeMdStates.push(`簡素化(/simplify): ${reviewLineMigrated ? "migrated" : wfState(SIMPLIFY_MARK)}`);
 claudeMdStates.push(`セキュリティレビュー: ${securityLineMigrated ? "updated" : wfState(SECURITY_GUARD_MARK)}`);
 if (reviewSectionState) claudeMdStates.push(`レビュー運用(旧節): ${reviewSectionState}`);
 
@@ -607,7 +624,7 @@ if (settingsReadable) {
   };
 
   // 登録解除: 自分が過去に撒いた hook を settings.json から外す（owns 一致で除去し、
-  // 空になったグループは畳む）。既存配備先の再実行で「休眠化」を貫徹するため。
+  // 空になったグループは畳む）。配布廃止した hook の掃除を既存配備先で貫徹するため。
   // 自分の hook だけを外し、他人の hook や未知構造のグループには触れない。
   const deregister = (event, { label, owns }) => {
     const groups = settings.hooks[event];
@@ -634,12 +651,11 @@ if (settingsReadable) {
     hookStates.push(`${event}(${label}): deregistered`);
   };
 
-  // PR 作成 gate / effort nudge は登録解除して休眠させる（ファイルは cpSync で残すが
-  // settings.json からは外す）。理由: 最新の Claude Code では /code-review が原則ユーザー
-  // 手打ち専用になり、Claude 発の起動を前提にした nudge は発火しない。gate 本体の
-  // typedRe バグ（手打ちレビューの取りこぼし→ループ）は修正済みだが、レビュー強制は
-  // CLAUDE.md のソフト運用（/simplify + /security-review）へ移行するため既定では無効化する。
-  // 再有効化したい場合はこの 2 hook を settings.json へ手動登録すればよい。
+  // PR 作成 gate / effort nudge は配布廃止。実体は上でテンプレートから削除・既存配備先からも
+  // rmSync 済み。ここでは旧版が登録した settings.json エントリを登録解除して掃除を貫徹する。
+  // 理由: /code-review が原則ユーザー手打ち専用（disable-model-invocation）になり Claude 自走の
+  // 自動門番として成立しなくなったため、レビュー運用は CLAUDE.md のソフト指示
+  // （/simplify + /security-review）へ移行した。
   deregister("PreToolUse", {
     label: "pr-code-review-gate.mjs",
     owns: (cmd) => cmd.includes("pr-code-review-gate.mjs"),

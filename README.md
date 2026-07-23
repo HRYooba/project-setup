@@ -64,7 +64,7 @@ skills/
 
 ## テスト
 
-hook（PR 前レビュー gate・effort nudge。既定は休眠だが本体ロジックは検証する）と apply.mjs の冪等性・登録解除は `tests/` のユニットテストで検証する（Node 標準の test runner のみ・依存なし）:
+apply.mjs の冪等性・CLAUDE.md 文面の移行・配布廃止 hook の撤去（実体削除 + settings.json 登録解除）と、テンプレ自動追随（setup-sync）は `tests/` のユニットテストで検証する（Node 標準の test runner のみ・依存なし）:
 
 ```
 node --test "tests/*.test.mjs"
