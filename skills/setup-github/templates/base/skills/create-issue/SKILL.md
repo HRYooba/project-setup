@@ -36,7 +36,7 @@ user-invocable: false
 
 直前の会話内容（プラン、バグ議論、機能要望など）を分析し以下を判定する:
 
-- **type**: `feat` / `fix` / `docs` / `style` / `refactor` / `perf` / `test` / `build` / `ci` / `chore`（`rules/git-conventions.md` の type 体系と同一）
+- **type**: `feat` / `fix` / `docs` / `style` / `refactor` / `perf` / `test` / `build` / `ci` / `chore` から選ぶ（`revert` は Issue として起票しない）
 - **タイトル**: 変更内容の簡潔な要約（日本語）
 - **本文**: Step 3 のテンプレートに従って生成
 
@@ -48,20 +48,8 @@ type に応じて `templates.md` のテンプレートで本文を生成する�
 
 ### Step 4: ラベル決定
 
-コミット type と同名のラベルを付与する（`rules/git-conventions.md` 参照）。
-
-| type | label |
-|:-----|:------|
-| feat | `feat` |
-| fix | `fix` |
-| docs | `docs` |
-| style | `style` |
-| refactor | `refactor` |
-| perf | `perf` |
-| test | `test` |
-| build | `build` |
-| ci | `ci` |
-| chore | `chore` |
+Step 2 で判定した type と**同名のラベル**を付与する（1 Issue に付ける type ラベルは原則1つ）。
+リポジトリに該当ラベルが無ければ作成するか、ラベルなしで起票するかをユーザーに確認する。
 
 ### Step 5: ユーザー確認
 
@@ -77,17 +65,5 @@ type に応じて `templates.md` のテンプレートで本文を生成する�
 
 ### Step 6: Issue 作成
 
-承認後 `gh issue create` を実行する:
-
-```bash
-gh issue create --title "<タイトル>" --label "<label>" --body "$(cat <<'EOF'
-<本文>
-EOF
-)"
-```
-
-作成後、Issue URL をユーザーに返す。
-
-## 参照ファイル
-
-- **テンプレート**: `references/templates.md` — type別のIssue本文テンプレート集
+承認後 `gh issue create` で起票し、Issue URL をユーザーに返す。
+`--body` で本文を渡すと `.github/ISSUE_TEMPLATE` は適用されないため、本文は Step 3 で完成させておく。
