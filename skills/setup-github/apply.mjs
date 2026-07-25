@@ -11,6 +11,8 @@
 //       は配布廃止し、既存配備先の実体も削除、settings.json の登録も解除する）
 //     - .claude/rules/git-conventions.md（templates/base/rules の同梱スナップショットをコピー）
 //     - .claude/skills/create-issue/（templates/base/skills の同梱スナップショットをコピー）
+//     - .github/pull_request_template.md と .github/ISSUE_TEMPLATE/*.yml
+//       （templates/base/.github の seed。**既存があれば触らない** — リポジトリ所有の成果物のため）
 //     - .claude/CLAUDE.md へブランチ規約と PR 前レビュー運用（/simplify + /security-review の
 //       ソフト運用。強制はしない）を追記
 //     - .claude/settings.json へ hooksPath 自動設定(SessionStart) とテンプレ追随(SessionStart)を
@@ -341,6 +343,24 @@ cpSync(join(templatesDir, "base", "skills", "create-issue"), join(claudeDir, "sk
   recursive: true,
 });
 copied.push(".claude/skills/create-issue/");
+
+// ---- 2-b. .github/ テンプレートの初回配置（seed。既存には一切触らない） ----
+// PR / Issue テンプレはリポジトリ所有の成果物で、プロジェクト側で育てるもの
+// （独自の ISSUE_TEMPLATE を持つリポが実在する）。上書きコピーにすると再実行のたびに
+// プロジェクト固有のテンプレが消えるため、ファイルが無い場合だけ置く。
+// 更新したいときはプロジェクト側で同梱版（templates/base/.github/）から手動で取り込む。
+for (const rel of [
+  "pull_request_template.md",
+  "ISSUE_TEMPLATE/bug_report.yml",
+  "ISSUE_TEMPLATE/feature_request.yml",
+  "ISSUE_TEMPLATE/task.yml",
+]) {
+  const dst = join(target, ".github", rel);
+  if (existsSync(dst)) continue; // 既存は保持。再実行ごとの警告ノイズを避けるため報告もしない
+  mkdirSync(dirname(dst), { recursive: true });
+  cpSync(join(templatesDir, "base", ".github", rel), dst);
+  copied.push(`.github/${rel}`);
+}
 
 // ---- 3. --pr-copilot テンプレートのコピー ----
 // githooks/ はリポジトリルートの .githooks/、workflows/ は .github/workflows/ へ配置し、

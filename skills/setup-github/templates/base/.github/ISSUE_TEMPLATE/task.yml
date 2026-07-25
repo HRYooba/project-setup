@@ -1,0 +1,27 @@
+name: 作業タスク
+description: リファクタリング・ドキュメント・保守などの作業（type ラベルは起票後に付ける）
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 背景・目的
+      description: なぜこの作業が必要か
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: 完了条件
+      value: |
+        - [ ]
+  - type: textarea
+    id: context
+    attributes:
+      label: 参考
+      description: 関連 Issue / PR / ドキュメント

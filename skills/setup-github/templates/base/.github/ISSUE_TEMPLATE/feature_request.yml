@@ -1,0 +1,33 @@
+name: 機能要望
+description: 新機能や改善を提案する
+labels: [feat]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい課題
+      description: 何が困っているか
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 提案する内容
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 代替案
+      description: 検討した他の方法。なければ「なし」
+  - type: textarea
+    id: criteria
+    attributes:
+      label: 完了条件
+      value: |
+        - [ ]
+  - type: textarea
+    id: context
+    attributes:
+      label: 参考
+      description: 関連 Issue / PR / 参考リンク
