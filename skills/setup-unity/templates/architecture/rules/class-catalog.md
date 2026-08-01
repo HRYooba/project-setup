@@ -112,7 +112,8 @@ Service ↔ State の同期配線専用クラス。次の 2 形態のみ:
 | 種別 | 命名 | 責務 | 作成基準・契約 |
 |:-----|:-----|:-----|:---------------|
 | LifetimeScope | `*LifetimeScope` | scope 単位の配線 | 配線のみ。実装ロジック・起動時副作用（外部ツール設定等）を持たない |
-| Installer | `*Installer` | 機能単位の DI 登録分割 | LifetimeScope が肥大したら Installer へ分割する |
+| Installer | `*Installer` | 機能単位の DI 登録分割 | 複数 scope から使い回す、または差し替える単位のときに分ける。1 つの LifetimeScope からしか呼ばれず差し替えもしないなら分けない |
+| EntryPoint | `*EntryPoint` | DI コンテナの lifecycle（`IStartable` / `IAsyncStartable` / `IDisposable`）に載せる起動・停止 adapter | plain class。`Composition/EntryPoints/` に置く。起動対象（Synchronizer 等）に lifecycle 依存を持ち込まないために存在するので、**自身は業務ロジックを持たず起動・停止のみ**。CancellationTokenSource の生成・cancel と多重 Dispose ガードを担う |
 | SettingsAsset | `*SettingsAsset` | Unity Inspector で編集する ScriptableObject | 必ず `ToOptions()` を持つ。`CreateAssetMenu` のメニュー名・order は既存と衝突させない |
 | Preferences | `*Preferences` | ユーザーが UI から変更し永続化する個人設定値 | `Settings` と呼ばない（asset / Options と混同するため） |
 | Shared ユーティリティ | — | ビジネス意味を持たない技術部品 | 暗黙の副作用（ログ出力等）を持たない。失敗は戻り値で表現する（`TryParse` 形式等） |
