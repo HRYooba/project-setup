@@ -9,7 +9,7 @@ description: >
   agents（unity-tester / unity-linter）を撒く。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無と MCP バインディングは、
   実行時に AskUserQuestion で確認する。
-version: 1.7.0
+version: 1.8.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
