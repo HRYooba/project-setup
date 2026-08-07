@@ -9,7 +9,7 @@ description: >
   create-issue skill を撒く。ブランチ保護の有無と、PR 自動レビュー3機能（Copilot 自動アサイン /
   watch-pr / resolve-pr）と AGENTS.md 自動生成（Copilot code review にプロジェクト規約を教える）の
   導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.12.0
+version: 1.13.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -23,10 +23,10 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 1. **ブランチ保護（既定 ON・質問で外せる）** — `.githooks/pre-push` が保護ブランチ（default branch + develop）への直 push を拒否。保護ブランチは実行時に検出するため repo ごとの設定は不要。Claude Code 利用者は SessionStart hook で `core.hooksPath` が自動設定され、手動 push を含む全ツールの push に効く。質問で「入れない」を選ぶと `--no-pre-push` で導入をスキップし、**配備済みなら pre-push を削除**する（撒く git hook が他に無ければ `core.hooksPath` の自動設定 hook と即時設定も解除する）
 2. **レビュー対象フォルダ設定（残置）** — `.claude/hooks/review-config.json`（`reviewTargets` / `reviewExcludes`）と `.claude/hooks/lib/reviewable-files.mjs` は配布を続ける。**pr-copilot の Copilot 自動アサインの対象判定**に使う唯一のソース（除外デフォルトは `.claude/` `.github/` `.githooks/`。明示指定が無い限り再実行で温存）
 3. **旧 code-review 用 hook の撤去** — かつて配っていた `pr-code-review-gate.mjs`（PR 作成 gate）と `code-review-effort-nudge.mjs`（effort 差し戻し nudge）は**配布廃止**。`/code-review` が原則ユーザー手打ち専用（disable-model-invocation）になり、Claude 自走の自動門番として成立しなくなったため、レビュー運用は CLAUDE.md のソフト指示へ移行した。テンプレートから実体を削除し、**既存配備先の実体も再実行時に削除**、settings.json の登録も解除する
-4. **git-conventions ルール** — skill 同梱の `templates/base/rules/git-conventions.md` を `.claude/rules/` へコピー。ただしプロジェクト側で内容がカスタマイズされている（同梱版と異なる）場合は上書きせず警告する
+4. **git-conventions ルール** — skill 同梱の `templates/base/rules/git-conventions.md` を `.claude/rules/` へコピー。ただし**既存があり内容が異なる場合は書かず「要マージ」として報告**し、Claude が現物とテンプレを読んで統合する（Step 2.6）。上書きするとプロジェクト固有のブランチ戦略が消え、スキップするとテンプレ更新が永久に届かないため、どちらも採らない
 5. **create-issue skill** — skill 同梱の `templates/base/skills/create-issue/` を `.claude/skills/` へコピー
 5-b. **`.github/` テンプレート（seed）** — `templates/base/.github/` の `pull_request_template.md`（小文字・単一ファイル）と `ISSUE_TEMPLATE/{bug_report,feature_request,task}.yml` を配置。**既にファイルがある場合は一切触らない**（PR / Issue テンプレはリポジトリ所有の成果物で、独自に育てているリポがあるため）。更新したいときはプロジェクト側で同梱版から手動で取り込む
-6. **CLAUDE.md** — ブランチ規約（作業ブランチ経由の PR 必須）と PR 前レビュー運用を**ソフト指示**として追記（強制はしない）。レビューは条件付きで各 1 回:「スクリプト等のコード変更を含む PR は作成前に `/simplify`」「認証・入力処理・機密・外部通信などセキュリティに関わる変更のときは作成前に `/security-review`」。旧テンプレの各行（code-review 必須行 / 無条件 simplify 行 / 無条件・ブロック文言つき security 行）は現行の条件付き文面へ、再実行時に完全一致置換で移行する（手編集された行は触らず警告）
+6. **CLAUDE.md** — ブランチ規約（作業ブランチ経由の PR 必須）と PR 前レビュー運用を**ソフト指示**として配る（強制はしない）。レビューは条件付きで各 1 回:「スクリプト等のコード変更を含む PR は作成前に `/simplify`」「認証・入力処理・機密・外部通信などセキュリティに関わる変更のときは作成前に `/security-review`」。配る節の本文は `templates/claude-md.md`。**ファイルが無ければ書き、節の行が揃っていれば触らず、揃っていなければ「要マージ」として報告**する（Step 2.6 で Claude が統合。旧文面の移行リストは保守しない）
 7. **テンプレート自動追随（通知と実行の分離）** — `.claude/setup-sync-state.json` に「適用時の project-setup プラグイン版」と「有効フラグ一式」を記録し（setup-github / setup-unity が同じファイルへ各自のキーでマージ。相手のキーは消さない）、`.claude/hooks/setup-sync-check.mjs`（SessionStart hook）が現行版と比較する。現行版のほうが新しければ additionalContext で「`/setup-sync` を実行して同期 PR を作ってほしい」と**通知するだけ**に徹する（差が無ければ即 exit・毎セッションの税を最小化）。実際の同期（保存フラグで apply.mjs 再適用 → commit → push → PR 作成）は `setup-sync` skill（`sync-run.mjs`）が決定的に行う。hook の注入文へ LLM が従うか否かに実行を委ねない設計。**重複PR防止・試行回数ガード（同一版 最大2回）・merge 禁止は sync-run.mjs がコード担保する**（PR は作るが merge はしない・apply の warnings を PR 本文へ全文転記）。発火はアップグレード方向のみ（複数マシンで版がずれても古い版が新しい同期を巻き戻さない）。無効化は `SETUP_SYNC_DISABLE=1`。**この単一 hook が setup-unity のドリフトも検知する**（setup-unity は状態ファイルへ自分のキーを書くだけで settings.json には触れない。auto-sync には setup-github の導入が前提）
 
 ## pr-copilot モード（質問で「PR 自動レビューを入れる」を選んだ場合）
@@ -76,9 +76,16 @@ gh repo edit {nameWithOwner} --delete-branch-on-merge         # 有効にする
 gh repo edit {nameWithOwner} --delete-branch-on-merge=false   # 無効へ戻す
 ```
 
+### Step 2.6: 要マージの Markdown を統合する
+
+apply.mjs の出力に「要マージ」節があれば、`${CLAUDE_PLUGIN_ROOT}/skills/md-merge-contract.md`
+を Read し、そこに書かれた手順と判断基準に従って各ファイルを統合する。**この工程を飛ばすと
+テンプレ更新がその配備先に届かない。**「要マージ」節が無ければ何もしない。
+
 ### Step 3: 結果報告
 
 apply.mjs の出力（配置ファイル・settings.json 登録状態・git 設定状態・警告）をそのまま伝える。
+Step 2.6 で統合したファイルがあれば、何を採り何を残したかも併せて伝える。
 ブランチ自動削除は設定結果（変更した / 現在値のまま / 非 admin のため現在値の報告のみ）を添える。
 併せて次を案内する:
 
@@ -89,9 +96,9 @@ apply.mjs の出力（配置ファイル・settings.json 登録状態・git 設�
 
 ## 注意
 
-- テンプレート由来のファイル（hooks / githooks / skills / agents）は**上書きコピー**される。プロジェクト側で手編集していた場合は上書きされる旨を伝える（例外: `git-conventions.md` はカスタマイズ検知で保護され、レビュー対象/除外は `.claude/hooks/review-config.json` に保存されるため明示指定が無い限り温存される。旧版で lib に直接埋め込まれていた設定は初回再実行時に config へ自動移行する）
+- テンプレート由来のファイル（hooks / githooks / skills / agents）は**上書きコピー**される。プロジェクト側で手編集していた場合は上書きされる旨を伝える（例外: `rules/*.md` と `CLAUDE.md` は上書きせず「要マージ」にして Claude が統合する。レビュー対象/除外は `.claude/hooks/review-config.json` に保存されるため明示指定が無い限り温存される。旧版で lib に直接埋め込まれていた設定は初回再実行時に config へ自動移行する）
 - `.claude/settings.json` の hook 登録は、自分が撒いた hook（スクリプト名一致 / hooksPath は完全一致）だけを更新する。ユーザー独自の `core.hooksPath` 設定 hook 等は上書きせず警告してスキップする
 - `.claude/settings.json` は**上書きせず追記マージ**（登録済みの hook はテンプレート最新形へ更新、それ以外は変更しない）。JSON パースに失敗した場合は登録をスキップして警告するので、その旨を報告する
-- `.claude/CLAUDE.md` はマーカー（`**ブランチ**:` / `**簡素化**:` / `**セキュリティレビュー**:`）が既にあれば追記しない（冪等）。例外: 旧 code-review 行（`**レビュー**:`）と旧・無条件 simplify 行は現行の条件付き `/simplify` 行へ、旧 security 行（ブロック文言つき / 無条件ソフト）は条件付き `/security-review` 行へ、旧テンプレ文面と完全一致する場合のみ移行する（手編集された行は触らず警告する）。旧版が撒いた「## PR レビュー」節（`**レビュー対応**:`）は配布廃止につき、旧テンプレ文面と完全一致するときだけ再実行時に除去する（手編集された節は警告して残す）
+- `.claude/CLAUDE.md` は `templates/claude-md.md` の節の全行が揃っていれば触らない（冪等）。揃っていなければ「要マージ」になり、Step 2.6 で Claude が統合する。旧版が撒いた行（`**レビュー**:` の code-review 行、無条件版の simplify / security 行、「## PR レビュー」節の `**レビュー対応**:`）はいずれも現行テンプレに無いので、統合時に「テンプレから消えた項目」として除去される
 - apply.mjs は `.githooks/pre-push` を stage する（exec bit 付与のため）。ユーザーが意図しない stage が混ざらないよう、コミット時に確認する。ブランチ保護を「入れない」で再実行した場合は、配備済み pre-push を削除しその削除を stage する（撒く git hook が他に無ければ `core.hooksPath` の SessionStart hook と即時設定も解除する）
 - `.claude/setup-sync-state.json`（テンプレート自動追随の状態ファイル）は **repo にコミットする**（次回比較の基準としてバージョン管理下に残す。`.gitignore` しない）。SessionStart の同期チェック hook は新しいセッションから有効になる。バックフィル（既存の展開済みプロジェクトへ状態ファイルを配る）は、各プロジェクトで setup-github / setup-unity を再実行すれば自動生成される

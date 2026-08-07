@@ -3,22 +3,24 @@
 // 観点:
 //   1. 初回適用でファイル・settings.json・CLAUDE.md（3 bullet）が揃う
 //   2. フラグ無し再実行で review-config が温存され、settings / CLAUDE.md が重複しない
-//   3. 旧版配備（security bullet 無しの CLAUDE.md）への再実行で security bullet だけが
-//      既存の「## 開発ワークフロー」節へ追加される（配布シナリオの再現）
+//   3. rules/*.md と CLAUDE.md は「初回は配る / 同じなら触らない / 差分があれば書かずに
+//      要マージとして報告する」（統合は SKILL 手順で Claude が行うので apply.mjs は書かない）
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { APPLY, tempDir } from "./helpers.mjs";
+import { APPLY, APPLY_UNITY, tempDir } from "./helpers.mjs";
 /* global process */
 
-function runApply(target, args = []) {
-  const res = spawnSync(process.execPath, [APPLY, target, ...args], { encoding: "utf8" });
-  assert.equal(res.status, 0, `apply.mjs failed: ${res.stderr}\n${res.stdout}`);
+function run(applyPath, target, args = []) {
+  const res = spawnSync(process.execPath, [applyPath, target, ...args], { encoding: "utf8" });
+  assert.equal(res.status, 0, `apply failed: ${res.stderr}\n${res.stdout}`);
   return res.stdout;
 }
+const runApply = (target, args = []) => run(APPLY, target, args);
+const runApplyUnity = (target, args = []) => run(APPLY_UNITY, target, args);
 
 const count = (haystack, needle) => haystack.split(needle).length - 1;
 
@@ -87,17 +89,17 @@ test("初回適用 → 再実行で重複せず、review-config が温存され�
   assert.deepEqual(sync2["setup-github"], sync1["setup-github"], "再実行で setup-github の記録が変わった");
 });
 
-test("旧版配備への再実行: 旧レビュー行が /simplify へ移行し security bullet が追加される", () => {
+test("既存 CLAUDE.md がテンプレ節を欠いていれば、書き換えず要マージとして報告する", () => {
   const target = tempDir("apply-test-");
   mkdirSync(join(target, ".claude"), { recursive: true });
-  // 旧版 setup-github 適用済みの CLAUDE.md を再現（security bullet 無し・後続節あり）
+  // 旧版 setup-github 適用済みの CLAUDE.md を再現（現行テンプレには無い旧レビュー行を持つ）。
   const oldMd = [
     "# プロジェクト規約",
     "",
     "## 開発ワークフロー",
     "",
     "- **ブランチ**: 実装前に必ずデフォルトブランチから作業ブランチを切る。デフォルトブランチへの直接コミット・直接 push は禁止。変更は必ず作業ブランチ経由の PR で入れる",
-    "- **レビュー**: PR 作成前（変更コミット後）に `node .claude/hooks/pr-code-review-gate.mjs --required` で推奨 effort を確認し、`/code-review <effort>` と effort を明示して 1 回実行する（effort 未指定の起動は hook が差し戻す。実行漏れは PR 作成時にブロック）",
+    "- **レビュー**: PR 作成前に `/code-review` を実行する",
     "",
     "## ビルド",
     "",
@@ -106,20 +108,40 @@ test("旧版配備への再実行: 旧レビュー行が /simplify へ移行し 
   ].join("\n");
   writeFileSync(join(target, ".claude", "CLAUDE.md"), oldMd, "utf8");
 
-  runApply(target);
+  const out = runApply(target);
 
-  const md = readFileSync(join(target, ".claude", "CLAUDE.md"), "utf8");
-  for (const m of MARKS) assert.equal(count(md, m), 1, `${m} が 1 回でない`);
-  // 旧 code-review 行は /simplify へ移行し、旧「**レビュー**:」マーカーは残らない。
-  assert.match(md, /- \*\*簡素化\*\*: スクリプト等のコード変更.*`\/simplify`/);
-  assert.ok(!md.includes("**レビュー**:"), "旧レビュー行が移行されずに残っている");
-  assert.ok(!md.includes("/code-review"), "撤去したはずの /code-review 案内が残っている");
-  // security bullet はワークフロー節内（「## ビルド」より前）に入る
-  assert.ok(
-    md.indexOf("**セキュリティレビュー**:") < md.indexOf("## ビルド"),
-    "security bullet がワークフロー節の外に追加された"
-  );
-  assert.match(md, /- ここはプロジェクト固有の節（触られないこと）/);
+  // apply.mjs は書かない。旧行も含めて現物がそのまま残る（統合は Claude が行う）。
+  assert.equal(readFileSync(join(target, ".claude", "CLAUDE.md"), "utf8"), oldMd, "CLAUDE.md が書き換えられた");
+  assert.match(out, /\.claude\/CLAUDE\.md: 要マージ/);
+  // 要マージ節に現物とテンプレ両方のパスが出る（Claude がこれを読んで統合する）。
+  assert.match(out, /要マージ（apply\.mjs は書いていない/);
+  assert.match(out, /テンプレ: .*claude-md\.md/);
+});
+
+test("既存 CLAUDE.md にテンプレ節が揃っていれば、プロジェクト固有の節があっても変更なし", () => {
+  const target = tempDir("apply-test-");
+  runApply(target); // 初回でテンプレ節が入る
+  const before = readFileSync(join(target, ".claude", "CLAUDE.md"), "utf8");
+  const withOwn = `${before}\n## ビルド\n\n- ここはプロジェクト固有の節\n`;
+  writeFileSync(join(target, ".claude", "CLAUDE.md"), withOwn, "utf8");
+
+  const out = runApply(target);
+
+  assert.match(out, /\.claude\/CLAUDE\.md: 変更なし/);
+  assert.equal(readFileSync(join(target, ".claude", "CLAUDE.md"), "utf8"), withOwn, "固有の節が変化した");
+});
+
+test("カスタマイズされた rules/*.md は上書きされず要マージとして報告される", () => {
+  const target = tempDir("apply-test-");
+  runApply(target);
+  const rulePath = join(target, ".claude", "rules", "git-conventions.md");
+  const customized = `${readFileSync(rulePath, "utf8")}\n## このリポジトリ固有\n\n- main 単一運用\n`;
+  writeFileSync(rulePath, customized, "utf8");
+
+  const out = runApply(target);
+
+  assert.match(out, /\.claude\/rules\/git-conventions\.md: 要マージ/);
+  assert.equal(readFileSync(rulePath, "utf8"), customized, "カスタマイズが上書きされた");
 });
 
 test("旧版が登録した gate/nudge(PreToolUse) は再実行で登録解除され、他人の hook は残る", () => {
@@ -192,34 +214,27 @@ test("配備済みの旧 code-review 用 hook 実体は再実行で削除され�
   );
 });
 
-test("旧・無条件のレビュー行は条件付き文面へ移行する", () => {
+test("setup-unity: カスタマイズされた rules/*.md は cpSync に上書きされず要マージになる", () => {
   const target = tempDir("apply-test-");
-  mkdirSync(join(target, ".claude"), { recursive: true });
-  // 直前版（無条件ソフト運用）の CLAUDE.md を再現する。
-  const oldMd = [
-    "# プロジェクト規約",
-    "",
-    "## 開発ワークフロー",
-    "",
-    "- **ブランチ**: 実装前に必ずデフォルトブランチから作業ブランチを切る。デフォルトブランチへの直接コミット・直接 push は禁止。変更は必ず作業ブランチ経由の PR で入れる",
-    "- **簡素化**: PR 作成前（変更コミット後）に `/simplify` を 1 回実行し、再利用・簡素化・効率の観点でコードを整理する",
-    "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する",
-    "",
-  ].join("\n");
-  writeFileSync(join(target, ".claude", "CLAUDE.md"), oldMd, "utf8");
+  mkdirSync(join(target, "ProjectSettings"), { recursive: true });
+  writeFileSync(join(target, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 2022.3.0f1\n", "utf8");
+  runApplyUnity(target);
 
-  runApply(target);
+  const rulePath = join(target, ".claude", "rules", "testing.md");
+  const customized = `${readFileSync(rulePath, "utf8")}\n## このプロジェクト固有\n\n- 追記した規約\n`;
+  writeFileSync(rulePath, customized, "utf8");
+  // 触っていない規約は「変更なし」のままであることも同時に確かめる。
+  const untouched = readFileSync(join(target, ".claude", "rules", "hierarchy.md"), "utf8");
 
-  const md = readFileSync(join(target, ".claude", "CLAUDE.md"), "utf8");
-  for (const m of MARKS) assert.equal(count(md, m), 1, `${m} が 1 回でない`);
-  // 簡素化・セキュリティとも条件付き文面へ置き換わる。
-  assert.match(md, /- \*\*簡素化\*\*: スクリプト等のコード変更.*`\/simplify`/);
-  assert.match(md, /- \*\*セキュリティレビュー\*\*: 認証・入力処理.*`\/security-review`/);
-  // 旧・無条件文面（「PR 作成前（変更コミット後）に `/simplify` を 1 回実行し、再利用」）は残らない。
-  assert.ok(
-    !md.includes("- **簡素化**: PR 作成前（変更コミット後）に `/simplify`"),
-    "旧・無条件の簡素化行が残っている"
-  );
+  const out = runApplyUnity(target);
+
+  assert.match(out, /rules\/testing\.md: 要マージ/);
+  assert.match(out, /rules\/hierarchy\.md: 変更なし/);
+  assert.equal(readFileSync(rulePath, "utf8"), customized, "cpSync がカスタマイズを上書きした");
+  assert.equal(readFileSync(join(target, ".claude", "rules", "hierarchy.md"), "utf8"), untouched);
+  // 要マージのファイルは「配置ファイル」に出さない（実際に書いていないため）。
+  const placed = out.slice(out.indexOf("配置ファイル:"), out.indexOf("Markdown（"));
+  assert.ok(!placed.includes("rules/testing.md"), "書いていないファイルが配置ファイルに出ている");
 });
 
 test("--no-pre-push 初回: pre-push を配らず core.hooksPath も登録しない", () => {

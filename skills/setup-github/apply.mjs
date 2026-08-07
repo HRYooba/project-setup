@@ -9,12 +9,12 @@
 //     - .claude/hooks/lib/reviewable-files.mjs + review-config.json（Copilot 自動アサインの
 //       対象判定に使う。旧 code-review 用 hook = pr-code-review-gate.mjs / code-review-effort-nudge.mjs
 //       は配布廃止し、既存配備先の実体も削除、settings.json の登録も解除する）
-//     - .claude/rules/git-conventions.md（templates/base/rules の同梱スナップショットをコピー）
+//     - .claude/rules/git-conventions.md と .claude/CLAUDE.md（前者は templates/base/rules、
+//       後者は templates/claude-md.md）。**既存があり内容が異なるときは書かない** —
+//       「要マージ」として報告し、SKILL 手順で Claude が文脈判断して統合する
 //     - .claude/skills/create-issue/（templates/base/skills の同梱スナップショットをコピー）
 //     - .github/pull_request_template.md と .github/ISSUE_TEMPLATE/*.yml
 //       （templates/base/.github の seed。**既存があれば触らない** — リポジトリ所有の成果物のため）
-//     - .claude/CLAUDE.md へブランチ規約と PR 前レビュー運用（/simplify + /security-review の
-//       ソフト運用。強制はしない）を追記
 //     - .claude/settings.json へ hooksPath 自動設定(SessionStart) とテンプレ追随(SessionStart)を
 //       登録し、旧版が撒いた gate/nudge(PreToolUse) を登録解除する
 //     - 実行者の clone へ core.hooksPath を即時設定 + pre-push へ exec bit 付与（mac/linux 対策）
@@ -27,8 +27,6 @@
 //     - .github/workflows/agents-md-sync.yml（AGENTS.md 乖離の CI ガード。--no-verify や
 //       Web UI 編集などローカル pre-commit が効かない経路のドリフトを PR で検出）
 //     - .claude/settings.json へ PostToolUse(Bash) を登録
-//     - （旧版が CLAUDE.md へ撒いた「## PR レビュー」節は再実行時に除去する。watch-pr の
-//       起動トリガーは after-pr-create.mjs の additionalContext に一本化）
 //
 // 使い方: node apply.mjs [target-dir] [--pr-copilot] [--no-pre-push] [--review-targets=src,shared]
 //         [--review-excludes=.claude,.github]
@@ -117,6 +115,29 @@ if (!existsSync(join(templatesDir, "base"))) {
 const copied = [];
 const removed = [];
 const warnings = [];
+// 反映を LLM 判断へ委ねる Markdown。apply.mjs は書かず、ここへ積んで報告するだけ。
+// 実際の統合は SKILL 手順で Claude が現物とテンプレを読んで行う（詳細は deployMarkdown）。
+const needsMerge = [];
+
+// テンプレ由来の Markdown を配る。
+//   既存が無い          → そのまま書く（判断の余地がない）
+//   既存 == テンプレ    → 何もしない
+//   既存 != テンプレ    → **書かずに** needsMerge へ積む
+// 機械的な上書きはプロジェクト側で育った記述を消し、機械的なスキップはテンプレ更新を
+// 永久に届かなくする。どちらも避けるため、差分があるときの反映は SKILL 手順で Claude が
+// 文脈判断して行う（テンプレが扱う話題はテンプレ側を正とし、プロジェクト固有の追記は残す）。
+function deployMarkdown(dst, src, label) {
+  const content = readFileSync(src, "utf8");
+  if (!existsSync(dst)) {
+    mkdirSync(dirname(dst), { recursive: true });
+    writeFileSync(dst, content, "utf8");
+    copied.push(label);
+    return "新規配置";
+  }
+  if (readFileSync(dst, "utf8") === content) return "変更なし";
+  needsMerge.push({ label, dst, src });
+  return "要マージ";
+}
 
 // git をシェル非経由で実行。失敗時は null。
 function git(...a) {
@@ -323,21 +344,15 @@ if (prePush || prCopilot) {
 }
 
 // ---- 2. 同梱スナップショットのコピー（plugin 単体で完結。~/.claude は参照しない） ----
-// git-conventions.md はプロジェクト側でカスタマイズされ得る（例: GitHub Flow / main 単一へ
-// 書き換え）。同梱版と異なる内容が既にある場合は上書きせず警告に留める。
-// 無条件上書きにすると、再実行のたびにプロジェクト固有のブランチ戦略が消えるため。
-const conventionsSrc = join(templatesDir, "base", "rules", "git-conventions.md");
-const conventionsDst = join(claudeDir, "rules", "git-conventions.md");
-const conventionsContent = readFileSync(conventionsSrc, "utf8");
-if (existsSync(conventionsDst) && readFileSync(conventionsDst, "utf8") !== conventionsContent) {
-  warnings.push(
-    ".claude/rules/git-conventions.md はプロジェクト側でカスタマイズされているため上書きしませんでした（同梱版との差分は手動で確認してください）"
-  );
-} else {
-  mkdirSync(join(claudeDir, "rules"), { recursive: true });
-  cpSync(conventionsSrc, conventionsDst);
-  copied.push(".claude/rules/git-conventions.md");
-}
+// git-conventions.md はプロジェクト側で育つ散文（例: GitHub Flow / main 単一へ書き換え）。
+// 差分があれば書かずに要マージとして報告する（反映は Claude が文脈判断で行う）。
+const mdStates = [
+  `.claude/rules/git-conventions.md: ${deployMarkdown(
+    join(claudeDir, "rules", "git-conventions.md"),
+    join(templatesDir, "base", "rules", "git-conventions.md"),
+    ".claude/rules/git-conventions.md"
+  )}`,
+];
 
 cpSync(join(templatesDir, "base", "skills", "create-issue"), join(claudeDir, "skills", "create-issue"), {
   recursive: true,
@@ -413,180 +428,40 @@ if (prCopilot) {
   }
 }
 
-// ---- 4. CLAUDE.md への追記（マーカー検知で冪等） ----
-// 開発ワークフローの箇条書きは、既存の `## 開発ワークフロー` 見出しがあればその節へ
-// upsertWorkflowSection でマージする（無ければ新設。他ツールが同じ見出しを使っても重複しない）。
-// ヘルパーはこのファイル内に閉じる（スキル単体コピーで動くよう外部モジュールに依存しない）。
-const claudeMdJoinSep = (content) =>
-  content.endsWith("\n\n") ? "" : content.endsWith("\n") ? "\n" : "\n\n";
-
-// `## 開発ワークフロー` 見出しの下へ箇条書きをマージ（冪等・単一見出し）。
-// bullets: [{ mark, text }]（mark = 冪等判定の一意な部分文字列 / text = 追記する 1 行）。
-// 返り値: { bullets: [{ mark, state }] }（state = "present" | "added"）。
-function upsertWorkflowSection(mdPath, heading, bullets) {
-  const result = { bullets: [] };
-  const makeNewSection = (existing) => {
-    const missing = bullets.filter((b) => !(existing && existing.includes(b.mark)));
-    for (const b of bullets) {
-      result.bullets.push({
-        mark: b.mark,
-        state: existing && existing.includes(b.mark) ? "present" : "added",
-      });
-    }
-    if (missing.length === 0) return existing;
-    const section = `${heading}\n\n${missing.map((b) => b.text).join("\n")}\n`;
-    return existing === null ? section : existing + claudeMdJoinSep(existing) + section;
-  };
-  if (!existsSync(mdPath)) {
-    writeFileSync(mdPath, makeNewSection(null), "utf8");
-    return result;
-  }
-  const content = readFileSync(mdPath, "utf8");
-  const lines = content.split("\n");
-  const headingIdx = lines.findIndex((l) => l.trim() === heading);
-  if (headingIdx === -1) {
-    const out = makeNewSection(content);
-    if (out !== content) writeFileSync(mdPath, out, "utf8");
-    return result;
-  }
-  let end = lines.length;
-  for (let i = headingIdx + 1; i < lines.length; i++) {
-    if (/^##\s/.test(lines[i])) {
-      end = i;
-      break;
-    }
-  }
-  const missing = [];
-  for (const b of bullets) {
-    const present = content.includes(b.mark);
-    result.bullets.push({ mark: b.mark, state: present ? "present" : "added" });
-    if (!present) missing.push(b.text);
-  }
-  if (missing.length === 0) return result;
-  let insertAt = end;
-  while (insertAt > headingIdx + 1 && lines[insertAt - 1].trim() === "") insertAt--;
-  lines.splice(insertAt, 0, ...missing);
-  writeFileSync(mdPath, lines.join("\n"), "utf8");
-  return result;
-}
-
+// ---- 4. CLAUDE.md への反映（apply.mjs は書かない） ----
+// 配る内容は templates/claude-md.md（節そのもの）。CLAUDE.md はプロジェクトが最も育てる
+// ファイルなので、機械的な追記・置換をやめて Claude の文脈判断へ委ねる。
+// 旧実装は配る文面を定数で持ち、旧文面からの移行を「完全一致リスト」で追いかけていたが、
+// 文面を変えるたびにリストが伸びる（＝腐る）書き方だったため廃止した。既存配備先に残る
+// 古い運用行は、SKILL 手順のマージで Claude がテンプレ側を正として置き換える。
 const claudeMdPath = join(claudeDir, "CLAUDE.md");
+const claudeMdSrc = join(templatesDir, "claude-md.md");
+const claudeMdSection = readFileSync(claudeMdSrc, "utf8");
 
-const WORKFLOW_HEADING = "## 開発ワークフロー";
-const BRANCH_MARK = "**ブランチ**:";
-const BRANCH_BULLET =
-  "- **ブランチ**: 実装前に必ずデフォルトブランチから作業ブランチを切る。デフォルトブランチへの直接コミット・直接 push は禁止。変更は必ず作業ブランチ経由の PR で入れる";
-
-// 簡素化レビュー: コード変更を含む PR で /simplify を 1 回。gate 登録解除に伴いソフト運用
-// （強制なし）。旧テンプレは code-review 必須（gate 強制）だったが、code-review が原則ユーザー
-// 手打ち専用になったため、Claude が自走で回せる /simplify（品質整理）へ差し替えた。起動条件は
-// 「スクリプト等のコード変更を含むとき」に限定する（docs/設定のみの PR には不要なため）。
-// バグ探索が要る変更はユーザーが手動で /code-review を回す運用。
-const SIMPLIFY_MARK = "**簡素化**:";
-const SIMPLIFY_LINE =
-  "- **簡素化**: スクリプト等のコード変更を含む PR は、作成前（変更コミット後）に `/simplify` を 1 回実行し、再利用・簡素化・効率の観点でコードを整理する（`.claude/` `.github/` `.githooks/` のみの変更は対象外）";
-// 現行の簡素化行へ移行させる旧運用行（古い順）。完全一致のみ移行する:
-//   - 旧 code-review 必須行（gate 強制時代）
-//   - 旧・無条件の簡素化行（コード変更条件を持たなかった版）
-const REVIEW_GUARD_LINES_OLD = [
-  "- **レビュー**: PR 作成前（変更コミット後）に `node .claude/hooks/pr-code-review-gate.mjs --required` で推奨 effort を確認し、`/code-review <effort>` と effort を明示して 1 回実行する（effort 未指定の起動は hook が差し戻す。実行漏れは PR 作成時にブロック）",
-  "- **レビュー**: PR 作成前に `/code-review` を実行する（実行漏れ・effort 不足は hook が PR 作成時にブロックして知らせる）",
-  "- **レビュー**: PR 作成前（変更コミット後）に `node .claude/hooks/pr-code-review-gate.mjs --required` で必要 effort を確認し、その effort で `/code-review` を実行する（実行漏れ・effort 不足は hook が PR 作成時にブロックして知らせる）",
-  "- **レビュー**: PR 作成前（変更コミット後）に `/code-review` を 1 回実行する。effort は `node .claude/hooks/pr-code-review-gate.mjs --required` の算出値を推奨（実行漏れは hook が PR 作成時にブロックして知らせる）",
-  "- **簡素化**: PR 作成前（変更コミット後）に `/simplify` を 1 回実行し、再利用・簡素化・効率の観点でコードを整理する",
-];
-
-// セキュリティレビュー: セキュリティに関わる変更のときだけ /security-review を 1 回。
-// 無条件（全 PR）ではなく、認証・入力処理・機密・外部通信などの変更に限定する。
-const SECURITY_GUARD_MARK = "**セキュリティレビュー**:";
-const SECURITY_GUARD_LINE =
-  "- **セキュリティレビュー**: 認証・入力処理・機密情報・外部通信などセキュリティに関わる変更のときは、PR 作成前（変更コミット後）に `/security-review` を 1 回実行する";
-// 現行のセキュリティ行へ移行させる旧運用行。完全一致のみ移行する:
-//   - 旧・ブロック文言つき（gate 強制時代）
-//   - 旧・無条件のソフト版（セキュリティ関連という条件を持たなかった版）
-const SECURITY_GUARD_LINES_OLD = [
-  "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する（コード変更を含む PR での実行漏れは PR 作成時にブロック）",
-  "- **セキュリティレビュー**: PR 作成前（変更コミット後）に `/security-review` を 1 回実行する",
-];
-
-// 旧 pr-copilot テンプレが CLAUDE.md へ撒いていた「## PR レビュー」節は配布を廃止した。
-// watch-pr の起動トリガーは after-pr-create.mjs hook の additionalContext のみ
-// （コード変更を含む PR に限る条件付き）。CLAUDE.md 側の無条件「PR 作成後 /watch-pr」は
-// hook のガードを迂回し、レビューが来ない PR への空監視（30 分 TIMEOUT）を生んでいた。
-// 「1 PR 1 回のみ」の制約は watch-pr skill 本体へ移した。ここでは配備済みの旧節を
-// 再実行時に除去する（旧テンプレと完全一致のときだけ。手編集された節は触らない）。
-const REVIEW_MARK = "**レビュー対応**:";
-// 旧文面の 2 形態を除去対象にする。節形（テンプレそのまま）と箇条書き形
-// （導入時に既存の「## 開発ワークフロー」節へ手動マージされた配備が実在する）。
-// 文面本体が完全一致するときだけ消す（それ以外の手編集は kept-custom で警告）。
-const REVIEW_LINE_OLD =
-  "\\*\\*レビュー対応\\*\\*: PR 作成後 `\\/watch-pr` でレビューを監視し、指摘があれば `\\/resolve-pr` で対応。`\\/watch-pr` は 1 PR につき 1 回のみ（Copilot は 1 PR に 1 回しかレビューしないため）";
-const REVIEW_SECTION_OLD_RES = [
-  new RegExp(`## PR レビュー\\r?\\n(?:\\r?\\n)?${REVIEW_LINE_OLD}(?:\\r?\\n)?`),
-  new RegExp(`^- ${REVIEW_LINE_OLD}\\r?\\n?`, "m"),
-];
-
-// 旧文面の移行: 旧 code-review 行を /simplify 行へ、旧 security 行（ブロック文言つき）を
-// soft 版へ置き換える。gate を登録解除するので「PR 作成時にブロック」の案内が残ると運用が
-// 食い違う。ユーザーが文面を独自編集している可能性があるので、旧テンプレと完全一致のときだけ
-// 置換する。upsert より前に行い、置換後は各マーカーが在るので二重追記されない。
-let reviewLineMigrated = false;
-let securityLineMigrated = false;
-if (existsSync(claudeMdPath)) {
-  let content = readFileSync(claudeMdPath, "utf8");
-  let changed = false;
-  const oldReview = REVIEW_GUARD_LINES_OLD.find((l) => content.includes(l));
-  if (oldReview) {
-    content = content.replace(oldReview, SIMPLIFY_LINE);
-    reviewLineMigrated = true;
-    changed = true;
-  }
-  const oldSecurity = SECURITY_GUARD_LINES_OLD.find((l) => content.includes(l));
-  if (oldSecurity) {
-    content = content.replace(oldSecurity, SECURITY_GUARD_LINE);
-    securityLineMigrated = true;
-    changed = true;
-  }
-  if (changed) writeFileSync(claudeMdPath, content, "utf8");
-  // 移行しきれない旧 code-review 行（手編集で完全一致しない）が残っていれば警告する。
-  // マーカーが変わった（レビュー→簡素化）ので、放置すると重複行になり得る。
-  if (!reviewLineMigrated && content.includes("**レビュー**:")) {
-    warnings.push(
-      "CLAUDE.md に旧「**レビュー**:」行（code-review 運用）が残っています。gate 登録解除に伴い /simplify へ移行する方針なので、手動で `**簡素化**: /simplify` 行へ置き換えてください"
-    );
-  }
+// テンプレは「節」を配るので全文一致では判定できない。節の非空行がすべて配備先にあれば
+// 反映済みとみなす。判定基準をテンプレ本体から導出するので、別途マーカー文字列を維持する
+// 必要がない（文面を変えれば行が一致しなくなり、その時だけ要マージになる）。
+function sectionApplied(dstText, sectionText) {
+  return sectionText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .every((l) => dstText.includes(l));
 }
 
-// 旧「## PR レビュー」節の除去移行（配布廃止の後始末。理由は REVIEW_SECTION_OLD_RES 上部を参照）。
-let reviewSectionState = null;
-if (existsSync(claudeMdPath)) {
-  const content = readFileSync(claudeMdPath, "utf8");
-  const matched = REVIEW_SECTION_OLD_RES.find((re) => re.test(content));
-  if (matched) {
-    const removed = content
-      .replace(matched, "")
-      .replace(/(\r?\n){3,}/g, "\n\n")
-      .replace(/(\r?\n)+$/, "\n");
-    writeFileSync(claudeMdPath, removed, "utf8");
-    reviewSectionState = "removed";
-  } else if (content.includes(REVIEW_MARK)) {
-    reviewSectionState = "kept-custom";
-    warnings.push(
-      "CLAUDE.md の「**レビュー対応**:」節が旧テンプレ文面と異なるため除去しませんでした（watch-pr の起動は hook 指示のみで行う方針です。無条件の「PR 作成後 /watch-pr」が残っていないか手動で確認してください）"
-    );
-  }
+let claudeMdState;
+if (!existsSync(claudeMdPath)) {
+  writeFileSync(claudeMdPath, claudeMdSection, "utf8");
+  copied.push(".claude/CLAUDE.md");
+  claudeMdState = "新規作成";
+} else if (sectionApplied(readFileSync(claudeMdPath, "utf8"), claudeMdSection)) {
+  claudeMdState = "変更なし";
+} else {
+  needsMerge.push({ label: ".claude/CLAUDE.md", dst: claudeMdPath, src: claudeMdSrc });
+  claudeMdState = "要マージ";
 }
+mdStates.push(`.claude/CLAUDE.md: ${claudeMdState}`);
 
-const workflow = upsertWorkflowSection(claudeMdPath, WORKFLOW_HEADING, [
-  { mark: BRANCH_MARK, text: BRANCH_BULLET },
-  { mark: SIMPLIFY_MARK, text: SIMPLIFY_LINE },
-  { mark: SECURITY_GUARD_MARK, text: SECURITY_GUARD_LINE },
-]);
-const wfState = (mark) => workflow.bullets.find((b) => b.mark === mark)?.state ?? "?";
-const claudeMdStates = [`ブランチ規約: ${wfState(BRANCH_MARK)}`];
-claudeMdStates.push(`簡素化(/simplify): ${reviewLineMigrated ? "migrated" : wfState(SIMPLIFY_MARK)}`);
-claudeMdStates.push(`セキュリティレビュー: ${securityLineMigrated ? "updated" : wfState(SECURITY_GUARD_MARK)}`);
-if (reviewSectionState) claudeMdStates.push(`レビュー運用(旧節): ${reviewSectionState}`);
 
 // ---- 5. .claude/settings.json へのフック登録（マージ・冪等） ----
 const settingsPath = join(claudeDir, "settings.json");
@@ -846,8 +721,8 @@ if (removed.length) {
   console.log("削除ファイル:");
   for (const f of removed) console.log(`  - ${f}`);
 }
-console.log("CLAUDE.md:");
-for (const s of claudeMdStates) console.log(`  - ${s}`);
+console.log("Markdown（rules / CLAUDE.md）:");
+for (const s of mdStates) console.log(`  - ${s}`);
 console.log("settings.json:");
 for (const s of hookStates) console.log(`  - ${s}`);
 console.log("git:");
@@ -859,6 +734,16 @@ if (syncStates.length) {
 if (agentsState) {
   console.log("AGENTS.md:");
   console.log(`  - ${agentsState}`);
+}
+// 要マージは「apply.mjs が意図的に書かなかったファイル」。SKILL 手順がこの一覧を読んで
+// Claude にマージさせる。ここで止めずに続行するのは、他の配置物は決定的に配り切るため。
+if (needsMerge.length) {
+  console.log("要マージ（apply.mjs は書いていない。Claude が現物とテンプレを読んで統合する）:");
+  for (const m of needsMerge) {
+    console.log(`  * ${m.label}`);
+    console.log(`      現物    : ${m.dst}`);
+    console.log(`      テンプレ: ${m.src}`);
+  }
 }
 if (warnings.length) {
   console.log("警告:");

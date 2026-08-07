@@ -9,7 +9,7 @@ description: >
   agents（unity-tester / unity-linter）を撒く。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無と MCP バインディングは、
   実行時に AskUserQuestion で確認する。
-version: 1.9.0
+version: 1.10.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -69,12 +69,19 @@ apply.mjs が次を行う:
 - `--architecture` 時は `templates/architecture/` を上から上書きコピー
   （architecture / class-catalog の追加 + folder-structure / coding-standards / testing / test-designing-guide のレイヤー版差し替え。lint checklist は base に統合済みなので差し替えない）
 - **architecture 導入済みの検知**: `.claude/rules/architecture.md` が既にあれば、`--architecture` 指定なしでも architecture モードを自動継承する（レイヤー版規約が base 版に巻き戻るのを防止）
-- `{target}/.claude/CLAUDE.md` に開発ワークフロー節（コンパイル確認・`/test-unity`・`/lint-unity` の参照）を追記（`/test-unity` の記載が既にあればスキップ。ファイルが無ければ新規作成）
+- `.claude/rules/*.md` と `.claude/CLAUDE.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。CLAUDE.md へ配る節（コンパイル確認・`/test-unity`・`/lint-unity` の参照）は `templates/claude-md.md`
 - `{target}/.claude/setup-sync-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時のプラグイン版と有効フラグ = `--architecture` / `--mcp <binding>`）をマージ記録する（setup-github のキーは温存）。**このスキルは settings.json に触れず hook も配らない**（従来どおり）。ドリフト検知の SessionStart hook は setup-github が配る単一の `setup-sync-check.mjs` が担い、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
+
+### Step 2.5: 要マージの Markdown を統合する
+
+apply.mjs の出力に「要マージ」節があれば、`${CLAUDE_PLUGIN_ROOT}/skills/md-merge-contract.md`
+を Read し、そこに書かれた手順と判断基準に従って各ファイルを統合する。**この工程を飛ばすと
+テンプレ更新がその配備先に届かない。**「要マージ」節が無ければ何もしない。
 
 ### Step 3: 結果報告
 
-apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝える。併せて次を案内する:
+apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝える。Step 2.5 で統合したファイルが
+あれば、何を採り何を残したかも併せて伝える。加えて次を案内する:
 
 - 反映には**新しいセッションでの再読み込みが必要**（rules・skill・agent はセッション開始時に読み込まれる）
 - Unity 向け MCP が使えないと test-unity / lint-unity は動かない。Step 1 の切り分け結果に応じて、**未導入なら導入を、接続失敗なら接続の修復を**案内する（後者に「導入」を案内しても解決しないため、`claude mcp list` で控えたエラー内容を添えて伝える）
@@ -87,7 +94,7 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
 
 ## 注意
 
-- テンプレートは**上書きコピー**される。導入先で rules / skills / agents を手編集していた場合は上書きされる点を伝える
+- `skills/` `agents/` `references/` は**上書きコピー**される。導入先で手編集していた場合は上書きされる点を伝える。`rules/*.md` と `CLAUDE.md` だけは上書きせず「要マージ」にして Claude が統合する（Step 2.5）
 - `--architecture` から base へ「戻す」機能はない。導入済みなら再実行時に自動で architecture モードが継承される。
   base に戻す場合は `.claude/rules/architecture.md` / `class-catalog.md` を手動削除してから再実行する
 - 不明な `--` オプション・未対応の `--mcp` 値はエラー終了する（typo で意図しないモードのまま成功しない）
@@ -100,4 +107,4 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   `<!-- core: end -->` で囲む（apply.mjs が `rules/unity-mcp.md` へ合成する。無いとエラー終了）
 - このスキルは `.claude/settings.json` に触れない（hook 登録なし）。テンプレート自動追随の状態ファイル `.claude/setup-sync-state.json` へは自分のキー（`setup-unity`）だけをマージ記録する（データファイルの更新であり hook 登録ではない）。同期チェック hook 本体と settings.json 登録は setup-github が単独で担う（hook の二重管理を作らないため）
 - **テンプレート保守（スキル開発者向け）**: `templates/architecture/` の各ファイル（folder-structure / coding-standards / testing / test-designing-guide）は `templates/base/` の同名ファイルのレイヤー特化版で、architecture モード時に上書き差し替えされる。base 側の規約を変えたら architecture 側にも反映すること（テスト設計ガイドの「テスト責任」「禁止する低品質テスト」一覧やアセットのプレフィックスは、`rules/testing.md` / `rules/asset-naming.md` を単一ソースとして参照させ、重複記載を避ける）
-- CLAUDE.md の「## 開発ワークフロー」節は、既存の同見出しがあればその節へマージする（無ければ新設）ため、他ツールが同じ見出しを使っても重複しない。マージ処理 `upsertWorkflowSection` は apply.mjs に内包（外部モジュールに依存せずスキル単体で動く）
+- CLAUDE.md へ配る節は `templates/claude-md.md` にある（apply.mjs のコード内定数ではない）。文面を変えるとその節の行が配備先と一致しなくなり、次の適用で「要マージ」として検出される。旧文面の移行リストを保守する必要はない

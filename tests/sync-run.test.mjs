@@ -5,6 +5,7 @@
 //   - --dry-run: 同期計画の算出（対象スキル・保存フラグ・ブランチ・試行回数）と、副作用ゼロ
 //   - drift 無し / 状態ファイル無し → 何もしないで exit 0
 //   - 試行上限ガード（非 dry-run でも副作用前に停止し、試行回数を増やさない）
+//   - フェーズ指定の必須化と、publish を計画なしで叩いたときの停止
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -15,7 +16,11 @@ import { SYNC_RUN, tempDir } from "./helpers.mjs";
 /* global process */
 
 // 偽の installed_plugins.json を書き、sync-run.mjs を本番同様に子プロセスで起動する。
-function runSyncRun(target, currentVersion, { dryRun = false, attemptsPath, maxAttempts, installPath } = {}) {
+function runSyncRun(
+  target,
+  currentVersion,
+  { dryRun = false, phase = "apply", attemptsPath, planPath, maxAttempts, installPath } = {}
+) {
   const dir = tempDir("syncrun-plugins-");
   const pluginsJson = join(dir, "installed_plugins.json");
   writeFileSync(
@@ -36,9 +41,12 @@ function runSyncRun(target, currentVersion, { dryRun = false, attemptsPath, maxA
     "utf8"
   );
   const args = [SYNC_RUN, target];
+  // --dry-run は phase 不要（計画のみ）。非 dry-run は --phase が必須。
   if (dryRun) args.push("--dry-run");
+  else if (phase) args.push(`--phase=${phase}`);
   const env = { ...process.env, SETUP_SYNC_PLUGINS_JSON: pluginsJson };
   if (attemptsPath) env.SETUP_SYNC_ATTEMPTS_JSON = attemptsPath;
+  if (planPath) env.SETUP_SYNC_PLAN_JSON = planPath;
   if (maxAttempts != null) env.SETUP_SYNC_MAX_ATTEMPTS = String(maxAttempts);
   const res = spawnSync(process.execPath, args, { encoding: "utf8", env });
   return { status: res.status, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
@@ -102,4 +110,25 @@ test("試行上限に達していれば非 dry-run でも副作用前に停止�
   // 停止パスでは +1 しない（2 のまま）。
   const after = JSON.parse(readFileSync(attemptsPath, "utf8"));
   assert.equal(after[`${target}@v1.3.0`], 2, "上限停止で試行回数が増えた");
+});
+
+// apply と publish の間には「Claude が要マージの .md を統合する」工程が挟まる。
+// フェーズを省略して一息に走らせると、その工程が飛ばされて .md 未更新の PR が出るため、
+// 非 dry-run では --phase を必須にしている。
+test("非 dry-run で --phase を省略するとエラー終了する", () => {
+  const target = tempDir("syncrun-nophase-");
+  writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
+  const { status, stderr } = runSyncRun(target, "1.3.0", { phase: null });
+  assert.equal(status, 1);
+  assert.match(stderr, /--phase=apply または --phase=publish/);
+});
+
+test("publish を同期計画なしで叩くとエラー終了する（apply を先に要求する）", () => {
+  const target = tempDir("syncrun-nopan-");
+  writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
+  const planPath = join(tempDir("syncrun-plan-missing-"), "sync-plan.json");
+  const { status, stderr } = runSyncRun(target, "1.3.0", { phase: "publish", planPath });
+  assert.equal(status, 1);
+  assert.match(stderr, /同期計画が見つかりません/);
+  assert.match(stderr, /--phase=apply/);
 });
