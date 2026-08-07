@@ -13,61 +13,30 @@
 //
 // 依存なし（Node 標準のみ / Node 16.7+ の fs.cpSync を使用）。
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 /* global process, console */
 
-// `## 開発ワークフロー` 見出しの下へ箇条書きをマージする（冪等・単一見出し）。
-// bullets: [{ mark, text }]（mark = 冪等判定の一意な部分文字列 / text = 追記する 1 行）。
-// 返り値: { bullets: [{ mark, state }] }（state = "present" | "added"）。
-// ヘルパーはこのファイル内に閉じる（スキル単体コピーで動くよう外部モジュールに依存しない）。
-function upsertWorkflowSection(mdPath, heading, bullets) {
-  const joinSep = (c) => (c.endsWith("\n\n") ? "" : c.endsWith("\n") ? "\n" : "\n\n");
-  const result = { bullets: [] };
-  const makeNewSection = (existing) => {
-    const missing = bullets.filter((b) => !(existing && existing.includes(b.mark)));
-    for (const b of bullets) {
-      result.bullets.push({
-        mark: b.mark,
-        state: existing && existing.includes(b.mark) ? "present" : "added",
-      });
-    }
-    if (missing.length === 0) return existing;
-    const section = `${heading}\n\n${missing.map((b) => b.text).join("\n")}\n`;
-    return existing === null ? section : existing + joinSep(existing) + section;
-  };
-  if (!existsSync(mdPath)) {
-    writeFileSync(mdPath, makeNewSection(null), "utf8");
-    return result;
-  }
-  const content = readFileSync(mdPath, "utf8");
-  const lines = content.split("\n");
-  const headingIdx = lines.findIndex((l) => l.trim() === heading);
-  if (headingIdx === -1) {
-    const out = makeNewSection(content);
-    if (out !== content) writeFileSync(mdPath, out, "utf8");
-    return result;
-  }
-  let end = lines.length;
-  for (let i = headingIdx + 1; i < lines.length; i++) {
-    if (/^##\s/.test(lines[i])) {
-      end = i;
-      break;
-    }
-  }
-  const missing = [];
-  for (const b of bullets) {
-    const present = content.includes(b.mark);
-    result.bullets.push({ mark: b.mark, state: present ? "present" : "added" });
-    if (!present) missing.push(b.text);
-  }
-  if (missing.length === 0) return result;
-  let insertAt = end;
-  while (insertAt > headingIdx + 1 && lines[insertAt - 1].trim() === "") insertAt--;
-  lines.splice(insertAt, 0, ...missing);
-  writeFileSync(mdPath, lines.join("\n"), "utf8");
-  return result;
+// 反映を LLM 判断へ委ねる Markdown（rules/*.md と CLAUDE.md）。apply.mjs は書かず、
+// ここへ積んで報告するだけ。実際の統合は SKILL 手順で Claude が現物とテンプレを読んで行う。
+// 機械的な上書きはプロジェクト側で育った記述を消し、機械的なスキップはテンプレ更新を
+// 永久に届かなくする。どちらも避けるための委譲（テンプレが扱う話題はテンプレ側を正とし、
+// プロジェクト固有の追記は残す、という基準は SKILL 手順が持つ）。
+const needsMerge = [];
+const mdStates = [];
+
+// 「テンプレが最終的に書きたい内容」を一時ディレクトリへ書き出し、そのパスを返す。
+// rules/unity-mcp.md はバインディング表との合成結果でディスク上に原本が無いため、
+// 比較対象をファイルとして Claude に渡すにはステージングが要る。他の rules も同じ経路に
+// 通して、要マージ時の入力を「常に最終内容のファイル」に揃える。
+let stagingDir = null;
+function stageTemplate(name, content) {
+  stagingDir ??= mkdtempSync(join(tmpdir(), "setup-unity-md-"));
+  const p = join(stagingDir, name);
+  writeFileSync(p, content, "utf8");
+  return p;
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -172,6 +141,17 @@ if (!existsSync(join(target, "ProjectSettings", "ProjectVersion.txt"))) {
   process.exit(1);
 }
 
+// rules/*.md は cpSync が無条件に上書きするため、適用前の現物をここで退避しておく。
+// cpSync とバインディング合成を通した後の内容が「テンプレが最終的に書きたい内容」になるので、
+// それと退避分を突き合わせて、差分があるファイルだけ現物へ戻す（＝ apply.mjs は書かない）。
+const rulesDir = join(claudeDir, "rules");
+const rulesBefore = new Map();
+if (existsSync(rulesDir)) {
+  for (const f of readdirSync(rulesDir)) {
+    if (f.endsWith(".md")) rulesBefore.set(f, readFileSync(join(rulesDir, f), "utf8"));
+  }
+}
+
 // base → (--architecture 時) architecture の順に上書きコピー
 mkdirSync(claudeDir, { recursive: true });
 const copied = new Map(); // 相対パス → 由来レイヤー
@@ -217,29 +197,55 @@ if (bindingUnknownDeployed) {
   }
 }
 
-// プロジェクト CLAUDE.md へ開発ワークフロー（コンパイル確認・テスト・lint）を追記（冪等）。
-// 既存の `## 開発ワークフロー` 見出しがあればその節へマージする（無ければ新設。見出し重複防止）。
-const claudeMdPath = join(claudeDir, "CLAUDE.md");
-// 旧文言（rules/unity-mcp-tools.md 参照）が残っていれば新文言へ差し替える（配置移行に追随）。
-if (existsSync(claudeMdPath)) {
-  const md = readFileSync(claudeMdPath, "utf8");
-  const migrated = md.replace(
-    "- 実装後は `rules/unity-mcp-tools.md`（バインディング表）の「コンパイル確認」を実行（`rules/unity-mcp.md`）",
-    "- 実装後は `rules/unity-mcp.md` の「コンパイル確認」を実行",
-  );
-  if (migrated !== md) writeFileSync(claudeMdPath, migrated, "utf8");
+// ---- rules/*.md の突き合わせ（差分があれば現物へ戻して要マージにする） ----
+// この時点の .claude/rules/*.md ＝ cpSync + バインディング合成が置いた「テンプレの最終内容」。
+// 退避しておいた適用前の現物と比べ、差分があるものだけ現物へ書き戻す。
+for (const f of readdirSync(rulesDir).filter((n) => n.endsWith(".md"))) {
+  const p = join(rulesDir, f);
+  const wanted = readFileSync(p, "utf8");
+  const before = rulesBefore.get(f);
+  if (before === undefined) {
+    mdStates.push(`rules/${f}: 新規配置`);
+  } else if (before === wanted) {
+    mdStates.push(`rules/${f}: 変更なし`);
+  } else {
+    writeFileSync(p, before, "utf8"); // apply.mjs は書かない（現物を維持する）
+    copied.delete(`rules/${f}`); // 配置していないので「配置ファイル」から外す
+    needsMerge.push({ label: `.claude/rules/${f}`, dst: p, src: stageTemplate(f, wanted) });
+    mdStates.push(`rules/${f}: 要マージ`);
+  }
 }
-const workflow = upsertWorkflowSection(claudeMdPath, "## 開発ワークフロー", [
-  {
-    mark: "「コンパイル確認」を実行",
-    text: "- 実装後は `rules/unity-mcp.md` の「コンパイル確認」を実行",
-  },
-  {
-    mark: "/test-unity",
-    text: "- テストは `/test-unity`、アセット検証は `/lint-unity` を使用（`rules/testing.md`）",
-  },
-]);
-const claudeMdState = workflow.bullets.map((b) => b.state).join(" / ");
+
+// ---- CLAUDE.md への反映（apply.mjs は書かない） ----
+// 配る内容は templates/claude-md.md（節そのもの）。旧実装は配る文面を定数で持ち、
+// 旧文面からの移行を完全一致の置換で追いかけていたが、文面を変えるたびに移行コードが
+// 増える（＝腐る）書き方だったため廃止した。古い運用行は SKILL 手順のマージで
+// Claude がテンプレ側を正として置き換える。
+const claudeMdPath = join(claudeDir, "CLAUDE.md");
+const claudeMdSrc = join(here, "templates", "claude-md.md");
+const claudeMdSection = readFileSync(claudeMdSrc, "utf8");
+
+// テンプレは「節」を配るので全文一致では判定できない。節の非空行がすべて配備先にあれば
+// 反映済みとみなす。判定基準がテンプレ本体から導出されるので、別途マーカー文字列を維持
+// する必要がない（文面を変えれば行が一致しなくなり、その時だけ要マージになる）。
+function sectionApplied(dstText, sectionText) {
+  return sectionText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .every((l) => dstText.includes(l));
+}
+
+let claudeMdState;
+if (!existsSync(claudeMdPath)) {
+  writeFileSync(claudeMdPath, claudeMdSection, "utf8");
+  claudeMdState = "新規作成";
+} else if (sectionApplied(readFileSync(claudeMdPath, "utf8"), claudeMdSection)) {
+  claudeMdState = "変更なし";
+} else {
+  needsMerge.push({ label: ".claude/CLAUDE.md", dst: claudeMdPath, src: claudeMdSrc });
+  claudeMdState = "要マージ";
+}
 
 // ---- 状態ファイル setup-sync-state.json への setup-unity キーの記録 ----
 // このスキルは settings.json に触れず hook も配らない（従来の契約どおり）。同期チェック hook は
@@ -311,7 +317,19 @@ console.log("配置ファイル:");
 for (const [f, layer] of [...copied.entries()].sort()) {
   console.log(`  - .claude/${f}${layer === "base" ? "" : `  (${layer})`}`);
 }
-console.log(`CLAUDE.md: 開発ワークフロー節 ${claudeMdState}`);
+console.log("Markdown（rules / CLAUDE.md）:");
+for (const s of mdStates) console.log(`  - .claude/${s}`);
+console.log(`  - .claude/CLAUDE.md: ${claudeMdState}`);
+// 要マージは「apply.mjs が意図的に書かなかったファイル」。SKILL 手順がこの一覧を読んで
+// Claude にマージさせる。ここで止めずに続行するのは、他の配置物は決定的に配り切るため。
+if (needsMerge.length) {
+  console.log("要マージ（apply.mjs は書いていない。Claude が現物とテンプレを読んで統合する）:");
+  for (const m of needsMerge) {
+    console.log(`  * ${m.label}`);
+    console.log(`      現物    : ${m.dst}`);
+    console.log(`      テンプレ: ${m.src}`);
+  }
+}
 if (syncState) console.log(`状態ファイル(setup-sync-state.json): ${syncState}`);
 if (!existsSync(join(target, "Assets", "App"))) {
   console.log("注意: Assets/App/ が存在しません。規約はアプリ本体を Assets/App/ 配下に置く前提です。");

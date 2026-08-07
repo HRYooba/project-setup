@@ -14,15 +14,26 @@
 // 持つ。hook は配備先へ単体コピーされる制約上 import できず共有 lib 化できないため、ここは
 // 意図的な重複。挙動を変えるときは両方を揃える（cmpVer / installed_plugins.json の読み方）。
 //
+// 実行は 2 フェーズに分かれる。間に「Claude が .md をマージする」工程が挟まるため。
+// apply.mjs は rules/*.md と CLAUDE.md を書かず「要マージ」として報告するだけなので、
+// commit まで一息に走らせると .md 更新が反映されないまま PR が出る。
+//   --phase=apply   … 重複チェック → 試行上限 → ブランチ作成 → apply 再適用（ここで停止）
+//   〈この間に SKILL 手順で Claude が要マージの .md を統合する〉
+//   --phase=publish … commit → push → PR 作成（merge はしない）
+// フェーズ間の引き継ぎ（同期計画・警告）は attempts と同じデータディレクトリの
+// sync-plan.json に置く。対象リポジトリ内に置くと git add -A で PR に混入するため。
+//
 // 使い方:
-//   node sync-run.mjs [target-dir] [--dry-run]
+//   node sync-run.mjs [target-dir] --phase=apply|publish
+//   node sync-run.mjs [target-dir] --dry-run
 //     target-dir 省略時は CLAUDE_PROJECT_DIR → cwd の順。
 //     --dry-run: git/gh を一切叩かず、同期計画（対象スキル・フラグ・ブランチ・試行回数）を
-//                出力して終了する（試行回数も増やさない）。テストと事前確認用。
+//                出力して終了する（試行回数も増やさない）。テストと事前確認用。--phase は不要。
 //   環境変数（主にテスト用の差し替え）:
 //     SETUP_SYNC_PLUGINS_JSON  installed_plugins.json のパス
 //     SETUP_SYNC_ATTEMPTS_JSON 試行回数ファイルのパス
 //     SETUP_SYNC_MAX_ATTEMPTS  試行上限（既定 2）
+//     SETUP_SYNC_PLAN_JSON     フェーズ間引き継ぎファイルのパス
 //
 // 依存なし（Node 標準のみ）。
 
@@ -79,6 +90,16 @@ function git(target, ...a) {
 // ---- 引数 ----
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
+const phaseArg = args.find((a) => a.startsWith("--phase="));
+const phase = phaseArg ? phaseArg.slice("--phase=".length) : null;
+if (!dryRun && !["apply", "publish"].includes(phase)) {
+  fail(
+    "--phase=apply または --phase=publish が必要です。\n" +
+      "  apply   … ブランチ作成とテンプレ再適用（この後 Claude が要マージの .md を統合する）\n" +
+      "  publish … commit / push / PR 作成\n" +
+      "計画だけ見たいときは --dry-run。"
+  );
+}
 const target = args.find((a) => !a.startsWith("--")) || process.env.CLAUDE_PROJECT_DIR || process.cwd();
 
 // ---- 現行プラグイン版と installPath の解決（hook と同じ読み方） ----
@@ -108,39 +129,55 @@ if (!currentVersion || currentVersion === "unknown") {
 if (!installPath) installPath = join(here, "..", "..");
 if (!currentVersion) fail("現行プラグイン版を特定できませんでした（installed_plugins.json も plugin.json も読めず）。");
 
-// ---- drift 判定 ----
-const statePath = join(target, ".claude", "setup-sync-state.json");
-if (!existsSync(statePath)) {
-  console.log(`同期対象外: ${statePath} がありません（未セットアップ、またはバックフィル前）。`);
-  process.exit(0);
-}
-const state = readJson(statePath);
-if (!state || typeof state !== "object") fail(`状態ファイルが不正な JSON です: ${statePath}`);
-
-const drifted = [];
-for (const k of SKILL_KEYS) {
-  const rec = state[k];
-  if (!rec || typeof rec !== "object" || !rec.version) continue;
-  if (cmpVer(currentVersion, rec.version) > 0) {
-    drifted.push({ skill: k, from: rec.version, flags: Array.isArray(rec.flags) ? rec.flags : [] });
-  }
-}
-if (drifted.length === 0) {
-  console.log(`同期不要: 記録版と現行版（v${currentVersion}）に差がありません。`);
-  process.exit(0);
-}
-
 const branch = `chore/setup-sync-v${currentVersion}`;
 
-// ---- 試行回数（同一版につき上限まで）----
+// ---- 試行回数（同一版につき上限まで）とフェーズ間引き継ぎ ----
 const maxAttempts = parseInt(process.env.SETUP_SYNC_MAX_ATTEMPTS || "2", 10);
-const attemptsPath =
-  process.env.SETUP_SYNC_ATTEMPTS_JSON ||
-  join(homedir(), ".claude", "plugins", "data", "project-setup", "sync-attempts.json");
+const dataDir = join(homedir(), ".claude", "plugins", "data", "project-setup");
+const attemptsPath = process.env.SETUP_SYNC_ATTEMPTS_JSON || join(dataDir, "sync-attempts.json");
+const planPath = process.env.SETUP_SYNC_PLAN_JSON || join(dataDir, "sync-plan.json");
 const repoId = git(target, "remote", "get-url", "origin") || target;
 const attemptKey = `${repoId}@v${currentVersion}`;
 const attempts = readJson(attemptsPath) || {};
 const attemptCount = Number.isFinite(attempts[attemptKey]) ? attempts[attemptKey] : 0;
+
+// ---- drift 判定 ----
+// publish フェーズでは apply が済んでいて状態ファイルが新版に書き換わっているため、
+// ここで判定すると必ず「同期不要」になる。apply が残した同期計画を読んで引き継ぐ。
+let drifted;
+let carriedWarnings = [];
+if (phase === "publish") {
+  const plan = readJson(planPath);
+  if (!plan || plan.key !== attemptKey || !Array.isArray(plan.drifted)) {
+    fail(
+      `同期計画が見つかりません（${planPath}）。先に --phase=apply を実行してください。\n` +
+        "（apply → Claude による .md マージ → publish の順で実行します）"
+    );
+  }
+  drifted = plan.drifted;
+  carriedWarnings = Array.isArray(plan.warnings) ? plan.warnings : [];
+} else {
+  const statePath = join(target, ".claude", "setup-sync-state.json");
+  if (!existsSync(statePath)) {
+    console.log(`同期対象外: ${statePath} がありません（未セットアップ、またはバックフィル前）。`);
+    process.exit(0);
+  }
+  const state = readJson(statePath);
+  if (!state || typeof state !== "object") fail(`状態ファイルが不正な JSON です: ${statePath}`);
+
+  drifted = [];
+  for (const k of SKILL_KEYS) {
+    const rec = state[k];
+    if (!rec || typeof rec !== "object" || !rec.version) continue;
+    if (cmpVer(currentVersion, rec.version) > 0) {
+      drifted.push({ skill: k, from: rec.version, flags: Array.isArray(rec.flags) ? rec.flags : [] });
+    }
+  }
+  if (drifted.length === 0) {
+    console.log(`同期不要: 記録版と現行版（v${currentVersion}）に差がありません。`);
+    process.exit(0);
+  }
+}
 
 function describePlan() {
   console.log(`同期計画:`);
@@ -160,62 +197,100 @@ if (dryRun) {
   process.exit(0);
 }
 
-// ---- 試行上限ガード（コード担保）----
-if (attemptCount >= maxAttempts) {
-  console.log(
-    `試行上限に到達しています（${attemptCount}/${maxAttempts}, key=${attemptKey}）。\n` +
-      "自動同期は行いません。手動で apply.mjs を実行するか、原因を解消してから再試行してください。"
-  );
-  process.exit(0);
-}
-
-// ---- 重複 PR 防止ガード（コード担保）----
-// gh が使えない/認証されていない場合は dedup できないが、試行上限ガードが暴走を防ぐため続行する。
 // gh は git と違い -C を持たない。対象リポジトリの解決は cwd で行う。
 function gh(...a) {
   return execFileSync("gh", a, { cwd: target, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
-try {
-  const raw = gh("pr", "list", "--state", "open", "--json", "number,title,headRefName", "--limit", "100");
-  const prs = JSON.parse(raw);
-  const dup = prs.find((p) => p.headRefName === branch || /setup-sync/.test(String(p.title || "")));
-  if (dup) {
-    console.log(`既に同期 PR が存在します（#${dup.number} ${dup.title}）。二重作成を避けて終了します。`);
+
+// ============================ apply フェーズ ============================
+// ガード → ブランチ作成 → テンプレ再適用まで。commit はしない。
+// apply.mjs は rules/*.md と CLAUDE.md を書かず「要マージ」として報告するので、
+// この後 SKILL 手順で Claude がそれらを統合してから publish フェーズへ進む。
+if (phase === "apply") {
+  // ---- 試行上限ガード（コード担保）----
+  if (attemptCount >= maxAttempts) {
+    console.log(
+      `試行上限に到達しています（${attemptCount}/${maxAttempts}, key=${attemptKey}）。\n` +
+        "自動同期は行いません。手動で apply.mjs を実行するか、原因を解消してから再試行してください。"
+    );
     process.exit(0);
   }
-} catch (e) {
-  console.error(`警告: 既存 PR の確認に失敗しました（gh 未認証か非 GitHub リポジトリの可能性）。続行します: ${String(e.message || e).trim()}`);
-}
 
-// ここから副作用。crash しても試行としてカウントされるよう、先に試行回数を +1 して保存する。
-mkdirSync(dirname(attemptsPath), { recursive: true });
-attempts[attemptKey] = attemptCount + 1;
-writeFileSync(attemptsPath, JSON.stringify(attempts, null, 2) + "\n", "utf8");
-
-describePlan();
-
-if (git(target, "rev-parse", "--is-inside-work-tree") !== "true") {
-  fail("対象が git リポジトリではありません。");
-}
-
-// ---- 作業ブランチ ----
-// 既存ブランチがあれば切り替え、無ければ作成。
-const switched =
-  git(target, "switch", branch) !== null || git(target, "switch", "-c", branch) !== null;
-if (!switched) fail(`ブランチ ${branch} の作成/切り替えに失敗しました。`);
-
-// ---- テンプレ再適用（保存フラグで apply.mjs を直叩き）----
-const warnings = [];
-for (const d of drifted) {
-  const applyPath = join(installPath, "skills", d.skill, "apply.mjs");
+  // ---- 重複 PR 防止ガード（コード担保）----
+  // gh が使えない/認証されていない場合は dedup できないが、試行上限ガードが暴走を防ぐため続行する。
   try {
-    const out = execFileSync(process.execPath, [applyPath, target, ...d.flags], { encoding: "utf8" });
-    // apply.mjs の「警告:」節を PR 本文へ転記するため保持する。
-    const idx = out.indexOf("警告:");
-    if (idx >= 0) warnings.push(`### ${d.skill}\n\n\`\`\`\n${out.slice(idx).trim()}\n\`\`\``);
+    const raw = gh("pr", "list", "--state", "open", "--json", "number,title,headRefName", "--limit", "100");
+    const prs = JSON.parse(raw);
+    const dup = prs.find((p) => p.headRefName === branch || /setup-sync/.test(String(p.title || "")));
+    if (dup) {
+      console.log(`既に同期 PR が存在します（#${dup.number} ${dup.title}）。二重作成を避けて終了します。`);
+      process.exit(0);
+    }
   } catch (e) {
-    fail(`${d.skill} の apply.mjs 実行に失敗しました: ${String(e.message || e).trim()}`);
+    console.error(
+      `警告: 既存 PR の確認に失敗しました（gh 未認証か非 GitHub リポジトリの可能性）。続行します: ${String(e.message || e).trim()}`
+    );
   }
+
+  // ここから副作用。crash しても試行としてカウントされるよう、先に試行回数を +1 して保存する。
+  mkdirSync(dirname(attemptsPath), { recursive: true });
+  attempts[attemptKey] = attemptCount + 1;
+  writeFileSync(attemptsPath, JSON.stringify(attempts, null, 2) + "\n", "utf8");
+
+  describePlan();
+
+  if (git(target, "rev-parse", "--is-inside-work-tree") !== "true") {
+    fail("対象が git リポジトリではありません。");
+  }
+
+  // ---- 作業ブランチ（既存があれば切り替え、無ければ作成）----
+  const switched =
+    git(target, "switch", branch) !== null || git(target, "switch", "-c", branch) !== null;
+  if (!switched) fail(`ブランチ ${branch} の作成/切り替えに失敗しました。`);
+
+  // ---- テンプレ再適用（保存フラグで apply.mjs を直叩き）----
+  const warnings = [];
+  let anyNeedsMerge = false;
+  for (const d of drifted) {
+    const applyPath = join(installPath, "skills", d.skill, "apply.mjs");
+    try {
+      const out = execFileSync(process.execPath, [applyPath, target, ...d.flags], { encoding: "utf8" });
+      // 出力はそのまま流す。要マージ一覧はこの後 Claude が読んでマージに使う。
+      console.log(`--- ${d.skill} ---`);
+      console.log(out.trimEnd());
+      if (out.includes("要マージ（")) anyNeedsMerge = true;
+      // apply.mjs の「警告:」節を PR 本文へ転記するため保持する。
+      const idx = out.indexOf("警告:");
+      if (idx >= 0) warnings.push(`### ${d.skill}\n\n\`\`\`\n${out.slice(idx).trim()}\n\`\`\``);
+    } catch (e) {
+      fail(`${d.skill} の apply.mjs 実行に失敗しました: ${String(e.message || e).trim()}`);
+    }
+  }
+
+  // ---- 同期計画をフェーズ間で引き継ぐ ----
+  // 対象リポジトリ内には置かない（git add -A で PR に混入するため）。
+  mkdirSync(dirname(planPath), { recursive: true });
+  writeFileSync(
+    planPath,
+    JSON.stringify({ key: attemptKey, version: currentVersion, branch, drifted, warnings }, null, 2) + "\n",
+    "utf8"
+  );
+
+  console.log("");
+  console.log(
+    anyNeedsMerge
+      ? "要マージの .md があります。統合してから publish フェーズへ進んでください。"
+      : "要マージの .md はありません。そのまま publish フェーズへ進めます。"
+  );
+  console.log(`次: node sync-run.mjs ${target} --phase=publish`);
+  process.exit(0);
+}
+
+// ============================ publish フェーズ ============================
+// commit → push → PR 作成。merge はしない（不可逆操作は人間のゲートに残す）。
+const currentBranch = git(target, "rev-parse", "--abbrev-ref", "HEAD");
+if (currentBranch !== branch) {
+  fail(`作業ブランチ ${branch} にいません（現在: ${currentBranch}）。--phase=apply からやり直してください。`);
 }
 
 // ---- commit ----
@@ -233,7 +308,7 @@ const summary = drifted.map((d) => `${d.skill} v${d.from}→v${currentVersion}`)
 const body =
   `project-setup テンプレートの更新に自動追随する PR です（\`/setup-sync\`）。\n\n` +
   `## 同期内容\n\n${drifted.map((d) => `- ${d.skill}: v${d.from} → v${currentVersion}（flags: ${d.flags.join(" ") || "なし"}）`).join("\n")}\n\n` +
-  (warnings.length ? `## apply.mjs の警告\n\n${warnings.join("\n\n")}\n` : "警告はありません。\n");
+  (carriedWarnings.length ? `## apply.mjs の警告\n\n${carriedWarnings.join("\n\n")}\n` : "警告はありません。\n");
 const commitMsg = `chore: テンプレ同期 v${currentVersion}\n\n${summary}`;
 if (git(target, "commit", "-m", commitMsg) === null) fail("git commit に失敗しました。");
 
