@@ -9,7 +9,7 @@ description: >
   create-issue skill を撒く。ブランチ保護の有無と、PR 自動レビュー3機能（Copilot 自動アサイン /
   watch-pr / resolve-pr）と AGENTS.md 自動生成（Copilot code review にプロジェクト規約を教える）の
   導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.13.0
+version: 1.14.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -26,7 +26,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 4. **git-conventions ルール** — skill 同梱の `templates/base/rules/git-conventions.md` を `.claude/rules/` へコピー。ただし**既存があり内容が異なる場合は書かず「要マージ」として報告**し、Claude が現物とテンプレを読んで統合する（Step 2.6）。上書きするとプロジェクト固有のブランチ戦略が消え、スキップするとテンプレ更新が永久に届かないため、どちらも採らない
 5. **create-issue skill** — skill 同梱の `templates/base/skills/create-issue/` を `.claude/skills/` へコピー
 5-b. **`.github/` テンプレート（seed）** — `templates/base/.github/` の `pull_request_template.md`（小文字・単一ファイル）と `ISSUE_TEMPLATE/{bug_report,feature_request,task}.yml` を配置。**既にファイルがある場合は一切触らない**（PR / Issue テンプレはリポジトリ所有の成果物で、独自に育てているリポがあるため）。更新したいときはプロジェクト側で同梱版から手動で取り込む
-6. **CLAUDE.md** — ブランチ規約（作業ブランチ経由の PR 必須）と PR 前レビュー運用を**ソフト指示**として配る（強制はしない）。レビューは条件付きで各 1 回:「スクリプト等のコード変更を含む PR は作成前に `/simplify`」「認証・入力処理・機密・外部通信などセキュリティに関わる変更のときは作成前に `/security-review`」。配る節の本文は `templates/claude-md.md`。**ファイルが無ければ書き、節の行が揃っていれば触らず、揃っていなければ「要マージ」として報告**する（Step 2.6 で Claude が統合。旧文面の移行リストは保守しない）
+6. **CLAUDE.md** — ブランチ規約（作業ブランチ経由の PR 必須）と PR 前レビュー運用を**ソフト指示**として配る（強制はしない）。レビュー（`/simplify` / `/security-review`）は条件付きで各 1 回。**発火条件の文面は `templates/claude-md.md` が正本**でありここには写さない（写すとテンプレ更新で黙ってズレる）。**ファイルが無ければ書き、節の行が揃っていれば触らず、揃っていなければ「要マージ」として報告**する（Step 2.6 で Claude が統合。旧文面の移行リストは保守しない）
 7. **テンプレート自動追随（通知と実行の分離）** — `.claude/setup-sync-state.json` に「適用時の project-setup プラグイン版」と「有効フラグ一式」を記録し（setup-github / setup-unity が同じファイルへ各自のキーでマージ。相手のキーは消さない）、`.claude/hooks/setup-sync-check.mjs`（SessionStart hook）が現行版と比較する。現行版のほうが新しければ additionalContext で「`/setup-sync` を実行して同期 PR を作ってほしい」と**通知するだけ**に徹する（差が無ければ即 exit・毎セッションの税を最小化）。実際の同期（保存フラグで apply.mjs 再適用 → commit → push → PR 作成）は `setup-sync` skill（`sync-run.mjs`）が決定的に行う。hook の注入文へ LLM が従うか否かに実行を委ねない設計。**重複PR防止・試行回数ガード（同一版 最大2回）・merge 禁止は sync-run.mjs がコード担保する**（PR は作るが merge はしない・apply の warnings を PR 本文へ全文転記）。発火はアップグレード方向のみ（複数マシンで版がずれても古い版が新しい同期を巻き戻さない）。無効化は `SETUP_SYNC_DISABLE=1`。**この単一 hook が setup-unity のドリフトも検知する**（setup-unity は状態ファイルへ自分のキーを書くだけで settings.json には触れない。auto-sync には setup-github の導入が前提）
 
 ## pr-copilot モード（質問で「PR 自動レビューを入れる」を選んだ場合）
