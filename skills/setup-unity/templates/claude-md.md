@@ -1,4 +1,3 @@
 ## 開発ワークフロー
 
-- 実装後は `rules/unity-mcp.md` の「コンパイル確認」を実行
-- テストは `/test-unity`、アセット検証は `/lint-unity` を使用（`rules/testing.md`）
+- 実装後の検証手順（コンパイル確認・テスト・lint）は `rules/testing.md` に従う
