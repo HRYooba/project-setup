@@ -9,7 +9,7 @@ description: >
   agents（unity-tester / unity-linter）を撒く。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無と MCP バインディングは、
   実行時に AskUserQuestion で確認する。
-version: 1.10.0
+version: 1.11.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -69,7 +69,7 @@ apply.mjs が次を行う:
 - `--architecture` 時は `templates/architecture/` を上から上書きコピー
   （architecture / class-catalog の追加 + folder-structure / coding-standards / testing / test-designing-guide のレイヤー版差し替え。lint checklist は base に統合済みなので差し替えない）
 - **architecture 導入済みの検知**: `.claude/rules/architecture.md` が既にあれば、`--architecture` 指定なしでも architecture モードを自動継承する（レイヤー版規約が base 版に巻き戻るのを防止）
-- `.claude/rules/*.md` と `.claude/CLAUDE.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。CLAUDE.md へ配る節（コンパイル確認・`/test-unity`・`/lint-unity` の参照）は `templates/claude-md.md`
+- `.claude/rules/*.md` と `.claude/CLAUDE.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。CLAUDE.md へ配る節（検証手順は `rules/testing.md` に従う、というポインタ）は `templates/claude-md.md`
 - `{target}/.claude/setup-sync-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時のプラグイン版と有効フラグ = `--architecture` / `--mcp <binding>`）をマージ記録する（setup-github のキーは温存）。**このスキルは settings.json に触れず hook も配らない**（従来どおり）。ドリフト検知の SessionStart hook は setup-github が配る単一の `setup-sync-check.mjs` が担い、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
 
 ### Step 2.5: 要マージの Markdown を統合する
