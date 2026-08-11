@@ -36,6 +36,10 @@ public void ExecuteAsync_WhenSuccess_ReturnsUserProfile()
 }
 ```
 
+> 上は**駆動方法の構文例**であって、テスト内容の模範ではない。SUT が依存へ転送するだけの場合、
+> スタブに仕込んだ `"user01"` が返ることの確認は恒等写像の検証にすぎず、`rules/testing.md` の禁止リストに該当する。
+> 何を検証するかは `test-designing-guide.md` で決める。
+
 - `CancellationToken` は実引数に `CancellationToken.None` か、キャンセル検証時は `CancellationTokenSource` を渡す（`rules/coding-standards.md`: `ct = default` を避ける方針はプロダクト側。テストは明示的に `.None` を渡す）。
 - `async Task` メソッド形式も可（ポーリングループ等、実際に await が要る場合）。ただし `async void` は禁止。
 - `[UnityTest]` + `UniTask.ToCoroutine` は実フレーム経過が要る場合のみ。EditMode の純ロジックでは使わない。
