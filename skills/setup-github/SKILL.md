@@ -9,7 +9,7 @@ description: >
   create-issue skill を撒く。ブランチ保護の有無と、PR 自動レビュー3機能（Copilot 自動アサイン /
   watch-pr / resolve-pr）と AGENTS.md 自動生成（Copilot code review にプロジェクト規約を教える）の
   導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.14.0
+version: 1.15.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
