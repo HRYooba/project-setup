@@ -5,12 +5,11 @@ description: >
   「Issueにして」「/create-issue」と依頼した場合に使用される。
   会話やプランの内容からGitHub Issueを作成する。
   引数なしで直前の会話コンテキストから自動生成、または `/create-issue タイトル` で明示指定も可。
-version: 0.2.0
+version: 0.3.0
 model: opus
 allowed-tools: Bash(gh *), AskUserQuestion
 references:
   - references/templates.md
-user-invocable: false
 ---
 
 # Create Issue
