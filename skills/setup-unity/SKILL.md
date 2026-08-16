@@ -9,7 +9,7 @@ description: >
   agents（unity-tester / unity-linter）を撒く。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無と MCP バインディングは、
   実行時に AskUserQuestion で確認する。
-version: 1.12.0
+version: 1.13.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -30,6 +30,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
   （test-unity / lint-unity は各 skill 同梱の `references/unity-mcp-tools.md`（表の全文コピー）経由で MCP ツールを使う。対応実装は `bindings/` にある表がすべて。各表が対象実装・見分け方・未対応の操作を自己記述する）
 - Node.js が利用可能
 - 規約はアプリ本体を **`Assets/App/`** 配下に置く前提（UniTask / R3 / VContainer スタックを想定）
+- `unity-tester` / `unity-linter` agent は `model: sonnet` を指定している。配布先の組織・プランで sonnet が制限されている場合、親モデルへフォールバックした旨の警告が出る（想定どおりのモデルで動かしたいなら配布先の制限を確認する）
 
 ## 手順
 
@@ -91,6 +92,8 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
 - coding-standards / architecture / class-catalog の先頭にある `<!-- agents-md: include -->` は、
   setup-github（--pr-copilot）の AGENTS.md 自動生成が「Copilot code review に教える規約」として
   取り込むための目印。setup-github 未導入なら不活性なだけで無害（導入後の次のコミットで自動反映される）
+- test-unity / lint-unity 実行時に model 制限の警告が出ている場合は、`agents/unity-tester.md` /
+  `agents/unity-linter.md` の `model: sonnet` 行を落として配布先のデフォルトモデルに委ねる選択肢を案内する
 
 ## 注意
 

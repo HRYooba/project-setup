@@ -9,7 +9,7 @@ description: >
   create-issue skill を撒く。ブランチ保護の有無と、PR 自動レビュー3機能（Copilot 自動アサイン /
   watch-pr / resolve-pr）と AGENTS.md 自動生成（Copilot code review にプロジェクト規約を教える）の
   導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.15.0
+version: 1.16.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -41,6 +41,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 
 - base: 対象が git リポジトリであること（git repo でなくてもファイル配置は行うが、hooksPath 設定はスキップされる）
 - pr-copilot モード: `gh` CLI が認証済み（`gh auth status`）かつ、そのリポジトリで GitHub Copilot code review が有効
+- pr-copilot モード: `review-responder` agent は `model: opus` を指定している。配布先の組織・プランで opus が制限されている場合、親モデルへフォールバックした旨の警告が出る（`resolve-pr` は watch-pr からの自動起動経路のため気づきにくい。想定どおりのモデルで動かしたいなら配布先の制限を確認する）
 
 ## 手順
 
@@ -92,6 +93,7 @@ Step 2.6 で統合したファイルがあれば、何を採り何を残した�
 - 反映には**新しいセッションでの再読み込みが必要**（hook・skill・agent はセッション開始時に読み込まれる）
 - `.claude/` と `.githooks/`（pr-copilot モード時は `AGENTS.md` と `.github/workflows/` も）は repo にコミットしてチームへ配布する（`.githooks/` の hook は exec bit 付きで stage 済み）。コミットは通常どおり作業ブランチ + PR で
 - pr-copilot モード時: `AGENTS.md` は自動生成物なので直接編集しない（内容は `.claude/rules/` 側で変える）。Copilot の custom instructions は **PR の base branch から読まれる**ため、AGENTS.md が default branch にマージされて初めてレビューに効く
+- pr-copilot モード時: `review-responder` の起動時に model 制限の警告が出ている場合は、`agents/review-responder.md` の `model: opus` 行を落として配布先のデフォルトモデルに委ねる選択肢を案内する
 - チームメイトは clone 後、Claude Code で開いて trust 承認すれば SessionStart hook により pre-push が自動で有効になる
 
 ## 注意
