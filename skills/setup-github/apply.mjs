@@ -15,8 +15,8 @@
 //     - .claude/skills/create-issue/（templates/base/skills の同梱スナップショットをコピー）
 //     - .github/pull_request_template.md と .github/ISSUE_TEMPLATE/*.yml
 //       （templates/base/.github の seed。**既存があれば触らない** — リポジトリ所有の成果物のため）
-//     - .claude/settings.json へ hooksPath 自動設定(SessionStart) とテンプレ追随(SessionStart)を
-//       登録し、旧版が撒いた gate/nudge(PreToolUse) を登録解除する
+//     - .claude/settings.json へ hooksPath 自動設定(SessionStart)、テンプレ追随の起動(SessionStart)、
+//       同期結果の報告(UserPromptSubmit) を登録し、旧版が撒いた gate/nudge(PreToolUse) を登録解除する
 //     - 実行者の clone へ core.hooksPath を即時設定 + pre-push へ exec bit 付与（mac/linux 対策）
 //
 //   --pr-copilot（任意）:
@@ -273,7 +273,11 @@ if (rxArg !== undefined) {
 }
 
 cpSync(join(templatesDir, "base", "hooks"), join(claudeDir, "hooks"), { recursive: true });
-copied.push(".claude/hooks/setup-sync-check.mjs", ".claude/hooks/lib/reviewable-files.mjs");
+copied.push(
+  ".claude/hooks/setup-sync-check.mjs",
+  ".claude/hooks/setup-sync-report.mjs",
+  ".claude/hooks/lib/reviewable-files.mjs"
+);
 
 // 旧版が配っていた code-review 用 hook（PR 作成 gate / effort nudge）は配布廃止。
 // /code-review が原則ユーザー手打ち専用になり Claude 自走で回せなくなったため、レビュー運用は
@@ -591,7 +595,26 @@ if (settingsReadable) {
         {
           type: "command",
           command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/setup-sync-check.mjs"',
-          // 差が無ければ即 exit する軽量比較のみ。念のため短めのタイムアウトを付ける。
+          // 差が無ければ即 exit する軽量比較と、差があれば detached spawn するだけ。
+          // 実際の同期（fetch / worktree / 裏 Claude）は起動された launcher 側で走るので、
+          // セッション開始はここで待たされない。
+          timeout: 10,
+        },
+      ],
+    },
+  });
+
+  // 裏で走った同期の結果を次のプロンプトで 1 行報告する。動いているセッションへ外から
+  // 差し込む口が無いため、報告はイベント待ちになる。毎プロンプト走るので存在確認 1 回で
+  // 抜ける実装にしてある（timeout も短く）。
+  register("UserPromptSubmit", {
+    label: "setup-sync-report.mjs",
+    owns: (cmd) => cmd.includes("setup-sync-report.mjs"),
+    entry: {
+      hooks: [
+        {
+          type: "command",
+          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/setup-sync-report.mjs"',
           timeout: 10,
         },
       ],
