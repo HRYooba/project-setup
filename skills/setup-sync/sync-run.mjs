@@ -38,7 +38,7 @@
 // 依存なし（Node 標準のみ）。
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -136,6 +136,8 @@ const maxAttempts = parseInt(process.env.SETUP_SYNC_MAX_ATTEMPTS || "2", 10);
 const dataDir = join(homedir(), ".claude", "plugins", "data", "project-setup");
 const attemptsPath = process.env.SETUP_SYNC_ATTEMPTS_JSON || join(dataDir, "sync-attempts.json");
 const planPath = process.env.SETUP_SYNC_PLAN_JSON || join(dataDir, "sync-plan.json");
+// .md 統合で矛盾が出たとき Claude が書き残すメモ。publish が PR 本文へ転記して消す。
+const notesPath = process.env.SETUP_SYNC_NOTES_MD || join(dataDir, "sync-notes.md");
 const repoId = git(target, "remote", "get-url", "origin") || target;
 const attemptKey = `${repoId}@v${currentVersion}`;
 const attempts = readJson(attemptsPath) || {};
@@ -217,11 +219,16 @@ if (phase === "apply") {
   }
 
   // ---- 重複 PR 防止ガード（コード担保）----
+  // 判定はブランチ名で行う。旧版はタイトルに "setup-sync" を含むかも見ていたが、この
+  // スクリプトが作るタイトルは `chore: テンプレ同期 v<ver>` で "setup-sync" を含まないため、
+  // その条件は一度も一致しなかった（結果、版が上がるたび PR が積み上がった）。
+  // 古い版の同期 PR は「ここで止める」ではなく publish 後に畳む（supersedeOldSyncPrs）。
+  // 止めると新しい版が永久に届かなくなるため。
   // gh が使えない/認証されていない場合は dedup できないが、試行上限ガードが暴走を防ぐため続行する。
   try {
     const raw = gh("pr", "list", "--state", "open", "--json", "number,title,headRefName", "--limit", "100");
     const prs = JSON.parse(raw);
-    const dup = prs.find((p) => p.headRefName === branch || /setup-sync/.test(String(p.title || "")));
+    const dup = prs.find((p) => p.headRefName === branch);
     if (dup) {
       console.log(`既に同期 PR が存在します（#${dup.number} ${dup.title}）。二重作成を避けて終了します。`);
       process.exit(0);
@@ -305,9 +312,18 @@ if (!staged) {
   process.exit(0);
 }
 const summary = drifted.map((d) => `${d.skill} v${d.from}→v${currentVersion}`).join(" / ");
+// .md 統合でテンプレと現物が正面から矛盾したとき、Claude が sync-notes.md に書き残す
+// （md-merge-contract.md 参照）。無人実行ではユーザーに聞けないので、判断の材料を PR 本文へ
+// 持ち上げてレビューの場に出す。読んだら消す（次回の PR に古いメモを持ち越さない）。
+let carriedNotes = "";
+if (existsSync(notesPath)) {
+  carriedNotes = readFileSync(notesPath, "utf8").trim();
+  rmSync(notesPath, { force: true });
+}
 const body =
   `project-setup テンプレートの更新に自動追随する PR です（\`/setup-sync\`）。\n\n` +
   `## 同期内容\n\n${drifted.map((d) => `- ${d.skill}: v${d.from} → v${currentVersion}（flags: ${d.flags.join(" ") || "なし"}）`).join("\n")}\n\n` +
+  (carriedNotes ? `## 要確認（テンプレと現物が矛盾）\n\n${carriedNotes}\n\n` : "") +
   (carriedWarnings.length ? `## apply.mjs の警告\n\n${carriedWarnings.join("\n\n")}\n` : "警告はありません。\n");
 const commitMsg = `chore: テンプレ同期 v${currentVersion}\n\n${summary}`;
 if (git(target, "commit", "-m", commitMsg) === null) fail("git commit に失敗しました。");
@@ -316,9 +332,25 @@ if (git(target, "commit", "-m", commitMsg) === null) fail("git commit に失敗�
 if (git(target, "push", "-u", "origin", branch) === null) fail(`git push（origin ${branch}）に失敗しました。`);
 
 // ---- PR 作成（merge はしない）----
+let createdUrl;
 try {
-  const url = gh("pr", "create", "--title", `chore: テンプレ同期 v${currentVersion}`, "--body", body, "--head", branch).trim();
-  console.log(`同期 PR を作成しました（merge はしません）: ${url}`);
+  createdUrl = gh("pr", "create", "--title", `chore: テンプレ同期 v${currentVersion}`, "--body", body, "--head", branch).trim();
+  console.log(`同期 PR を作成しました（merge はしません）: ${createdUrl}`);
 } catch (e) {
   fail(`gh pr create に失敗しました: ${String(e.message || e).trim()}`);
+}
+
+// ---- 古い版の同期 PR を畳む ----
+// 無人運転では版が上がるたびに PR が生える。放置されると積み上がり（実際に 3 本積んだ配備先が
+// ある）、どれを見ればよいか分からなくなる。同期 PR はリポジトリごとに常に 1 本・最新版だけに保つ。
+// close は reopen できる可逆操作で、ブランチも残る。
+try {
+  const raw = gh("pr", "list", "--state", "open", "--json", "number,title,headRefName", "--limit", "100");
+  for (const p of JSON.parse(raw)) {
+    if (!/^chore\/setup-sync-v/.test(String(p.headRefName || "")) || p.headRefName === branch) continue;
+    gh("pr", "close", String(p.number), "--comment", `より新しい同期 PR（${createdUrl}）に置き換えたためクローズします。`);
+    console.log(`古い同期 PR を閉じました: #${p.number} ${p.title}`);
+  }
+} catch (e) {
+  console.error(`警告: 古い同期 PR の整理に失敗しました（続行）: ${String(e.message || e).trim()}`);
 }

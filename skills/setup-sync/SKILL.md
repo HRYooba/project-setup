@@ -2,12 +2,12 @@
 name: setup-sync
 description: >
   project-setup のテンプレート更新に、対象リポジトリを追随させるセットアップコマンド。
-  SessionStart hook（setup-sync-check.mjs）が「テンプレ更新あり」を通知したとき、
-  またはユーザーが「setup-sync」「テンプレ同期」「テンプレを最新に追随」などと依頼したときに使う。
+  SessionStart hook が起動する裏の Claude から無人で走るほか、ユーザーが「setup-sync」
+  「テンプレ同期」「テンプレを最新に追随」などと依頼したときにも使う。
   記録版と現行プラグイン版を比較し、更新があれば保存フラグで apply.mjs を再適用し、
   要マージの Markdown を統合してから commit → push → 同期 PR を作成する（merge はしない）。
   重複 PR 防止・試行上限は実行スクリプト側でコード担保される。
-version: 1.1.0
+version: 1.2.0
 user-invocable: true
 argument-hint: "[対象ディレクトリ（省略時はカレント）]"
 ---
@@ -16,6 +16,12 @@ argument-hint: "[対象ディレクトリ（省略時はカレント）]"
 
 project-setup のテンプレート更新に対象リポジトリを追随させる。実行の中核は
 `sync-run.mjs` にあり、重複 PR 防止・試行上限・merge 禁止を**コードで担保**する。
+
+このスキルには 2 つの入口がある。手順はどちらも同じで、違うのは Step 2.5 の矛盾時の扱いだけ。
+
+- **無人**: SessionStart hook が `sync-launch.mjs` を起こし、使い捨て worktree の中で
+  裏の Claude がこのスキルを走らせる。ユーザーに質問できない
+- **対話**: ユーザーが `/setup-sync` と打つ。ユーザーに質問できる
 
 実行は `--phase=apply` → **要マージの Markdown を統合** → `--phase=publish` の 3 段。
 `apply.mjs` は `rules/*.md` と `CLAUDE.md` を書かず「要マージ」として報告するだけなので、
@@ -65,14 +71,20 @@ apply フェーズの出力に「要マージ」節があれば、`${CLAUDE_PLUG
 を Read し、そこに書かれた手順と判断基準に従って各ファイルを統合する。**この工程を飛ばすと
 テンプレの .md 更新が届かないまま PR が出る。**「要マージ」節が無ければ何もしない。
 
+テンプレと現物が正面から矛盾したとき、**無人実行ならユーザーに聞けない**。契約書の
+「無人実行のときの矛盾の扱い」に従い、テンプレ側を採って
+`~/.claude/plugins/data/project-setup/sync-notes.md` へ矛盾の中身を書き残す。publish が
+それを PR 本文の「要確認」節へ転記して消すので、判断は PR レビューへ引き継がれる。
+
 ### Step 2.6: publish フェーズ
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/skills/setup-sync/sync-run.mjs" {target} --phase=publish
 ```
 
-`git add -A` → 差分ゼロなら終了 → `chore:` コミット → push → `gh pr create`。
-**merge はしない**（不可逆操作は人間のゲートに残す）。PR 本文には apply の警告を全文転記する。
+`git add -A` → 差分ゼロなら終了 → `chore:` コミット → push → `gh pr create` →
+古い版の同期 PR を close。**merge はしない**（不可逆操作は人間のゲートに残す）。
+PR 本文には apply の警告と、あれば Step 2.5 の矛盾メモを全文転記する。
 
 ### Step 3: 結果報告
 
@@ -91,3 +103,7 @@ PR が作られた場合は「merge はしていないので、内容を確認�
   （`~/.claude/plugins/data/project-setup/sync-plan.json`）が無いとエラー終了する
 - apply フェーズで中断した場合、作業ブランチとテンプレ再適用の結果はワークツリーに残る。
   やり直すときは `--phase=apply` から実行し直す（試行回数は 1 消費されている点に注意）
+- 同期 PR はリポジトリごとに常に 1 本・最新版だけに保つ。新しい版の PR を作った後、
+  `chore/setup-sync-v*` の古い open PR は close する（reopen できる可逆操作。ブランチは残る）
+- 無人実行は使い捨て worktree の中で走るため、対象リポジトリの作業ツリーとブランチには
+  触れない。`git add -A` が他の変更を巻き込むことも構造的に起こらない
