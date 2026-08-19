@@ -5,11 +5,11 @@ description: >
   導入するセットアップコマンド。ユーザーが「Unityセットアップ」「setup-unity」「Unity規約を導入」
   「このプロジェクトにUnity開発ルールを入れて」などと依頼したときに使用する。
   カレントのリポジトリの .claude/ に rules（unity-mcp / folder-structure / hierarchy /
-  asset-naming / coding-standards / testing）、skills（test-unity / lint-unity）、
-  agents（unity-tester / unity-linter）を撒く。レイヤードアーキテクチャ規約
+  asset-naming / coding-standards / testing）、skills（test-unity / lint-unity / unity-parallel）、
+  agents（unity-tester / unity-linter / unity-worker）を撒く。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無と MCP バインディングは、
   実行時に AskUserQuestion で確認する。
-version: 1.12.0
+version: 1.13.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -21,7 +21,8 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 1. **rules** — `unity-mcp.md`（Unity 操作の絶対ルール + バインディング表の常時節を合成）/ `folder-structure.md` / `hierarchy.md` / `asset-naming.md` / `coding-standards.md` / `testing.md`
 2. **test-unity** — 変更差分のテスト責任判定・設計・実装・重複整理・実行（skill + `unity-tester` agent + 設計/実装ガイド）
 3. **lint-unity** — アセット・シーン・Prefab のルール準拠チェック（skill + `unity-linter` agent + チェックリスト）
-4. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards / testing / テスト設計ガイドへの差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
+4. **unity-parallel** — git worktree で複数の `unity-worker` を並列に動かしつつ、1 つしかない Unity Editor を順番待ちで貸し出す（skill + `lane.mjs`（貸し出し管理）+ `guard.mjs`（PreToolUse hook）+ `unity-worker` agent + `references/protocol.md`）。**この skill は自身の frontmatter で hook を登録する** — 呼び出したセッションでだけ有効になり、`settings.json` には触れない
+5. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards / testing / テスト設計ガイドへの差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
 
 ## 前提（満たされていないと skills が動かない）
 
@@ -105,6 +106,7 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   明記する（セットアップ質問が選択肢の説明に反映する）。常時必要な節（失敗判定 / 禁止事項 /
   コンパイル確認 / コンソールエラー取得と、実装固有の前提・書き方）は `<!-- core: start -->` 〜
   `<!-- core: end -->` で囲む（apply.mjs が `rules/unity-mcp.md` へ合成する。無いとエラー終了）
-- このスキルは `.claude/settings.json` に触れない（hook 登録なし）。テンプレート自動追随の状態ファイル `.claude/setup-sync-state.json` へは自分のキー（`setup-unity`）だけをマージ記録する（データファイルの更新であり hook 登録ではない）。同期チェック hook 本体と settings.json 登録は setup-github が単独で担う（hook の二重管理を作らないため）
+- このスキルは `.claude/settings.json` に触れない。テンプレート自動追随の状態ファイル `.claude/setup-sync-state.json` へは自分のキー（`setup-unity`）だけをマージ記録する（データファイルの更新であり hook 登録ではない）。SessionStart の同期チェック hook 本体と settings.json 登録は setup-github が単独で担う（hook の二重管理を作らないため）
+- **hook 契約の範囲**: 「settings.json へ恒久登録する hook は配らない」が契約であって、「hook を一切配らない」ではない。`unity-parallel` は自身の SKILL.md frontmatter に PreToolUse hook を持つ。これは **その skill を呼び出したセッションでだけ登録され**、settings.json には現れない。並列作業をしていないセッションの挙動は変わらない
 - **テンプレート保守（スキル開発者向け）**: `templates/architecture/` の各ファイル（folder-structure / coding-standards / testing / test-designing-guide）は `templates/base/` の同名ファイルのレイヤー特化版で、architecture モード時に上書き差し替えされる。base 側の規約を変えたら architecture 側にも反映すること（テスト設計ガイドの「テスト責任」「禁止する低品質テスト」一覧やアセットのプレフィックスは、`rules/testing.md` / `rules/asset-naming.md` を単一ソースとして参照させ、重複記載を避ける）
 - CLAUDE.md へ配る節は `templates/claude-md.md` にある（apply.mjs のコード内定数ではない）。文面を変えるとその節の行が配備先と一致しなくなり、次の適用で「要マージ」として検出される。旧文面の移行リストを保守する必要はない
