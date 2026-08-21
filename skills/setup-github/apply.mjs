@@ -139,10 +139,18 @@ function deployMarkdown(dst, src, label) {
   return "要マージ";
 }
 
+// 子プロセス共通のオプション。**windowsHide は必須**。
+// 無人のテンプレ同期では sync-launch.mjs が detached（＝コンソール無し）で走り、その下で
+// この apply.mjs が動く。Windows ではコンソールを持たない親から起動されたコンソールアプリが
+// 新しいコンソールウィンドウを画面に出すため、git 1 回ごとにウィンドウが点滅する。
+// 既にコンソールがある場合（対話実行）は継承するだけなので、付けても害はない。
+const HIDDEN = { windowsHide: true };
+
 // git をシェル非経由で実行。失敗時は null。
 function git(...a) {
   try {
     return execFileSync("git", ["-C", target, ...a], {
+      ...HIDDEN,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -418,7 +426,7 @@ if (prCopilot) {
   const res = spawnSync(
     process.execPath,
     [join(target, ".githooks", "generate-agents-md.mjs"), target],
-    { encoding: "utf8" }
+    { ...HIDDEN, encoding: "utf8" }
   );
   if (res.status === 0 && typeof res.stdout === "string") {
     agentsState = res.stdout.trim().split("\n")[0]; // 機械判定は先頭行

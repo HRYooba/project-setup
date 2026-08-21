@@ -55,10 +55,18 @@ function readJson(path) {
   }
 }
 
+// 子プロセス共通のオプション。**windowsHide は必須**。
+// この launcher は hook から detached で起動されるためコンソールを持たない。Windows では
+// コンソールを持たない親から起動されたコンソールアプリ（git / gh / claude.exe）が
+// **新しいコンソールウィンドウを確保して画面に出る**。windowsHide でそれを抑止する。
+// 既にコンソールがある場合（対話実行）は継承するだけなので、付けても害はない。
+const HIDDEN = { windowsHide: true };
+
 // git をシェル非経由で実行。失敗時は null。
 function git(cwd, ...a) {
   try {
     return execFileSync("git", ["-C", cwd, ...a], {
+      ...HIDDEN,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -189,6 +197,7 @@ async function main() {
         installRoot(),
       ],
       {
+        ...HIDDEN, // これが無いと裏の Claude がターミナルウィンドウを開いて数分居座る
         cwd: worktree,
         encoding: "utf8",
         timeout: parseInt(process.env.SETUP_SYNC_LAUNCH_TIMEOUT_MS || "1800000", 10),
@@ -267,7 +276,11 @@ function resolveClaudeBin() {
   if (process.env.SETUP_SYNC_CLAUDE_BIN) return process.env.SETUP_SYNC_CLAUDE_BIN;
   const which = process.platform === "win32" ? "where" : "which";
   try {
-    const out = execFileSync(which, ["claude"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const out = execFileSync(which, ["claude"], {
+      ...HIDDEN,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     const first = out.split(/\r?\n/).find(Boolean);
     if (first) return first.trim();
   } catch {
@@ -281,6 +294,7 @@ function resolveClaudeBin() {
 function findPr(cwd, branch) {
   try {
     const raw = execFileSync("gh", ["pr", "list", "--head", branch, "--state", "open", "--json", "number,url"], {
+      ...HIDDEN,
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
