@@ -75,10 +75,18 @@ function cmpVer(a, b) {
   return 0;
 }
 
+// 子プロセス共通のオプション。**windowsHide は必須**。
+// 無人実行では sync-launch.mjs が detached（＝コンソール無し）でこのスクリプトを起こす。
+// Windows ではコンソールを持たない親から起動されたコンソールアプリが新しいコンソール
+// ウィンドウを画面に出すため、git / gh / apply の 1 回ごとにウィンドウが点滅する。
+// 既にコンソールがある場合（対話実行）は継承するだけなので、付けても害はない。
+const HIDDEN = { windowsHide: true };
+
 // git をシェル非経由で実行。失敗時は null。
 function git(target, ...a) {
   try {
     return execFileSync("git", ["-C", target, ...a], {
+      ...HIDDEN,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -201,7 +209,7 @@ if (dryRun) {
 
 // gh は git と違い -C を持たない。対象リポジトリの解決は cwd で行う。
 function gh(...a) {
-  return execFileSync("gh", a, { cwd: target, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync("gh", a, { ...HIDDEN, cwd: target, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
 // ============================ apply フェーズ ============================
@@ -261,7 +269,10 @@ if (phase === "apply") {
   for (const d of drifted) {
     const applyPath = join(installPath, "skills", d.skill, "apply.mjs");
     try {
-      const out = execFileSync(process.execPath, [applyPath, target, ...d.flags], { encoding: "utf8" });
+      const out = execFileSync(process.execPath, [applyPath, target, ...d.flags], {
+        ...HIDDEN,
+        encoding: "utf8",
+      });
       // 出力はそのまま流す。要マージ一覧はこの後 Claude が読んでマージに使う。
       console.log(`--- ${d.skill} ---`);
       console.log(out.trimEnd());
