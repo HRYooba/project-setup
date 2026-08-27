@@ -1,7 +1,7 @@
 // apply.mjs の冪等性テスト（再実行安全・既存設定温存）。
 //
 // 観点:
-//   1. 初回適用でファイル・settings.json・CLAUDE.md（3 bullet）が揃う
+//   1. 初回適用でファイル・settings.json・CLAUDE.md（テンプレの全 bullet）が揃う
 //   2. フラグ無し再実行で review-config が温存され、settings / CLAUDE.md が重複しない
 //   3. rules/*.md と CLAUDE.md は「初回は配る / 同じなら触らない / 差分があれば書かずに
 //      要マージとして報告する」（統合は SKILL 手順で Claude が行うので apply.mjs は書かない）
@@ -24,7 +24,13 @@ const runApplyUnity = (target, args = []) => run(APPLY_UNITY, target, args);
 
 const count = (haystack, needle) => haystack.split(needle).length - 1;
 
-const MARKS = ["**ブランチ**:", "**簡素化**:", "**セキュリティレビュー**:"];
+// 配る節の見出しはテンプレートが正本。ここに文面を写すと、テンプレの文言を変えるたびに
+// 無関係なテストが落ちる（実際に落ちた）。テンプレから箇条書きのラベルを抽出して使う。
+const MARKS = readFileSync(join(APPLY, "..", "templates", "claude-md.md"), "utf8")
+  .split(/\r?\n/)
+  .map((l) => l.match(/^- (\*\*.+?\*\*:)/)?.[1])
+  .filter(Boolean);
+assert.ok(MARKS.length >= 3, `claude-md.md から箇条書きラベルを抽出できませんでした: ${MARKS}`);
 
 test("初回適用 → 再実行で重複せず、review-config が温存される", () => {
   const target = tempDir("apply-test-");
@@ -40,12 +46,12 @@ test("初回適用 → 再実行で重複せず、review-config が温存され�
   ]) {
     assert.ok(existsSync(join(target, f)), `${f} が配置されていない`);
   }
-  // 配布廃止: 旧 code-review 用 hook は新規配備で配られない
+  // code-review 用 hook は配らない
   for (const f of [
     ".claude/hooks/pr-code-review-gate.mjs",
     ".claude/hooks/code-review-effort-nudge.mjs",
   ]) {
-    assert.ok(!existsSync(join(target, f)), `${f} が配布廃止後も配置されている`);
+    assert.ok(!existsSync(join(target, f)), `${f} が配置されている（配布対象外のはず）`);
   }
 
   // 状態ファイル: setup-github キーに現行プラグイン版と有効フラグが入る
@@ -66,7 +72,7 @@ test("初回適用 → 再実行で重複せず、review-config が温存され�
   for (const m of MARKS) assert.equal(count(md1, m), 1, `${m} が 1 回でない`);
 
   const settings1 = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
-  // gate / nudge は配布廃止。PreToolUse には何も登録しない。
+  // gate / nudge は配らない。PreToolUse には何も登録しない。
   assert.ok(!settings1.hooks.PreToolUse, "PreToolUse に hook が登録されている（登録しないはず）");
   assert.equal(settings1.hooks.SessionStart.length, 2); // core.hooksPath + setup-sync-check
 
@@ -92,7 +98,7 @@ test("初回適用 → 再実行で重複せず、review-config が温存され�
 test("既存 CLAUDE.md がテンプレ節を欠いていれば、書き換えず要マージとして報告する", () => {
   const target = tempDir("apply-test-");
   mkdirSync(join(target, ".claude"), { recursive: true });
-  // 旧版 setup-github 適用済みの CLAUDE.md を再現（現行テンプレには無い旧レビュー行を持つ）。
+  // 現行テンプレには無いレビュー行を持つ CLAUDE.md（統合待ちの配備先を再現）。
   const oldMd = [
     "# プロジェクト規約",
     "",
@@ -110,7 +116,7 @@ test("既存 CLAUDE.md がテンプレ節を欠いていれば、書き換えず
 
   const out = runApply(target);
 
-  // apply.mjs は書かない。旧行も含めて現物がそのまま残る（統合は Claude が行う）。
+  // apply.mjs は書かない。テンプレに無い行も含めて現物がそのまま残る（統合は Claude が行う）。
   assert.equal(readFileSync(join(target, ".claude", "CLAUDE.md"), "utf8"), oldMd, "CLAUDE.md が書き換えられた");
   assert.match(out, /\.claude\/CLAUDE\.md: 要マージ/);
   // 要マージ節に現物とテンプレ両方のパスが出る（Claude がこれを読んで統合する）。
@@ -144,10 +150,10 @@ test("カスタマイズされた rules/*.md は上書きされず要マージ�
   assert.equal(readFileSync(rulePath, "utf8"), customized, "カスタマイズが上書きされた");
 });
 
-test("旧版が登録した gate/nudge(PreToolUse) は再実行で登録解除され、他人の hook は残る", () => {
+test("gate/nudge(PreToolUse) の登録は再実行で解除され、他人の hook は残る", () => {
   const target = tempDir("apply-test-");
   mkdirSync(join(target, ".claude"), { recursive: true });
-  // 旧版 setup-github 適用済みの settings.json を再現（gate + nudge + ユーザー独自 hook）。
+  // gate + nudge + ユーザー独自 hook が登録済みの settings.json を再現する。
   const legacy = {
     hooks: {
       PreToolUse: [
@@ -193,18 +199,18 @@ test("旧版が登録した gate/nudge(PreToolUse) は再実行で登録解除�
   assert.ok(commands.some((c) => c.includes("user-own-hook.mjs")), "他人の hook を巻き添えで消した");
 });
 
-test("配備済みの旧 code-review 用 hook 実体は再実行で削除される（lib は残る）", () => {
+test("配備済みの code-review 用 hook 実体は再実行で削除される（lib は残る）", () => {
   const target = tempDir("apply-test-");
   runApply(target); // 新版初回（gate/nudge は配られない）
-  // 旧版が残した hook 実体を再現する。
+  // 配備先に残っている hook 実体を再現する。
   const gate = join(target, ".claude", "hooks", "pr-code-review-gate.mjs");
   const nudge = join(target, ".claude", "hooks", "code-review-effort-nudge.mjs");
   writeFileSync(gate, "// legacy gate\n", "utf8");
   writeFileSync(nudge, "// legacy nudge\n", "utf8");
 
   const out = runApply(target);
-  assert.match(out, /pr-code-review-gate\.mjs（配布廃止）/);
-  assert.match(out, /code-review-effort-nudge\.mjs（配布廃止）/);
+  assert.match(out, /pr-code-review-gate\.mjs（配布対象外）/);
+  assert.match(out, /code-review-effort-nudge\.mjs（配布対象外）/);
   assert.ok(!existsSync(gate), "gate 実体が削除されていない");
   assert.ok(!existsSync(nudge), "nudge 実体が削除されていない");
   // reviewable-files.mjs は Copilot 判定に使うので残す。
@@ -294,4 +300,45 @@ test("pr-copilot 配備済みはフラグ無し再実行でも自動継承され
   assert.match(out, /pr-copilot は配備済みを自動継承/);
   const settings = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
   assert.equal(settings.hooks.PostToolUse.length, 1);
+});
+
+// 同期結果の報告 hook（UserPromptSubmit）は配らない。同期はユーザーのセッションで走り、
+// 結果は会話にそのまま出るため。実体と settings.json 登録の両方を掃除する。
+test("配備済みの setup-sync-report は実体も settings.json 登録も撤去される", () => {
+  const target = tempDir("apply-test-");
+  mkdirSync(join(target, ".claude", "hooks"), { recursive: true });
+  writeFileSync(join(target, ".claude", "hooks", "setup-sync-report.mjs"), "// 配備先に残った実体\n", "utf8");
+  writeFileSync(
+    join(target, ".claude", "settings.json"),
+    JSON.stringify(
+      {
+        hooks: {
+          UserPromptSubmit: [
+            {
+              hooks: [
+                {
+                  type: "command",
+                  command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/setup-sync-report.mjs"',
+                  timeout: 10,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      null,
+      2
+    ) + "\n",
+    "utf8"
+  );
+
+  const out = runApply(target);
+
+  assert.ok(
+    !existsSync(join(target, ".claude", "hooks", "setup-sync-report.mjs")),
+    "setup-sync-report.mjs の実体が残っている"
+  );
+  assert.match(out, /setup-sync-report\.mjs\): deregistered/);
+  const settings = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
+  assert.ok(!settings.hooks.UserPromptSubmit, "UserPromptSubmit の登録が残っている");
 });

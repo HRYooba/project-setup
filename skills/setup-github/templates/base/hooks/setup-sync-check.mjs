@@ -1,44 +1,43 @@
-// SessionStart hook: setup-github / setup-unity テンプレートの更新を検知して、同期を「起動」する。
+// SessionStart hook: setup-github / setup-unity テンプレートの更新を検知して知らせる。
 //
 // 対象プロジェクトの `.claude/setup-sync-state.json`（apply.mjs が記録した適用時のプラグイン版と
 // フラグ）と、いまインストールされている project-setup プラグインの現行版を比較する。
-// 現行版のほうが新しければ sync-launch.mjs を detached で起動して即 return する。
+// 現行版のほうが新しければ、ユーザーと Claude の両方へ知らせて終わる。
 // 差が無ければ即 exit 0（毎セッションの税を最小化）。
 //
-// 設計（なぜ「通知」をやめたか）:
-//   - 旧版はここで additionalContext に「`/setup-sync` を実行して」と書くだけだった。hook は
-//     実行主体を持たないため、いま起動した Claude が従うかどうかに賭ける形になる。実際に
-//     v1.9.1 のまま 3 版放置された。従順性に賭けるのをやめ、プロセスを起こす形へ変えた。
-//   - 起こすのは sync-launch.mjs（プラグイン側）。使い捨て worktree を切り、その中で裏 Claude に
-//     `/project-setup:setup-sync` を走らせ、同期 PR まで出す。対象リポジトリの作業ツリーと
-//     ブランチには触れないので、ユーザーの作業と衝突しない。
-//   - 結果は results/<key>.json に残り、UserPromptSubmit hook（setup-sync-report.mjs）が
-//     次のプロンプトで 1 行報告して消す。ここでは何も注入しない（セッション開始を汚さない）。
+// 設計:
+//   - **ここでは同期しない**。同期は `/setup-sync` をメインセッションの Claude が実行して行う。
+//     テンプレの .md 統合は LLM の判断を含む工程で、矛盾したらその場でユーザーに聞ける方がよい。
+//   - 人間に見せたい行は **systemMessage** で出す。additionalContext は Claude のコンテキストに
+//     入るだけで画面には出ないため、それだけだと気づかれないまま放置される。
+//   - SessionStart はブロックできない（公式仕様: Can block? = No）。exit 2 でも stderr が
+//     出るだけでセッションは進む。止める設計は取れないし、取らない。
 //   - 発火はアップグレード方向のみ（現行版 > 記録版）。複数マシンでプラグイン版がずれていても、
 //     古い版のマシンが新しい版で同期済みのプロジェクトを古いテンプレへ巻き戻す churn を防ぐ。
-//   - hook 自身はバージョン比較と spawn だけ。ネットワーク・gh・git は launcher 側で叩く
-//     （session 開始を遅らせない）。
+//   - hook 自身はバージョン比較だけ。ネットワーク・gh・git は sync-run.mjs 側が叩く。
 //   - 状態ファイルが無いプロジェクト（未セットアップ or バックフィル前）は対象外 → 即 exit 0。
-//   - SETUP_SYNC_NO_AUTO=1 で自動起動をやめ、旧来の「通知だけ」へ落とせる（避難口）。
+//   - SETUP_SYNC_DISABLE=1 で黙らせられる（避難口）。
 //
 // このスキル 1 ファイルで完結する（外部モジュールを import しない）。jq 非依存（Node のみ）。
 
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 /* global process, Buffer */
 
 function done() {
   process.exit(0);
 }
 
-function emitContext(text) {
+// systemMessage はユーザーの画面に出る。additionalContext は Claude だけが読む。
+// 両方出す: 人間が「同期が要る」と知り、Claude が何をすべきか知る。
+function emit(userLine, claudeText) {
   process.stdout.write(
     JSON.stringify({
+      systemMessage: userLine,
       hookSpecificOutput: {
         hookEventName: "SessionStart",
-        additionalContext: text,
+        additionalContext: claudeText,
       },
     })
   );
@@ -118,7 +117,7 @@ if (!currentVersion || currentVersion === "unknown") {
   const pj = installPath && readJson(join(installPath, ".claude-plugin", "plugin.json"));
   currentVersion = pj?.version;
 }
-if (!currentVersion || !installPath) done();
+if (!currentVersion) done();
 
 // ---- 4. 記録版との差分（アップグレード方向のみ） ----
 const SKILL_KEYS = ["setup-github", "setup-unity"];
@@ -134,39 +133,16 @@ if (drifted.length === 0) done();
 
 const summary = drifted.map((d) => `${d.skill} v${d.from}→v${currentVersion}`).join(" / ");
 
-// ---- 5. 避難口: 自動起動を止めて旧来の通知だけに落とす ----
-if (process.env.SETUP_SYNC_NO_AUTO === "1") {
-  emitContext(
-    [
-      `【テンプレート自動追随】project-setup のテンプレートが更新されています（${summary}）。`,
-      "",
-      "自動同期は SETUP_SYNC_NO_AUTO=1 で止まっています。同期するには `/setup-sync` を実行してください。",
-    ].join("\n")
-  );
-}
-
-// ---- 6. 同期の起動（detached。セッションは待たない）----
-// 結果はこの場では出せない（数分かかる）。sync-launch.mjs が results/<key>.json に残し、
-// UserPromptSubmit hook（setup-sync-report.mjs）が次のプロンプトで報告する。
-const launcher = join(installPath, "skills", "setup-sync", "sync-launch.mjs");
-if (!existsSync(launcher)) {
-  // 旧版プラグインには launcher が無い。黙って落とさず、打てる手を伝える。
-  emitContext(
-    [
-      `【テンプレート自動追随】テンプレートが更新されています（${summary}）が、自動同期スクリプトが`,
-      `見つかりませんでした（${launcher}）。\`/setup-sync\` を手動で実行してください。`,
-    ].join("\n")
-  );
-}
-
-try {
-  const child = spawn(process.execPath, [launcher, resolve(projectDir)], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  child.unref();
-} catch {
-  // 起動に失敗しても session は止めない。次回の SessionStart で再試行される。
-}
-done();
+// ---- 5. 通知（ユーザーへ 1 行 + Claude へ手順）----
+emit(
+  `【テンプレート更新】project-setup が更新されています（${summary}）。/setup-sync で同期できます。`,
+  [
+    `【テンプレート自動追随】project-setup のテンプレートが更新されています（${summary}）。`,
+    "",
+    "このセッションの最初のターンで `/project-setup:setup-sync` を実行し、同期 PR を作成してください。",
+    "ユーザーが別の作業を指示している場合は、それを先に済ませてから実行してください（同期は待てます）。",
+    "",
+    "同期は使い捨て worktree の中で走るので、いまの作業ツリーとブランチには影響しません。",
+    "merge はしません。PR を作るところで止まります。",
+  ].join("\n")
+);
