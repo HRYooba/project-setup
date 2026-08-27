@@ -1,11 +1,11 @@
-// sync-run.mjs（方式B の実行本体）の決定的コア（drift 判定・計画・ガード）のテスト。
+// sync-run.mjs（同期の実行本体）の決定的コア（drift 判定・計画・ガード）のテスト。
 //
 // git/gh を伴う副作用（branch/commit/push/PR）は CI で再現しづらいため、副作用に入る前の
 // 決定的な部分だけを検証する:
 //   - --dry-run: 同期計画の算出（対象スキル・保存フラグ・ブランチ・試行回数）と、副作用ゼロ
 //   - drift 無し / 状態ファイル無し → 何もしないで exit 0
 //   - 試行上限ガード（非 dry-run でも副作用前に停止し、試行回数を増やさない）
-//   - フェーズ指定の必須化と、publish を計画なしで叩いたときの停止
+//   - フェーズ指定の必須化と、publish を計画なし / worktree なしで叩いたときの停止
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -131,4 +131,28 @@ test("publish を同期計画なしで叩くとエラー終了する（apply を
   assert.equal(status, 1);
   assert.match(stderr, /同期計画が見つかりません/);
   assert.match(stderr, /--phase=apply/);
+});
+
+// publish は apply が作った worktree の中で commit する。worktree が消えていれば
+// 対象リポジトリの作業ツリーへフォールバックしてはならない（ユーザーの作業を巻き込むため）。
+test("publish: 計画はあるが worktree が消えていればエラー終了する", () => {
+  const target = tempDir("syncrun-nowt-");
+  writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
+  const planPath = join(tempDir("syncrun-plan-nowt-"), "sync-plan.json");
+  writeFileSync(
+    planPath,
+    JSON.stringify({
+      key: `${target}@v1.3.0`,
+      version: "1.3.0",
+      branch: "chore/setup-sync-v1.3.0",
+      repo: target,
+      worktree: join(target, "does-not-exist"),
+      drifted: [{ skill: "setup-github", from: "1.0.0", flags: [] }],
+      warnings: [],
+    }),
+    "utf8"
+  );
+  const { status, stderr } = runSyncRun(target, "1.3.0", { phase: "publish", planPath });
+  assert.equal(status, 1);
+  assert.match(stderr, /worktree が見つかりません/);
 });

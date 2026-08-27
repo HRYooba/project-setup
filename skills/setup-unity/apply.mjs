@@ -5,7 +5,7 @@
 // --mcp <binding> で Unity MCP 実装のバインディング表を選択し、
 //   1) 表の core 節（常時必要な操作）を rules/unity-mcp.md へ合成（常時コンテキスト）
 //   2) 表の全文を test-unity / lint-unity 各 skill の references/unity-mcp-tools.md へ配置（遅延参照）
-// する（bindings/ に表を追加すれば新実装に対応できる）。旧配置 rules/unity-mcp-tools.md は削除する。
+// する（bindings/ に表を追加すれば新実装に対応できる）。rules/unity-mcp-tools.md があれば削除する。
 // 冪等（再実行安全）。
 //
 // 使い方: node apply.mjs [target-dir] [--architecture] [--mcp <binding>]
@@ -89,7 +89,7 @@ const claudeDir = join(target, ".claude");
 
 // バインディング表の選択。--mcp 指定 > 導入済みの表から継承 > デフォルト。
 // 継承がないと、--mcp 無しの再実行で別実装の表がデフォルトへ静かに巻き戻るため。
-// マーカーは合成先 rules/unity-mcp.md の先頭行（旧配置 rules/unity-mcp-tools.md からの移行も読む）。
+// マーカーは合成先 rules/unity-mcp.md の先頭行（rules/unity-mcp-tools.md しか無い配備先はそちらを読む）。
 const deployedRulePath = join(claudeDir, "rules", "unity-mcp.md");
 const legacyToolsPath = join(claudeDir, "rules", "unity-mcp-tools.md");
 let binding = mcpArg;
@@ -169,7 +169,7 @@ for (const layer of layers) {
 // 未対応バインディングが配備済みのときは上書きせず温存する（接続中 MCP との不一致を防ぐ）。
 if (bindingUnknownDeployed) {
   // cpSync が rules/unity-mcp.md をテンプレートで上書きしているため、合成済みだった内容を戻す。
-  // references / 旧配置の表もそのまま温存する（テンプレートコピーは references を触らない）。
+  // references 側の表もそのまま温存する（テンプレートコピーは references を触らない）。
   if (deployedRuleBefore !== null) writeFileSync(deployedRulePath, deployedRuleBefore, "utf8");
   copied.set("rules/unity-mcp.md", `binding: ${bindingUnknownDeployed}（未対応・温存）`);
 } else {
@@ -193,7 +193,7 @@ if (bindingUnknownDeployed) {
   }
   if (existsSync(legacyToolsPath)) {
     rmSync(legacyToolsPath);
-    console.log("旧配置の .claude/rules/unity-mcp-tools.md を削除しました（references/ 同梱へ移行）。");
+    console.log(".claude/rules/unity-mcp-tools.md を削除しました（表は references/ 同梱へ移動）。");
   }
 }
 
@@ -217,10 +217,9 @@ for (const f of readdirSync(rulesDir).filter((n) => n.endsWith(".md"))) {
 }
 
 // ---- CLAUDE.md への反映（apply.mjs は書かない） ----
-// 配る内容は templates/claude-md.md（節そのもの）。旧実装は配る文面を定数で持ち、
-// 旧文面からの移行を完全一致の置換で追いかけていたが、文面を変えるたびに移行コードが
-// 増える（＝腐る）書き方だったため廃止した。古い運用行は SKILL 手順のマージで
-// Claude がテンプレ側を正として置き換える。
+// 配る内容は templates/claude-md.md（節そのもの）。配る文面を定数で持ち、移行を完全一致の
+// 置換で追いかける書き方はしない（文面を変えるたびに移行コードが増える＝腐る）。
+// 古い運用行は SKILL 手順のマージで Claude がテンプレ側を正として置き換える。
 const claudeMdPath = join(claudeDir, "CLAUDE.md");
 const claudeMdSrc = join(here, "templates", "claude-md.md");
 const claudeMdSection = readFileSync(claudeMdSrc, "utf8");
@@ -258,7 +257,7 @@ const pluginVersion = readPluginVersion();
 if (pluginVersion) {
   const syncFlags = [];
   if (useArchitecture) syncFlags.push("--architecture");
-  // 未対応バインディングを温存中のときは --mcp を保存しない（無人再適用が未知値でエラーになるため。
+  // 未対応バインディングを温存中のときは --mcp を保存しない（テンプレ同期の再適用が未知値でエラーになるため。
   // その場合は配備済みマーカーからの継承に任せる）。
   if (binding && !bindingUnknownDeployed) syncFlags.push("--mcp", binding);
   writeSyncState("setup-unity", pluginVersion, syncFlags);

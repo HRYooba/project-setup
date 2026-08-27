@@ -41,7 +41,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 - 質問の準備として以下を調べる:
   - **Unity MCP 実装の自動特定**: 接続中のツール一覧（`mcp__<server>__*` プレフィックス）や対象の `.mcp.json` を、各 `bindings/*.md` の「この実装の見分け方」節と突き合わせて特定する（実装名と見分け方は SKILL.md に直書きしない。新実装への対応が表の追加だけで完結するように保つ）
   - **特定できなかったときの切り分け**: Unity 系のツール接頭辞が一つも見つからない場合、`claude mcp list` を実行し、対象サーバーを **(1) 未導入**（一覧に載っていない）/ **(2) disabled**（一覧に載っており `⊘ Disabled` と表示される）/ **(3) 設定済みだが接続失敗**（一覧に載っていて接続が失敗している）の3状態に振り分ける。(3) なら出力の HTTP ステータス・エラーテキストと、設定値の前後空白に関する警告（あれば）を控える。空白警告が出ているサーバーは、値が `.mcp.json` の見た目と一致せずツール接頭辞の突き合わせにも失敗しうるため、(3) と同じく「設定はあるが正しく効いていない」側として扱う。**disabled のサーバーには接続が試みられないため、HTTP ステータス・エラーテキスト・空白警告のいずれも出ない** — エラー情報が出ていないことは接続失敗の否定にも (1) の根拠にもならない。3状態の判別は一覧への掲載と `⊘ Disabled` の有無で行い、エラー情報の不在では判断しない
-  - **再実行時の現在値**: `.claude/rules/architecture.md` の有無（architecture モード導入済みか）、配備済み `.claude/rules/unity-mcp.md` 先頭の `<!-- binding: <name> -->` マーカー（旧配置 `.claude/rules/unity-mcp-tools.md` しか無い場合はそちらのマーカー）
+  - **再実行時の現在値**: `.claude/rules/architecture.md` の有無（architecture モード導入済みか）、配備済み `.claude/rules/unity-mcp.md` 先頭の `<!-- binding: <name> -->` マーカー（`.claude/rules/unity-mcp-tools.md` しか無い場合はそちらのマーカー）
   - `Assets/App/` の有無
 - **セットアップ質問**: 下表の項目を **AskUserQuestion 1 回にまとめて必ず確認**する。ユーザーからオプションフラグは受け取らない（依頼文に書かれていても、再実行でも質問は省略しない）。回答から Claude が apply.mjs のフラグを組み立てる。**再実行時は現在値を「現在のまま維持」として推奨選択肢の先頭に置く**。質問の直前に、調べた現状（MCP 特定結果 — 特定できなかった場合は「未導入」「disabled」「接続失敗」のどれかという切り分け結果まで・現在値・Assets/App の有無）を本文テキストで提示する
 
@@ -65,7 +65,7 @@ apply.mjs が次を行う:
 - `templates/base/` を `{target}/.claude/`（`rules/` `skills/` `agents/`）へ再帰コピー
 - 選択されたバインディング表（`bindings/<binding>.md`）を二層で配置
   （常時層: 表の core 節を `rules/unity-mcp.md` へ合成 / 遅延層: 表の全文を `skills/test-unity/references/` と
-  `skills/lint-unity/references/` の `unity-mcp-tools.md` へコピー。旧配置 `rules/unity-mcp-tools.md` は削除。
+  `skills/lint-unity/references/` の `unity-mcp-tools.md` へコピー。`rules/unity-mcp-tools.md` があれば削除。
   `--mcp` 省略時は導入済みの表を継承、初回は `mcp-for-unity`）
 - `--architecture` 時は `templates/architecture/` を上から上書きコピー
   （architecture / class-catalog の追加 + folder-structure / coding-standards / testing / test-designing-guide のレイヤー版差し替え。lint checklist は base に統合済みなので差し替えない）
@@ -109,4 +109,4 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
 - このスキルは `.claude/settings.json` に触れない。テンプレート自動追随の状態ファイル `.claude/setup-sync-state.json` へは自分のキー（`setup-unity`）だけをマージ記録する（データファイルの更新であり hook 登録ではない）。SessionStart の同期チェック hook 本体と settings.json 登録は setup-github が単独で担う（hook の二重管理を作らないため）
 - **hook 契約の範囲**: 「settings.json へ恒久登録する hook は配らない」が契約であって、「hook を一切配らない」ではない。`unity-parallel` は自身の SKILL.md frontmatter に PreToolUse hook を持つ。これは **その skill を呼び出したセッションでだけ登録され**、settings.json には現れない。並列作業をしていないセッションの挙動は変わらない
 - **テンプレート保守（スキル開発者向け）**: `templates/architecture/` の各ファイル（folder-structure / coding-standards / testing / test-designing-guide）は `templates/base/` の同名ファイルのレイヤー特化版で、architecture モード時に上書き差し替えされる。base 側の規約を変えたら architecture 側にも反映すること（テスト設計ガイドの「テスト責任」「禁止する低品質テスト」一覧やアセットのプレフィックスは、`rules/testing.md` / `rules/asset-naming.md` を単一ソースとして参照させ、重複記載を避ける）
-- CLAUDE.md へ配る節は `templates/claude-md.md` にある（apply.mjs のコード内定数ではない）。文面を変えるとその節の行が配備先と一致しなくなり、次の適用で「要マージ」として検出される。旧文面の移行リストを保守する必要はない
+- CLAUDE.md へ配る節は `templates/claude-md.md` にある（apply.mjs のコード内定数ではない）。文面を変えるとその節の行が配備先と一致しなくなり、次の適用で「要マージ」として検出される。文面の移行リストを保守する必要はない

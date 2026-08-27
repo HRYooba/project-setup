@@ -7,16 +7,15 @@
 //       既定 ON。--no-pre-push で opt-out。配備済みの場合は削除して選択を貫徹し、撒く githook が
 //       他に無ければ core.hooksPath も解除する）
 //     - .claude/hooks/lib/reviewable-files.mjs + review-config.json（Copilot 自動アサインの
-//       対象判定に使う。旧 code-review 用 hook = pr-code-review-gate.mjs / code-review-effort-nudge.mjs
-//       は配布廃止し、既存配備先の実体も削除、settings.json の登録も解除する）
+//       対象判定に使う）
 //     - .claude/rules/git-conventions.md と .claude/CLAUDE.md（前者は templates/base/rules、
 //       後者は templates/claude-md.md）。**既存があり内容が異なるときは書かない** —
 //       「要マージ」として報告し、SKILL 手順で Claude が文脈判断して統合する
 //     - .claude/skills/create-issue/（templates/base/skills の同梱スナップショットをコピー）
 //     - .github/pull_request_template.md と .github/ISSUE_TEMPLATE/*.yml
 //       （templates/base/.github の seed。**既存があれば触らない** — リポジトリ所有の成果物のため）
-//     - .claude/settings.json へ hooksPath 自動設定(SessionStart)、テンプレ追随の起動(SessionStart)、
-//       同期結果の報告(UserPromptSubmit) を登録し、旧版が撒いた gate/nudge(PreToolUse) を登録解除する
+//     - .claude/settings.json へ hooksPath 自動設定(SessionStart) とテンプレ更新の検知(SessionStart)
+//       を登録する（配らなくなった hook は実体を消し、登録も解除する）
 //     - 実行者の clone へ core.hooksPath を即時設定 + pre-push へ exec bit 付与（mac/linux 対策）
 //
 //   --pr-copilot（任意）:
@@ -35,16 +34,16 @@
 //     ある）なら自動継承する（base のみ再実行で pr-copilot が黙って剥がれる巻き戻りを防ぐ）。
 //   --no-pre-push: ブランチ保護 pre-push を入れない（既定は入れる）。配備済みなら削除する。
 //     自動継承はしない（既定 ON なのでフラグ無し再実行で入り直す。opt-out の維持は sync-state の
-//     記録フラグ経由で無人再適用へ引き継がれる）。
+//     記録フラグ経由でテンプレ同期の再適用へ引き継がれる）。
 //   --review-targets: レビュー対象フォルダ（カンマ区切り）。配備先の
 //     .claude/hooks/review-config.json へ書き込む（reviewable-files.mjs がこれを読む）。
-//     ここに無いフォルダのコードは gate・Copilot アサインとも対象外（ベンダーコード導入
-//     PR の素通し用）。優先順位: 明示指定 > 配備済み config の温存 > 旧版 lib からの移行
+//     ここに無いフォルダのコードは Copilot アサインの対象外（ベンダーコード導入
+//     PR の素通し用）。優先順位: 明示指定 > 配備済み config の温存 > lib からの移行
 //     > 空＝全フォルダ対象。`--review-targets=`（空値）で明示的に全フォルダ対象へ戻せる。
 //   --review-excludes: レビュー除外フォルダ（カンマ区切り）。同じく review-config.json へ。
 //     REVIEW_TARGETS より優先して常に対象外。デフォルトは .claude/.github/.githooks
 //     （ツール設定系。setup-github の導入 PR を素通しするため）。優先順位: 明示指定 >
-//     配備済み config の温存 > 旧版 lib からの移行 > デフォルト。
+//     配備済み config の温存 > lib からの移行 > デフォルト。
 //     `--review-excludes=`（空値）で明示的に除外なしへ戻せる。
 // 依存なし（Node 標準のみ / Node 16.7+ の fs.cpSync を使用）。このスキル 1 ディレクトリで
 // 完結する（外部モジュールを import しない＝単体コピーで動く）。
@@ -75,11 +74,11 @@ if (unknownFlags.length) {
 }
 // ブランチ保護 pre-push は既定 ON。--no-pre-push で opt-out する（配備済みなら削除して選択を貫徹）。
 // pr-copilot と違い自動継承はしない（既定 ON なのでフラグ無し再実行で常に入り直す。opt-out を
-// 維持したいときは sync-state に記録された --no-pre-push が無人再適用へ引き継がれる）。
+// 維持したいときは sync-state に記録された --no-pre-push がテンプレ同期の再適用へ引き継がれる）。
 const prePush = !args.includes("--no-pre-push");
 // pr-copilot は明示指定 or 配備済み（after-pr-create.mjs がある）なら自動継承する。
 // base のみで再実行すると lib だけ最新化され、それを import する pr-copilot hook が
-// 旧版のまま残ってバージョンスキュー（import エラー等）を起こすため、剥がさない。
+// 更新されないまま残ってバージョンスキュー（import エラー等）を起こすため、剥がさない。
 const target = args.find((a) => !a.startsWith("--")) ?? process.cwd();
 const claudeDir = join(target, ".claude");
 const prCopilotDeployed = existsSync(join(claudeDir, "hooks", "after-pr-create.mjs"));
@@ -139,18 +138,10 @@ function deployMarkdown(dst, src, label) {
   return "要マージ";
 }
 
-// 子プロセス共通のオプション。**windowsHide は必須**。
-// 無人のテンプレ同期では sync-launch.mjs が detached（＝コンソール無し）で走り、その下で
-// この apply.mjs が動く。Windows ではコンソールを持たない親から起動されたコンソールアプリが
-// 新しいコンソールウィンドウを画面に出すため、git 1 回ごとにウィンドウが点滅する。
-// 既にコンソールがある場合（対話実行）は継承するだけなので、付けても害はない。
-const HIDDEN = { windowsHide: true };
-
 // git をシェル非経由で実行。失敗時は null。
 function git(...a) {
   try {
     return execFileSync("git", ["-C", target, ...a], {
-      ...HIDDEN,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -196,12 +187,12 @@ function writeSyncState(skillKey, version, flags) {
 mkdirSync(claudeDir, { recursive: true });
 
 // レビュー対象/除外フォルダは配備先の review-config.json に保存する（reviewable-files.mjs が
-// これを読む）。設定を生成コードへ正規表現で注入・回収する方式は、テンプレートの宣言形式が
-// 変わると温存が黙って壊れるため廃止。config は独立ファイルなので cpSync に消されず、温存＝
-// そのまま読むだけで済む。
+// これを読む）。設定を生成コードへ正規表現で注入・回収する方式は取らない（テンプレートの
+// 宣言形式が変わると温存が黙って壊れる）。config は独立ファイルなので cpSync に消されず、
+// 温存＝そのまま読むだけで済む。
 //
-// 優先順位: 明示フラグ > 配備済み config の温存 > 旧版 lib からの移行 > デフォルト。
-// 旧版（config 以前）の配備は lib に `export const REVIEW_TARGETS = [...]` を持つため、
+// 優先順位: 明示フラグ > 配備済み config の温存 > lib からの移行 > デフォルト。
+// config を持たない配備先は lib に `export const REVIEW_TARGETS = [...]` を持つため、
 // config が無いときだけ lib を scrape して 1 度だけ config へ移行する。
 const configPath = join(claudeDir, "hooks", "review-config.json");
 const libPath = join(claudeDir, "hooks", "lib", "reviewable-files.mjs");
@@ -225,7 +216,7 @@ function readDeployedConfig() {
   }
 }
 
-// 旧版 lib（config 以前）からの移行用 scrape。config が無いときだけ使う。
+// lib からの移行用 scrape。config が無いときだけ使う。
 function scrapeOldLib(name) {
   if (!existsSync(libPath)) return undefined;
   const m = readFileSync(libPath, "utf8").match(new RegExp(`export const ${name} = \\[([^\\]]*)\\];`));
@@ -239,7 +230,7 @@ function scrapeOldLib(name) {
 
 const deployedConfig = readDeployedConfig();
 
-// targets: 指定 > config 温存 > 旧 lib 移行 > 空（全フォルダ）
+// targets: 指定 > config 温存 > lib 移行 > 空（全フォルダ）
 let effectiveTargets;
 let targetsSource;
 if (rtArg !== undefined) {
@@ -259,7 +250,7 @@ if (rtArg !== undefined) {
   }
 }
 
-// excludes: 指定（空値含む）> config 温存 > 旧 lib 移行 > デフォルト
+// excludes: 指定（空値含む）> config 温存 > lib 移行 > デフォルト
 const DEFAULT_EXCLUDES = [".claude/", ".github/", ".githooks/"];
 let effectiveExcludes;
 let excludesSource;
@@ -281,23 +272,27 @@ if (rxArg !== undefined) {
 }
 
 cpSync(join(templatesDir, "base", "hooks"), join(claudeDir, "hooks"), { recursive: true });
-copied.push(
-  ".claude/hooks/setup-sync-check.mjs",
-  ".claude/hooks/setup-sync-report.mjs",
-  ".claude/hooks/lib/reviewable-files.mjs"
-);
+copied.push(".claude/hooks/setup-sync-check.mjs", ".claude/hooks/lib/reviewable-files.mjs");
 
-// 旧版が配っていた code-review 用 hook（PR 作成 gate / effort nudge）は配布廃止。
-// /code-review が原則ユーザー手打ち専用になり Claude 自走で回せなくなったため、レビュー運用は
-// CLAUDE.md のソフト指示（/simplify + /security-review）へ移行した。テンプレートから実体を
-// 消したので新規配備では配られないが、既存配備先には残っているため削除する（settings.json
-// からの登録解除は下の deregister が担当）。reviewable-files.mjs は Copilot 自動アサインの
-// 対象判定に引き続き使うので残す。
+// 同期結果の報告 hook は配らない（同期はメインセッションで走り、結果は会話にそのまま出る）。
+// 配備先に残っていれば削除する（settings.json からの登録解除は下の deregister が担当）。
+{
+  const p = join(claudeDir, "hooks", "setup-sync-report.mjs");
+  if (existsSync(p)) {
+    rmSync(p);
+    removed.push(".claude/hooks/setup-sync-report.mjs（配布対象外）");
+  }
+}
+
+// code-review 用 hook（PR 作成 gate / effort nudge）は配らない。レビュー運用は CLAUDE.md の
+// ソフト指示（/code-review + /security-review）に置いている。配備先に残っていれば削除する
+// （settings.json からの登録解除は下の deregister が担当）。reviewable-files.mjs は
+// Copilot 自動アサインの対象判定に引き続き使うので残す。
 for (const f of ["pr-code-review-gate.mjs", "code-review-effort-nudge.mjs"]) {
   const p = join(claudeDir, "hooks", f);
   if (existsSync(p)) {
     rmSync(p);
-    removed.push(`.claude/hooks/${f}（配布廃止）`);
+    removed.push(`.claude/hooks/${f}（配布対象外）`);
   }
 }
 
@@ -426,7 +421,7 @@ if (prCopilot) {
   const res = spawnSync(
     process.execPath,
     [join(target, ".githooks", "generate-agents-md.mjs"), target],
-    { ...HIDDEN, encoding: "utf8" }
+    { encoding: "utf8" }
   );
   if (res.status === 0 && typeof res.stdout === "string") {
     agentsState = res.stdout.trim().split("\n")[0]; // 機械判定は先頭行
@@ -443,9 +438,9 @@ if (prCopilot) {
 // ---- 4. CLAUDE.md への反映（apply.mjs は書かない） ----
 // 配る内容は templates/claude-md.md（節そのもの）。CLAUDE.md はプロジェクトが最も育てる
 // ファイルなので、機械的な追記・置換をやめて Claude の文脈判断へ委ねる。
-// 旧実装は配る文面を定数で持ち、旧文面からの移行を「完全一致リスト」で追いかけていたが、
-// 文面を変えるたびにリストが伸びる（＝腐る）書き方だったため廃止した。既存配備先に残る
-// 古い運用行は、SKILL 手順のマージで Claude がテンプレ側を正として置き換える。
+// 配る文面を定数で持ち、移行を「完全一致リスト」で追いかける書き方はしない（文面を変える
+// たびにリストが伸びる＝腐る）。配備先に残る古い運用行は、SKILL 手順のマージで Claude が
+// テンプレ側を正として置き換える。
 const claudeMdPath = join(claudeDir, "CLAUDE.md");
 const claudeMdSrc = join(templatesDir, "claude-md.md");
 const claudeMdSection = readFileSync(claudeMdSrc, "utf8");
@@ -493,7 +488,7 @@ if (settingsReadable) {
   settings.hooks ??= {};
 
   // 登録 or 更新: owns(command) が真の既存 hook を「自分が撒いたもの」とみなし、テンプレの
-  // 最新形へ置き換える（旧版で撒いた timeout/if 無しの定義を追従）。無ければ新規追加。
+  // 最新形へ置き換える（timeout/if の欠けた定義も追従させる）。無ければ新規追加。
   // 所有権は部分一致 needle をやめ、スクリプト hook は一意なファイル名、hooksPath は完全一致で
   // 判定する。似ているが別物（conflicts）を見つけたら上書きせず警告してスキップする
   // （例: ユーザー独自の `git config core.hooksPath .husky && ...` を壊さない）。
@@ -531,7 +526,7 @@ if (settingsReadable) {
   };
 
   // 登録解除: 自分が過去に撒いた hook を settings.json から外す（owns 一致で除去し、
-  // 空になったグループは畳む）。配布廃止した hook の掃除を既存配備先で貫徹するため。
+  // 空になったグループは畳む）。配布対象外の hook の掃除を配備先で貫徹するため。
   // 自分の hook だけを外し、他人の hook や未知構造のグループには触れない。
   const deregister = (event, { label, owns }) => {
     const groups = settings.hooks[event];
@@ -558,11 +553,8 @@ if (settingsReadable) {
     hookStates.push(`${event}(${label}): deregistered`);
   };
 
-  // PR 作成 gate / effort nudge は配布廃止。実体は上でテンプレートから削除・既存配備先からも
-  // rmSync 済み。ここでは旧版が登録した settings.json エントリを登録解除して掃除を貫徹する。
-  // 理由: /code-review が原則ユーザー手打ち専用（disable-model-invocation）になり Claude 自走の
-  // 自動門番として成立しなくなったため、レビュー運用は CLAUDE.md のソフト指示
-  // （/simplify + /security-review）へ移行した。
+  // PR 作成 gate / effort nudge は配らない。実体は上で削除済み。ここでは settings.json に
+  // 残っている登録を解除して掃除を貫徹する。
   deregister("PreToolUse", {
     label: "pr-code-review-gate.mjs",
     owns: (cmd) => cmd.includes("pr-code-review-gate.mjs"),
@@ -603,30 +595,19 @@ if (settingsReadable) {
         {
           type: "command",
           command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/setup-sync-check.mjs"',
-          // 差が無ければ即 exit する軽量比較と、差があれば detached spawn するだけ。
-          // 実際の同期（fetch / worktree / 裏 Claude）は起動された launcher 側で走るので、
-          // セッション開始はここで待たされない。
+          // 版番号の比較だけ。差があってもここでは知らせるだけで、同期そのものは
+          // /setup-sync（sync-run.mjs）が走らせる。セッション開始は待たされない。
           timeout: 10,
         },
       ],
     },
   });
 
-  // 裏で走った同期の結果を次のプロンプトで 1 行報告する。動いているセッションへ外から
-  // 差し込む口が無いため、報告はイベント待ちになる。毎プロンプト走るので存在確認 1 回で
-  // 抜ける実装にしてある（timeout も短く）。
-  register("UserPromptSubmit", {
+  // 同期結果の報告 hook は配らない（同期はメインセッションで走り、報告は会話に出る）。
+  // 既存配備先の settings.json から登録を外す。
+  deregister("UserPromptSubmit", {
     label: "setup-sync-report.mjs",
     owns: (cmd) => cmd.includes("setup-sync-report.mjs"),
-    entry: {
-      hooks: [
-        {
-          type: "command",
-          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/setup-sync-report.mjs"',
-          timeout: 10,
-        },
-      ],
-    },
   });
 
   if (prCopilot) {
@@ -656,7 +637,7 @@ if (settingsReadable) {
 // ---- 5b. 状態ファイル setup-sync-state.json の書き込み ----
 // 適用時のプラグイン版と有効フラグを記録する。SessionStart hook がこれと現行版を比較し、
 // 更新時に `/setup-sync`（sync-run.mjs）の実行を促す。フラグは「有効値」を明示保存する
-// （配備済み設定からの継承に依存せず、無人再適用が決定的に同じ構成を再現できるように）。
+// （配備済み設定からの継承に依存せず、テンプレ同期の再適用が決定的に同じ構成を再現できるように）。
 const syncStates = [];
 const pluginVersion = readPluginVersion();
 if (pluginVersion) {
@@ -723,7 +704,7 @@ if (git("rev-parse", "--is-inside-work-tree") === "true") {
 const sourceNote = {
   指定: "指定",
   温存: "配備済み設定を温存",
-  移行: "旧版 lib から移行",
+  移行: "lib から移行",
   なし: "全フォルダ",
   デフォルト: "デフォルト",
 };
