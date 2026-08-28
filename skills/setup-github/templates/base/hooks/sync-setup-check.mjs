@@ -1,12 +1,12 @@
 // SessionStart hook: setup-github / setup-unity テンプレートの更新を検知して知らせる。
 //
-// 対象プロジェクトの `.claude/setup-sync-state.json`（apply.mjs が記録した適用時のプラグイン版と
+// 対象プロジェクトの `.claude/sync-setup-state.json`（apply.mjs が記録した適用時のプラグイン版と
 // フラグ）と、いまインストールされている project-setup プラグインの現行版を比較する。
 // 現行版のほうが新しければ、ユーザーと Claude の両方へ知らせて終わる。
 // 差が無ければ即 exit 0（毎セッションの税を最小化）。
 //
 // 設計:
-//   - **ここでは同期しない**。同期は `/setup-sync` をメインセッションの Claude が実行して行う。
+//   - **ここでは同期しない**。同期は `/sync-setup` をメインセッションの Claude が実行して行う。
 //     テンプレの .md 統合は LLM の判断を含む工程で、矛盾したらその場でユーザーに聞ける方がよい。
 //   - 人間に見せたい行は **systemMessage** で出す。additionalContext は Claude のコンテキストに
 //     入るだけで画面には出ないため、それだけだと気づかれないまま放置される。
@@ -16,7 +16,7 @@
 //     古い版のマシンが新しい版で同期済みのプロジェクトを古いテンプレへ巻き戻す churn を防ぐ。
 //   - hook 自身はバージョン比較だけ。ネットワーク・gh・git は sync-run.mjs 側が叩く。
 //   - 状態ファイルが無いプロジェクト（未セットアップ or バックフィル前）は対象外 → 即 exit 0。
-//   - SETUP_SYNC_DISABLE=1 で黙らせられる（避難口）。
+//   - SYNC_SETUP_DISABLE=1 で黙らせられる（避難口）。
 //
 // このスキル 1 ファイルで完結する（外部モジュールを import しない）。jq 非依存（Node のみ）。
 
@@ -45,7 +45,7 @@ function emit(userLine, claudeText) {
 }
 
 // 誤動作時の一時無効化。
-if (process.env.SETUP_SYNC_DISABLE === "1") done();
+if (process.env.SYNC_SETUP_DISABLE === "1") done();
 
 // 先頭 BOM（U+FEFF）を除去する。正規表現にリテラル BOM を書くと eslint の
 // no-irregular-whitespace に触れるため、コードポイント比較で剥がす。
@@ -89,14 +89,14 @@ try {
 const projectDir = process.env.CLAUDE_PROJECT_DIR || stdin.cwd || process.cwd();
 
 // ---- 2. 状態ファイル ----
-const statePath = join(projectDir, ".claude", "setup-sync-state.json");
+const statePath = join(projectDir, ".claude", "sync-setup-state.json");
 if (!existsSync(statePath)) done(); // 未セットアップ or バックフィル前 → 対象外
 const state = readJson(statePath);
 if (!state || typeof state !== "object") done(); // 壊れた状態ファイルは黙って無視（毎回煽らない）
 
 // ---- 3. インストール済み project-setup プラグインの現行版 ----
 const pluginsJsonPath =
-  process.env.SETUP_SYNC_PLUGINS_JSON ||
+  process.env.SYNC_SETUP_PLUGINS_JSON ||
   join(homedir(), ".claude", "plugins", "installed_plugins.json");
 const installed = readJson(pluginsJsonPath);
 if (!installed || !installed.plugins) done();
@@ -135,11 +135,11 @@ const summary = drifted.map((d) => `${d.skill} v${d.from}→v${currentVersion}`)
 
 // ---- 5. 通知（ユーザーへ 1 行 + Claude へ手順）----
 emit(
-  `【テンプレート更新】project-setup が更新されています（${summary}）。/setup-sync で同期できます。`,
+  `【テンプレート更新】project-setup が更新されています（${summary}）。/sync-setup で同期できます。`,
   [
     `【テンプレート自動追随】project-setup のテンプレートが更新されています（${summary}）。`,
     "",
-    "このセッションの最初のターンで `/project-setup:setup-sync` を実行し、同期 PR を作成してください。",
+    "このセッションの最初のターンで `/project-setup:sync-setup` を実行し、同期 PR を作成してください。",
     "ユーザーが別の作業を指示している場合は、それを先に済ませてから実行してください（同期は待てます）。",
     "",
     "同期は使い捨て worktree の中で走るので、いまの作業ツリーとブランチには影響しません。",

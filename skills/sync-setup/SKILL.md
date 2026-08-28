@@ -1,8 +1,8 @@
 ---
-name: setup-sync
+name: sync-setup
 description: >
   project-setup のテンプレート更新に、対象リポジトリを追随させるセットアップコマンド。
-  SessionStart hook がテンプレ更新を検知したとき、およびユーザーが「setup-sync」
+  SessionStart hook がテンプレ更新を検知したとき、およびユーザーが「sync-setup」
   「テンプレ同期」「テンプレを最新に追随」などと依頼したときに使う。
   記録版と現行プラグイン版を比較し、更新があれば使い捨て worktree の中で保存フラグから
   apply.mjs を再適用し、要マージの Markdown を統合してから commit → push → 同期 PR を
@@ -38,7 +38,7 @@ commit まで一息に走らせると .md の更新が反映されないまま P
 - まず `--dry-run` で同期計画（対象スキル・保存フラグ・ブランチ・試行回数）を確認し、本文で報告する:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/setup-sync/sync-run.mjs" {target} --dry-run
+node "${CLAUDE_PLUGIN_ROOT}/skills/sync-setup/sync-run.mjs" {target} --dry-run
 ```
 
 - 「同期不要」「同期対象外」と出たら、その旨を伝えて終了する（PR は作らない）
@@ -48,13 +48,13 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/setup-sync/sync-run.mjs" {target} --dry-run
 `--dry-run` で対象が確認できたら、apply フェーズを実行する:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/setup-sync/sync-run.mjs" {target} --phase=apply
+node "${CLAUDE_PLUGIN_ROOT}/skills/sync-setup/sync-run.mjs" {target} --phase=apply
 ```
 
 このフェーズが行うこと（すべてコード内で完結。途中の判断を LLM に委ねない）:
 
-1. **重複防止** — 同期ブランチ `chore/setup-sync-v<version>` の open PR があれば、何もせず終了する
-2. **試行上限** — 同一版につき最大 2 回（`SETUP_SYNC_MAX_ATTEMPTS` で変更可）。副作用に入る前に
+1. **重複防止** — 同期ブランチ `chore/sync-setup-v<version>` の open PR があれば、何もせず終了する
+2. **試行上限** — 同一版につき最大 2 回（`SYNC_SETUP_MAX_ATTEMPTS` で変更可）。副作用に入る前に
    試行回数を +1 保存するため、途中失敗も 1 回として数える。上限到達なら起動せず終了する
 3. `origin` を fetch し、**default ブランチから使い捨て worktree を切る**（sparse-checkout で
    `.claude` / `.github` / `.githooks` とルート直下だけ展開）→ その中で同期ブランチを作成
@@ -82,7 +82,7 @@ apply フェーズの出力に「要マージ」節があれば、`${CLAUDE_PLUG
 ### Step 2.6: publish フェーズ
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/setup-sync/sync-run.mjs" {target} --phase=publish
+node "${CLAUDE_PLUGIN_ROOT}/skills/sync-setup/sync-run.mjs" {target} --phase=publish
 ```
 
 worktree の中で `git add -A` → 差分ゼロなら終了 → `chore:` コミット → push → `gh pr create` →
@@ -107,6 +107,6 @@ PR が作られた場合は「merge はしていないので、内容を確認�
 - apply フェーズで中断した場合、worktree と同期計画が残る。やり直すときは `--phase=apply` から
   実行し直す（同じ場所の worktree を作り直す。試行回数は 1 消費されている点に注意）
 - 同期 PR はリポジトリごとに常に 1 本・最新版だけに保つ。新しい版の PR を作った後、
-  `chore/setup-sync-v*` の古い open PR は close する（reopen できる可逆操作。ブランチは残る）
+  `chore/sync-setup-v*` の古い open PR は close する（reopen できる可逆操作。ブランチは残る）
 - Unity のような巨大リポジトリを全チェックアウトすると Windows の MAX_PATH（260 字）に当たる。
   worktree を sparse-checkout で切っているのはそのため。展開範囲を広げるときはここを思い出す

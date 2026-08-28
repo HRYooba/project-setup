@@ -9,7 +9,7 @@ stateDiagram-v2
     [*] --> QUEUED: lane.mjs request
     QUEUED --> PREPARING: grant（checkout --detach）
     PREPARING --> ACTIVE: activate（Editor の準備完了を確認）
-    ACTIVE --> DRAINING: drain（新規 MCP を締切）
+    ACTIVE --> DRAINING: drain（新規の Editor 操作を締切）
     DRAINING --> RETURNING: return（cherry-pick）
     RETURNING --> [*]: 返却完了
     DRAINING --> [*]: abandon（戻さず終了）
@@ -19,10 +19,10 @@ stateDiagram-v2
     RECOVERY_REQUIRED --> [*]: recover --abort
 ```
 
-**Unity MCP を呼べるのは ACTIVE のときの借り手だけ。** PREPARING を許すと、checkout が終わる前の
+**Editor を操作できるのは ACTIVE のときの借り手だけ。** PREPARING を許すと、checkout が終わる前の
 スナップショットに対して green が出る。これがこの仕組みで防ぎたい事故の本体なので、ここは緩めない。
 
-メインセッションは PREPARING / DRAINING / RETURNING / RECOVERY_REQUIRED のときだけ Unity MCP を呼べる
+メインセッションは PREPARING / DRAINING / RETURNING / RECOVERY_REQUIRED のときだけ Editor を操作できる
 （切り替え前の静止確認と、返却時の後始末に要るため）。ACTIVE 中は借り手のものなので触れない。
 
 ## 状態ファイル
@@ -64,7 +64,7 @@ stateDiagram-v2
 base commit を使う。ここを毎回 base に戻すと、レーンで正規に作られた `.prefab` を次の要求で
 違反として弾いてしまう。
 
-禁止に当たる変更は「やってはいけない」のではなく「**Editor を借りている間に MCP 経由でやる**」。
+禁止に当たる変更は「やってはいけない」のではなく「**Editor を借りている間に Unity CLI 経由でやる**」。
 アセットの移動・削除も Editor 側の操作なら `.meta` が正しく追随する。
 
 ## `.meta` のライフサイクル
@@ -78,13 +78,56 @@ tree の一致まで確認し、合わなければ RECOVERY_REQUIRED にする�
 新規 `.asmdef` を **GUID 参照**する変更は 1 回の worker commit では完成しない（GUID はレーンで
 初めて確定する）。名前参照を使うか、`.meta` が戻ってから 2 段目の修正を行う。
 
+## 門番はどうやって「Editor 操作」を見分けるか
+
+Unity 操作は `unity <サブコマンド>` に固定されているので、判定対象は **Bash / PowerShell の
+コマンド文字列だけ**。ツール名だけでは Unity を触るかどうか分からない。
+
+`protocol.mjs` の `unitySubcommands()` が、`&&` `||` `;` `|` `&` 改行で区切った各セグメントの
+先頭から `unity` 呼び出しを拾い、サブコマンドを最大 2 語で返す。先頭に被さるものは剥がす:
+
+- 環境変数代入（`UNITY_FORMAT=json unity test`）
+- 制御構文（PowerShell の `if ($?) { ... }` / `foreach (...) { ... }` / call operator `& ...`）
+- ラッパー（`sudo` / `env` / `timeout 600` / `nohup` / `xargs` / `Start-Process` …）
+- ネストしたコマンド文字列（`sh -c 'unity test'` / `cmd /c unity test` / `Invoke-Expression`）
+
+パス付き・空白を含むクォート済みパス・`unity.exe` / `.cmd` / `.bat` / `.ps1` も解決する。
+サブコマンドは**最初のフラグより前**からしか取らない（`unity command --format json` の `json` を
+サブコマンド名と読むと、カタログ一覧が Editor 操作に化ける）。
+
+`touchesEditorViaCli()` がそれを 3 つに振り分ける:
+
+| 分類 | 例（**抜粋**。全量は `protocol.mjs` の Set が正本） | 扱い |
+|:--|:--|:--|
+| 読み取り | `status` / `pipeline list` / `projects verify` / `doctor` / `editors list` / `auth status` | 借りていなくても通す |
+| Editor 操作 | `command eval` / `test` / `build` / `run` / `open` / `job` / `shell` | 借り手 かつ ACTIVE のときだけ |
+| 未知 | `frobnicate` / `projects clean` / `editors prune` / `license return` | **Editor 操作扱い（fail-closed）** |
+
+**族の中で読み取りと破壊操作が同居するものは 2 語で判定する。** `editors` は `list` を通すが
+`prune`（Editor をアンインストール）を止め、`license` は `status` を通すが `return`
+（借り手の実行中ランを落とす）を止める。1 語で通すと族ごと素通りする。
+
+`--help` / `-h` / `--version` は常に通す。`rules/unity-cli.md` が「フラグの正本は
+`unity <command> --help`」と全員に指示しているため、ここを塞ぐと順番待ち中に何も調べられない。
+
+読み取りを通すのは、借り手以外が状態を見られないとコーディネーターが順番待ちを判断できないため。
+未知を止めるのは、CLI にサブコマンドが増えたときに**通してしまうより止めて気づかせるほうが安い**ため
+（通すと偽の green が出て、しかも原因が門番だと分からない）。
+
+サブコマンド無し（素の `unity`）は usage を出すだけなので通す。フラグしか付いていない呼び出し
+（`Start-Process unity -ArgumentList ...` 等）は何をするか読めないので未知扱いで止める。
+
 ## 門番が止められないもの（正直な限界）
 
 これは**協調的なエージェントの事故を止める仕組み**であって、意図的な回避への防壁ではない。
 
-- **シェル越しの書き込み** — コマンド文字列のヒューリスティックでしか見ていない。網羅は原理的に無理
+- **`unity` 呼び出しの取りこぼし** — コマンド文字列から `unity <サブコマンド>` を拾うヒューリスティック。
+  剥がせるラッパーは上に挙げた範囲だけで、**コマンド置換**（`` `which unity` test `` / `$(command -v unity) test`）・
+  **変数展開**（`$UNITY test`）・**エイリアス**・**別名でコピーしたバイナリ**・自作ラッパースクリプトは追えない
+- **`unity shell` の中** — REPL に入った後のコマンドは hook を通らない（起動自体は Editor 操作として止める）
+- **シェル越しの書き込み** — 同じくコマンド文字列のヒューリスティック。網羅は原理的に無理
 - **hook 自体の無効化** — settings の編集、`disableAllHooks`、別プロセスの起動
-- **hook を経由しない MCP 呼び出し** — Unity MCP の HTTP エンドポイントを直接叩く経路
+- **hook を経由しない Editor 操作** — Pipeline サーバーの HTTP エンドポイントを直接叩く経路
 
 Claude Code の hook は既定で **fail-open**（例外・不正 JSON・exit 1 はすべて「通す」）で、
 `exit 2` だけがツール呼び出しを止める。よって `guard.mjs` は「判断できないなら exit 2」で書いてある。

@@ -2,7 +2,7 @@
 //
 // 目的: テンプレート .mjs（配備先の .claude/hooks 等へコピーされる hook / installer）が、
 // eslint を回すプロジェクトへ落ちても CI を壊さないことを source 側で保証する。
-// 実例: setup-sync-check.mjs が no-irregular-whitespace（正規表現内のリテラル BOM）と
+// 実例: sync-setup-check.mjs が no-irregular-whitespace（正規表現内のリテラル BOM）と
 // no-undef（Buffer 未宣言）で配備先 CI（2606）を落とした。ここで先に検出する。
 //
 // 方針: **Node グローバルを自動付与しない**。各ファイルが `/* global process, ... */` で

@@ -3,7 +3,8 @@
 // 観点:
 //   1. 配布 — apply.mjs が skill / hook / agent を撒き、再実行しても壊れない
 //   2. 門番 — 「判断できないなら拒否」が守られているか。fail-open だと事故が素通りするため、
-//      許可側より拒否側の網羅を厚くする
+//      許可側より拒否側の網羅を厚くする。Unity 操作の判定はシェルコマンド文字列で行うので、
+//      サブコマンドの振り分け（読み取り / Editor 操作 / 未知）も検証する
 //   3. 差分ゲート — checkout する前に禁止された変更を弾けるか
 //   4. 排他 — 同時に 2 人へ貸さないか
 
@@ -85,7 +86,8 @@ function runLane(repo, args, cwd = repo) {
   return spawnSync(process.execPath, [lane, ...args], { encoding: "utf8", cwd });
 }
 
-const mcpCall = { tool_name: "mcp__UnityMCP__read_console", tool_input: {} };
+// 借り手だけに許される Editor 操作の代表。判定はツール名ではなくコマンド文字列で行われる。
+const editorCall = { tool_name: "Bash", tool_input: { command: "unity command get_scene_hierarchy" } };
 
 // ---------------------------------------------------------------------------
 // 1. 配布
@@ -118,11 +120,13 @@ test("apply: 再実行しても unity-parallel の配布物が壊れない", () 
   assert.equal(readFileSync(join(repo, SKILL_DIR, "lane.mjs"), "utf8"), before);
 });
 
-test("rules/unity-mcp.md に接続先がクライアント単位で 1 つである旨が載る", () => {
+test("rules/unity-cli.md が配られ、並列時の制約と unity-parallel への導線を持つ", () => {
   const repo = unityRepo("up-rule-");
-  const rule = readFileSync(join(repo, ".claude", "rules", "unity-mcp.md"), "utf8");
-  assert.match(rule, /クライアント単位で\s*1\s*つ/);
+  const rule = readFileSync(join(repo, ".claude", "rules", "unity-cli.md"), "utf8");
+  assert.match(rule, /1\s*プロジェクトに\s*1\s*つ/);
   assert.match(rule, /unity-parallel/);
+  // 配らないファイルが残っていると rules/unity-cli.md と手順が二重になる
+  assert.ok(!existsSync(join(repo, ".claude", "rules", "unity-mcp.md")), "取り除く対象が残っている");
 });
 
 // ---------------------------------------------------------------------------
@@ -131,7 +135,7 @@ test("rules/unity-mcp.md に接続先がクライアント単位で 1 つであ�
 
 test("門番: レーン未初期化なら素通しする（並列作業していないセッションを邪魔しない）", () => {
   const repo = unityRepo("up-guard-off-");
-  assert.equal(runGuard(repo, { ...mcpCall, agent_id: "a1" }).status, 0);
+  assert.equal(runGuard(repo, { ...editorCall, agent_id: "a1" }).status, 0);
 });
 
 test("門番: レーンが生きていて状態ファイルが壊れていれば拒否する", () => {
@@ -139,7 +143,7 @@ test("門番: レーンが生きていて状態ファイルが壊れていれば
   const dir = stateDirOf(repo);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "state.json"), "{ not json", "utf8");
-  const r = runGuard(repo, { ...mcpCall, agent_id: "a1" });
+  const r = runGuard(repo, { ...editorCall, agent_id: "a1" });
   assert.equal(r.status, 2, "壊れた状態を通してしまっている");
   assert.match(r.stderr, /状態ファイルを読めません/);
 });
@@ -152,24 +156,24 @@ test("門番: レーンが生きていて hook 入力が壊れていれば拒否
   assert.match(r.stderr, /解釈できません/);
 });
 
-test("門番: トークンを持たないサブエージェントの Unity MCP を拒否する", () => {
+test("門番: トークンを持たないサブエージェントの Editor 操作を拒否する", () => {
   const repo = unityRepo("up-guard-nonholder-");
   const head = git(["rev-parse", "HEAD"], repo);
   writeLaneState(repo, {
     holder: { worktree: "wt-a", agentId: "holder-1", phase: "ACTIVE", loadedCommit: head, commit: head, delegate: null },
   });
-  const r = runGuard(repo, { ...mcpCall, agent_id: "other-2", agent_type: "unity-worker" });
+  const r = runGuard(repo, { ...editorCall, agent_id: "other-2", agent_type: "unity-worker" });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /トークンを持っていません/);
 });
 
-test("門番: 保持者でも PREPARING 中は Unity MCP を拒否する", () => {
+test("門番: 保持者でも PREPARING 中は Editor 操作を拒否する", () => {
   const repo = unityRepo("up-guard-preparing-");
   const head = git(["rev-parse", "HEAD"], repo);
   writeLaneState(repo, {
     holder: { worktree: "wt-a", agentId: "h1", phase: "PREPARING", loadedCommit: head, commit: head, delegate: null },
   });
-  const r = runGuard(repo, { ...mcpCall, agent_id: "h1" });
+  const r = runGuard(repo, { ...editorCall, agent_id: "h1" });
   assert.equal(r.status, 2, "切り替え途中の呼び出しを通している（偽の green の原因）");
   assert.match(r.stderr, /PREPARING/);
 });
@@ -180,7 +184,7 @@ test("門番: 保持者かつ ACTIVE かつ HEAD 一致なら許可する", () =
   writeLaneState(repo, {
     holder: { worktree: "wt-a", agentId: "h1", phase: "ACTIVE", loadedCommit: head, commit: head, delegate: null },
   });
-  assert.equal(runGuard(repo, { ...mcpCall, agent_id: "h1" }).status, 0);
+  assert.equal(runGuard(repo, { ...editorCall, agent_id: "h1" }).status, 0);
 });
 
 test("門番: HEAD がリース時と違えば保持者でも拒否する", () => {
@@ -195,7 +199,7 @@ test("門番: HEAD がリース時と違えば保持者でも拒否する", () =
       delegate: null,
     },
   });
-  const r = runGuard(repo, { ...mcpCall, agent_id: "h1" });
+  const r = runGuard(repo, { ...editorCall, agent_id: "h1" });
   assert.equal(r.status, 2);
   assert.match(r.stderr, /HEAD がリース時と違います/);
 });
@@ -205,33 +209,33 @@ test("門番: 委譲された検証エージェントは許可、委譲を外す
   const head = git(["rev-parse", "HEAD"], repo);
   const holder = { worktree: "wt-a", agentId: "h1", phase: "ACTIVE", loadedCommit: head, commit: head };
   writeLaneState(repo, { holder: { ...holder, delegate: { agentType: "unity-tester" } } });
-  assert.equal(runGuard(repo, { ...mcpCall, agent_id: "tester-9", agent_type: "unity-tester" }).status, 0);
+  assert.equal(runGuard(repo, { ...editorCall, agent_id: "tester-9", agent_type: "unity-tester" }).status, 0);
 
   writeLaneState(repo, { holder: { ...holder, delegate: null } });
-  assert.equal(runGuard(repo, { ...mcpCall, agent_id: "tester-9", agent_type: "unity-tester" }).status, 2);
+  assert.equal(runGuard(repo, { ...editorCall, agent_id: "tester-9", agent_type: "unity-tester" }).status, 2);
 });
 
-test("門番: 貸し出し中はメインセッションの Unity MCP も拒否する（無条件免除にしない）", () => {
+test("門番: 貸し出し中はメインセッションの Editor 操作も拒否する（無条件免除にしない）", () => {
   const repo = unityRepo("up-guard-main-");
   const head = git(["rev-parse", "HEAD"], repo);
   writeLaneState(repo, {
     holder: { worktree: "wt-a", agentId: "h1", phase: "ACTIVE", loadedCommit: head, commit: head, delegate: null },
   });
-  const active = runGuard(repo, mcpCall); // agent_id なし = メインセッション
+  const active = runGuard(repo, editorCall); // agent_id なし = メインセッション
   assert.equal(active.status, 2);
 
   // 準備・返却フェーズでは coordinator の操作が要るので許す
   writeLaneState(repo, {
     holder: { worktree: "wt-a", agentId: "h1", phase: "PREPARING", loadedCommit: head, commit: head, delegate: null },
   });
-  assert.equal(runGuard(repo, mcpCall).status, 0);
+  assert.equal(runGuard(repo, editorCall).status, 0);
 });
 
-test("門番: RECOVERY_REQUIRED 中は誰の Unity MCP も拒否する", () => {
+test("門番: RECOVERY_REQUIRED 中は誰の Editor 操作も拒否する", () => {
   const repo = unityRepo("up-guard-recovery-");
   writeLaneState(repo, { recovery: { reason: "テスト", at: new Date().toISOString() } });
-  assert.equal(runGuard(repo, mcpCall).status, 2);
-  assert.equal(runGuard(repo, { ...mcpCall, agent_id: "h1" }).status, 2);
+  assert.equal(runGuard(repo, editorCall).status, 2);
+  assert.equal(runGuard(repo, { ...editorCall, agent_id: "h1" }).status, 2);
 });
 
 test("門番: Unity シリアライズファイルの手編集は全拡張子で拒否する", () => {
@@ -291,14 +295,146 @@ test("門番: lane.mjs の呼び出しは通し、呼び出し元の識別子を
   assert.equal(identity.agentType, "unity-worker");
 });
 
-test("門番: 無関係な MCP サーバーは巻き込まない", () => {
-  const repo = unityRepo("up-guard-othermcp-");
+test("門番: Unity 以外のコマンドと読み取り系 unity は借り手以外でも通す", () => {
+  const repo = unityRepo("up-guard-passthru-");
   const head = git(["rev-parse", "HEAD"], repo);
   writeLaneState(repo, {
     holder: { worktree: "wt-a", agentId: "h1", phase: "ACTIVE", loadedCommit: head, commit: head, delegate: null },
   });
-  const r = runGuard(repo, { tool_name: "mcp__slack__send_message", tool_input: {}, agent_id: "other" });
-  assert.equal(r.status, 0, "Unity 以外の MCP まで止めている");
+  // 借り手以外が状態を見られないと、コーディネーターが順番待ちを判断できない
+  const passed = [
+    "git status",
+    "unity --version",
+    "unity status --format json",
+    "unity pipeline list --format json",
+    "unity projects verify --format json",
+    "unity doctor --ci --format json",
+  ];
+  for (const command of passed) {
+    const r = runGuard(repo, { tool_name: "Bash", tool_input: { command }, agent_id: "other" });
+    assert.equal(r.status, 0, `止めてしまった: ${command} (${r.stderr})`);
+  }
+});
+
+test("門番: Editor に触る unity サブコマンドは借り手以外を拒否する（未知も拒否）", () => {
+  const repo = unityRepo("up-guard-cli-deny-");
+  const head = git(["rev-parse", "HEAD"], repo);
+  writeLaneState(repo, {
+    holder: { worktree: "wt-a", agentId: "h1", phase: "ACTIVE", loadedCommit: head, commit: head, delegate: null },
+  });
+  const denied = [
+    "unity command eval 'new UnityEngine.GameObject(\"x\");'",
+    "unity test --mode EditMode",
+    "unity build . --target StandaloneWindows64",
+    "unity open .",
+    "unity job wait 12345",
+    "cd /tmp && unity run .",
+    "UNITY_FORMAT=json unity cmd get_scene_hierarchy",
+    "unity.exe command recompile",
+    // CLI にサブコマンドが増えたときは通すより止める（fail-closed）
+    "unity frobnicate",
+    // 同じ族でも破壊的なものは読み取り扱いにしない
+    "unity projects clean",
+  ];
+  for (const command of denied) {
+    const r = runGuard(repo, { tool_name: "Bash", tool_input: { command }, agent_id: "other", agent_type: "unity-worker" });
+    assert.equal(r.status, 2, `通してしまった: ${command}`);
+  }
+});
+
+test("門番: Editor 操作を隠す書き方も拒否する（区切り・ブロック・ラッパー）", () => {
+  // 素直な `unity <sub>` しか見ていないと、前段の読み取りコマンドの陰に隠せる。
+  // PowerShell は `&&` が使えず `A; if ($?) { B }` を使う環境なので、ブロック構文は
+  // 「意図的な回避」ではなく普通に書かれる形。
+  const repo = unityRepo("up-guard-hidden-");
+  const head = git(["rev-parse", "HEAD"], repo);
+  writeLaneState(repo, {
+    holder: { worktree: "wt-a", agentId: "h1", phase: "ACTIVE", loadedCommit: head, commit: head, delegate: null },
+  });
+  const denied = [
+    "unity status --format json & unity test",       // 前段 READONLY の陰
+    "& unity test",                                   // PowerShell の call operator
+    "git status; if ($?) { unity test }",             // PowerShell のブロック
+    "foreach ($i in 1..1) { unity test }",
+    "sh -c 'unity test --mode EditMode'",             // ラッパー（クォート済み）
+    "cmd /c unity test",                              // ラッパー（素の並び）
+    "env unity test",
+    "timeout 600 unity test",
+    "nohup unity test",
+    "unity.cmd test",                                 // Windows のランチャ拡張子
+    "UNITY_PROJECT_PATH=/foo unity test",
+  ];
+  for (const command of denied) {
+    const r = runGuard(repo, { tool_name: "Bash", tool_input: { command }, agent_id: "other", agent_type: "unity-worker" });
+    assert.equal(r.status, 2, `通してしまった: ${command}`);
+  }
+});
+
+test("門番: 破壊的サブコマンドを族ごと読み取り扱いにしない", () => {
+  // `editors` / `license` / `projects` は読み取りと破壊操作が同居する。1 語で通すと
+  // 借り手の unity test が走っている最中に他者がライセンスを返却できてしまう。
+  const repo = unityRepo("up-guard-family-");
+  const head = git(["rev-parse", "HEAD"], repo);
+  writeLaneState(repo, {
+    holder: { worktree: "wt-a", agentId: "h1", phase: "ACTIVE", loadedCommit: head, commit: head, delegate: null },
+  });
+  const denied = ["unity license return", "unity license activate --serial X", "unity editors prune --remove", "unity editors upgrade", "unity projects clean"];
+  for (const command of denied) {
+    const r = runGuard(repo, { tool_name: "Bash", tool_input: { command }, agent_id: "other" });
+    assert.equal(r.status, 2, `通してしまった: ${command}`);
+  }
+  const passed = ["unity license status", "unity editors list", "unity editors running", "unity projects verify --format json"];
+  for (const command of passed) {
+    const r = runGuard(repo, { tool_name: "Bash", tool_input: { command }, agent_id: "other" });
+    assert.equal(r.status, 0, `止めてしまった: ${command} (${r.stderr})`);
+  }
+});
+
+test("門番: rules が全員に実行させるコマンドは借り手以外でも通す", () => {
+  // ここを塞ぐと、順番待ち中のワーカーが前提確認も発見もできず実務が止まる。
+  const repo = unityRepo("up-guard-mandated-");
+  const head = git(["rev-parse", "HEAD"], repo);
+  writeLaneState(repo, {
+    holder: { worktree: "wt-a", agentId: "h1", phase: "ACTIVE", loadedCommit: head, commit: head, delegate: null },
+  });
+  const passed = [
+    "unity --version",                    // rules/unity-cli.md「前提の確認」
+    "unity command --help",               // rules/unity-cli.md「フラグの正本は --help」
+    "unity test --help",
+    "unity command --format json",        // rules/unity-cli.md「コマンドは表で覚えず発見する」
+    "unity command --query recompile --detail compact",
+    "unity pipeline list --format json",  // 到達性の正本
+    "unity doctor --ci --format json",    // 前提の正本
+  ];
+  for (const command of passed) {
+    const r = runGuard(repo, { tool_name: "Bash", tool_input: { command }, agent_id: "other" });
+    assert.equal(r.status, 0, `止めてしまった: ${command} (${r.stderr})`);
+  }
+});
+
+test("門番: RECOVERY_REQUIRED 中もレーン外のシリアライズファイルを守る", () => {
+  // recovery 判定に当たらなかった呼び出しを allow で締めると、この時間帯だけ
+  // worktree の .prefab 手編集が素通りする（差分ゲートは request 時にしか働かない）。
+  const repo = unityRepo("up-guard-recovery-write-");
+  writeLaneState(repo, { recovery: { reason: "テスト", at: new Date().toISOString() } });
+  const outside = join(repo, "..", "wt-a", "Assets", "Bad.prefab");
+  assert.equal(
+    runGuard(repo, { tool_name: "Write", tool_input: { file_path: outside }, agent_id: "h1" }).status,
+    2,
+    "レーン外の .prefab 手編集を通している"
+  );
+  assert.equal(
+    runGuard(repo, { tool_name: "Bash", tool_input: { command: `echo x > ${outside}` }, agent_id: "h1" }).status,
+    2,
+    "レーン外の .prefab へのシェル書き込みを通している"
+  );
+  // 復旧手段そのものは塞がない（絶対パスで呼ばれてもレーン言及チェックに落とさない）
+  const lane = join(repo, SKILL_DIR, "lane.mjs");
+  assert.equal(
+    runGuard(repo, { tool_name: "Bash", tool_input: { command: `node "${lane}" recover` }, agent_id: "h1" }).status,
+    0,
+    "復旧コマンド自体を止めている"
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -325,7 +461,7 @@ test("lane: init → add → request が通り、Unity シリアライズの変�
   git(["commit", "-q", "-m", "bad"], wt);
   const ngReq = runLane(repo, ["request", "--worktree", "a"]);
   assert.equal(ngReq.status, 1, "禁止された変更を検証レーンへ載せようとしている");
-  assert.match(ngReq.stderr, /Editor（MCP）経由/);
+  assert.match(ngReq.stderr, /Editor（Unity CLI）経由/);
 });
 
 test("lane: 貸し出し中はもう一人へ貸さない", () => {
