@@ -27,7 +27,7 @@ Unity プロジェクトのアセット・シーン・Prefab が `.claude/rules/
 - 出力・メッセージは日本語、思考・推論は英語
 - `Assets/ThirdParty/`・`Assets/Plugins/` の変更禁止
 - Unity 操作は Unity CLI（`unity ...`）経由。方針・失敗判定は `.claude/rules/unity-cli.md` が正
-- **Editor が公開するコマンド名を推測しない。** `unity command --query <語> --format json` で発見してから呼ぶ
+- **Editor が公開するコマンド名を推測しない。** `unity command --format json` でカタログを 1 回引き、その名前とパラメータ schema のとおりに呼ぶ
 - **Editor に到達できなくても Editor 不要カテゴリだけで完走する。** 「lint できません」で終わらせない
 - 実行できなかったカテゴリは**未検査として明示**する。「検出 0 件」と書かない
 - `unity projects verify` の結果（[K]）は **severity を付け直さず**そのまま報告する
@@ -39,7 +39,7 @@ Unity プロジェクトのアセット・シーン・Prefab が `.claude/rules/
 ## Workflow Overview
 
 1. Editor 到達性判定（`unity pipeline list`）+ プロジェクト整合性検査（`unity projects verify`）+ 変更アセット検出（git diff）またはスコープ指定
-2. Editor 依存カテゴリのコマンド発見 → データ取得（ページング）
+2. コマンドカタログの取得 → Editor 依存カテゴリのデータ取得
 3. ルール照合 → 違反を severity（ERROR / WARNING / INFO）で記録
 4. レポート出力（重複抑制）
 

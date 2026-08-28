@@ -48,6 +48,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSyncState, stateFiles } from "./state.mjs";
 /* global process, console */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -172,7 +173,9 @@ if (!currentVersion || currentVersion === "unknown") {
 if (!installPath) installPath = join(here, "..", "..");
 if (!currentVersion) fail("現行プラグイン版を特定できませんでした（installed_plugins.json も plugin.json も読めず）。");
 
-const branch = `chore/sync-setup-v${currentVersion}`;
+// publish フェーズでは、apply が記録した版へ後から差し替える（下記）。apply と publish の
+// 間にプラグインが自動更新されることがあり、worktree の中身は apply 時の版で作られているため。
+let branch = `chore/sync-setup-v${currentVersion}`;
 
 // ---- 試行回数（同一版につき上限まで）とフェーズ間引き継ぎ ----
 const maxAttempts = parseInt(process.env.SYNC_SETUP_MAX_ATTEMPTS || "2", 10);
@@ -183,7 +186,7 @@ const planPath = process.env.SYNC_SETUP_PLAN_JSON || join(dataDir, "sync-plan.js
 // .md 統合で矛盾が出たとき Claude が書き残すメモ。publish が PR 本文へ転記して消す。
 const notesPath = process.env.SYNC_SETUP_NOTES_MD || join(dataDir, "sync-notes.md");
 const repoId = git(target, "remote", "get-url", "origin") || target;
-const attemptKey = `${repoId}@v${currentVersion}`;
+let attemptKey = `${repoId}@v${currentVersion}`;
 const attempts = readJson(attemptsPath) || {};
 const attemptCount = Number.isFinite(attempts[attemptKey]) ? attempts[attemptKey] : 0;
 
@@ -195,23 +198,46 @@ let carriedWarnings = [];
 let planWorktree = null;
 if (phase === "publish") {
   const plan = readJson(planPath);
-  if (!plan || plan.key !== attemptKey || !Array.isArray(plan.drifted)) {
+  // 照合はリポジトリ同一性だけで行い、版は計画側を正とする。**現行版で照合してはいけない** —
+  // apply と publish の間にプラグインが自動更新されると鍵が食い違い、成果の入った worktree ごと
+  // やり直しになる（しかも空振りの試行が 1 回記録される）。worktree の中身は apply 時の版の
+  // テンプレで作られているので、その版として publish するのが正しい。
+  const planValid = plan && Array.isArray(plan.drifted) && plan.version && plan.key === `${repoId}@v${plan.version}`;
+  if (!planValid) {
     fail(
       `同期計画が見つかりません（${planPath}）。先に --phase=apply を実行してください。\n` +
         "（apply → Claude による .md マージ → publish の順で実行します）"
     );
   }
+  if (plan.version !== currentVersion) {
+    console.log(
+      `注意: apply 時のプラグイン版は v${plan.version}、現在は v${currentVersion} です。` +
+        `worktree は v${plan.version} のテンプレで作られているため、この PR は v${plan.version} として出します。\n` +
+        `      v${currentVersion} への追随は次のセッションで改めて検知されます。`
+    );
+    currentVersion = plan.version;
+    branch = plan.branch || `chore/sync-setup-v${currentVersion}`;
+    attemptKey = plan.key;
+  }
   drifted = plan.drifted;
   carriedWarnings = Array.isArray(plan.warnings) ? plan.warnings : [];
   planWorktree = plan.worktree || null;
 } else {
-  const statePath = join(target, ".claude", "sync-setup-state.json");
-  if (!existsSync(statePath)) {
-    console.log(`同期対象外: ${statePath} がありません（未セットアップ、またはバックフィル前）。`);
+  // 旧名の解決は state.mjs が持つ（正名しか見ないと、旧名だけが残った配備先が黙って落ちる）。
+  const claudeDir = join(target, ".claude");
+  const found = stateFiles(claudeDir);
+  if (found.length === 0) {
+    console.log(
+      `同期対象外: ${join(claudeDir, "sync-setup-state.json")} がありません（未セットアップ、またはバックフィル前）。`
+    );
     process.exit(0);
   }
-  const state = readJson(statePath);
-  if (!state || typeof state !== "object") fail(`状態ファイルが不正な JSON です: ${statePath}`);
+  const state = readSyncState(claudeDir);
+  if (!state || typeof state !== "object") fail(`状態ファイルが不正な JSON です: ${found[0].path}`);
+  const legacy = found.filter((f) => f.name !== "sync-setup-state.json");
+  if (legacy.length) {
+    console.log(`旧名の状態ファイルを読みました（${legacy.map((f) => f.name).join(" / ")}）。同期時に正名へ畳みます。`);
+  }
 
   drifted = [];
   for (const k of SKILL_KEYS) {

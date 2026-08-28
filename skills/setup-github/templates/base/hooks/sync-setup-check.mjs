@@ -89,10 +89,23 @@ try {
 const projectDir = process.env.CLAUDE_PROJECT_DIR || stdin.cwd || process.cwd();
 
 // ---- 2. 状態ファイル ----
-const statePath = join(projectDir, ".claude", "sync-setup-state.json");
-if (!existsSync(statePath)) done(); // 未セットアップ or バックフィル前 → 対象外
-const state = readJson(statePath);
-if (!state || typeof state !== "object") done(); // 壊れた状態ファイルは黙って無視（毎回煽らない）
+// 状態ファイルは過去に 2 回改名しており、旧名だけが残った配備先が実在する。正名しか見ないと
+// そのリポジトリは黙って「対象外」になる（エラーが出ないので誰も気づけない）ため、旧名も読む。
+// **キー単位で新しい世代が勝つ**（旧名は新しい世代がまだ知らないキーだけを補う）。
+// 規則の正本はプラグイン側の skills/sync-setup/state.mjs。この hook は配備先へ単体コピー
+// される制約上 import できないので、意図的な重複。変えるときは両方を揃える。
+const claudeDir = join(projectDir, ".claude");
+const statePaths = ["sync-setup-state.json", "setup-sync-state.json", ".setup-sync.json"]
+  .map((name) => join(claudeDir, name))
+  .filter((p) => existsSync(p));
+if (statePaths.length === 0) done(); // 未セットアップ or バックフィル前 → 対象外
+const state = {};
+for (const p of statePaths) {
+  const obj = readJson(p);
+  if (!obj || typeof obj !== "object") continue; // 壊れた状態ファイルは黙って無視（毎回煽らない）
+  for (const [k, v] of Object.entries(obj)) if (!(k in state)) state[k] = v;
+}
+if (Object.keys(state).length === 0) done();
 
 // ---- 3. インストール済み project-setup プラグインの現行版 ----
 const pluginsJsonPath =

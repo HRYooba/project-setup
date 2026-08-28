@@ -26,6 +26,12 @@ unity doctor --ci --format json                  # ★前提（ライセンス�
 
 - `unity pipeline list` は**到達不可でも exit 0 / `success: true`** を返す。exit code で到達性を判断しない
 - `unity doctor --ci` が見るのは Editor の**インストール有無**であって live 到達性ではない
+- **`unity doctor --ci` はプロジェクトのディレクトリで実行する。** `--project-path` を持たず cwd を見るので、
+  外で実行すると Editor 検査が `EDITOR_NO_PROJECT` でスキップされたまま結果が返る
+- **doctor を停止ゲートにしない。** 止めてよいのは exit 6（確定失敗）だけ。exit 7 は
+  「ライセンスクライアントに接続できず判定不能」等で**日常的に出る**（Editor もテストも動く機械で出る）。
+  7 は報告に載せて続行し、実行できるかどうかは実際のコマンドの結果で決める。
+  内訳は `data.checks[]` の `status` / `code` を見る
 - CLI 未導入 → `winget install Unity.CLI`（macOS: `brew install --cask unity-cli`）を案内して停止
 - Pipeline 未導入 → `unity auth login` → `unity pipeline install` を案内して停止
 - **live Editor 操作（`unity command`）は Unity 6.0 LTS 以降のみ**（`com.unity.pipeline` の要件）。
@@ -41,13 +47,23 @@ unity doctor --ci --format json                  # ★前提（ライセンス�
 unity command --format json                      # カタログ正本（全コマンド + パラメータ schema）
 unity command --query <語> --detail compact      # 名前・説明・タグの部分一致で絞る
 unity command --tag assets                       # タグのサブツリーで絞る
-unity list --format json                         # 発見専用（実行はしない）
 ```
 
+- **発見の入口は `unity command` 1 つ。** 到達できる Editor が無ければ exit 6 で失敗するので、
+  発見を撃つ前に到達性を確かめる
 - **コマンド名を推測して呼ばない。** 発見した名前とパラメータ schema のとおりに呼ぶ
 - `--query` / `--tag` / `--limit` などの絞り込みフラグは**コマンド名を省いたときだけ**「一覧」の意味になる。
   コマンド名を付けるとそのコマンドへのパラメータとして転送される
 - `--group_by` はアンダースコア（この CLI で唯一の例外。`--group-by` に直さない）
+
+**発見したコマンドの実行:**
+
+- `unity command <name>` は**完了まで戻る同期実行**。ただし `--timeout` の既定は **30 秒**で、
+  再コンパイル・インポート・テストはこれを超える。**時間のかかるものには `--timeout <秒>` を明示する**
+- それでも足りない / 待ちを他の作業と重ねたいときだけ `--detach` で job にし、`unity job wait <id>` で待つ。
+  **`unity job status` を sleep ループで叩かない**（`wait` がその役目）
+
+
 
 ## 失敗判定
 
@@ -65,12 +81,12 @@ unity list --format json                         # 発見専用（実行はし�
 | 3 | 認証失敗（`unity auth login` が必要） |
 | 4 | 必要な設定・コンテキストが未設定（認証情報の供給元が無い 等） |
 | 6 | 確定的な失敗。**リトライしても直らない**（ライセンス無し・Editor 未インストール・空き容量不足 等） |
-| 7 | Unity サービスに到達できず判定不能。**リトライの価値がある** |
+| 7 | 判定不能（Unity サービス・ライセンスクライアントに到達できない 等）。失敗が確定したわけではない |
 | 8 | `unity test` — テストが**実行されて失敗**した。**リトライしない** |
 | 130 / 143 | SIGINT / SIGTERM で中断 |
 
 - **`unity test` の 8 とそれ以外の非 0 を混同しない。** 8 は開発者に返す結果、それ以外は環境の失敗
-- **6 と 7 を混同しない。** 6 はリトライ不能、7 はリトライ可
+- **6 と 7 を混同しない。** 6 は失敗が確定、7 は判定できていないだけ。7 を「失敗」として報告・停止しない
 - exit 非 0 なのに stdout が空 → そのコマンドの既知の不備。stderr の人間向け文だけが出る
 
 **この節に書いたフラグ・オプション名の正本は `unity <command> --help`。** 食い違ったら `--help` を採る。
@@ -99,8 +115,9 @@ unity command --format json    # 再コンパイル・完了確認・ログ取�
 
 `.cs` の Write / Edit 後の手順:
 
-1. 発見済みの再コンパイルコマンドを実行する
-2. 完了確認コマンドが `completed` を返すまでポーリングする
+1. 発見済みの再コンパイルコマンドを `--timeout <秒>` 付きで実行する（既定 30 秒では足りない）
+2. ドメインリロードで接続が切れて戻ってきた場合だけ、発見済みの状態確認コマンドで完了を確かめる。
+   **sleep を挟んだ手書きループにしない** — 長引くなら 1 の呼び出しを `--detach` + `unity job wait` に置き換える
 3. コンソールのエラーを読む（次節）
 
 Editor に到達できない場合、`unity test` が実行前にコンパイルを通すため、テスト実行が
@@ -131,7 +148,7 @@ CLI 自身にはコンソール取得コマンドが無い（`unity logs` は **
 ## Safe Mode（コンパイルエラーで Editor に接続できない状態）
 
 C# のコンパイルエラーがあると Editor は Safe Mode で起動し、`com.unity.pipeline` が load されない。
-`unity command` / `unity list` / `unity status` のすべてが接続に失敗する。
+`unity command` も `unity status` も接続に失敗する。
 
 **「接続できない」を「Editor が無いから直接ファイルを編集しよう」と読み替えない。** 手順:
 

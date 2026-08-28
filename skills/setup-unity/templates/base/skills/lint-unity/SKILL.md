@@ -5,7 +5,7 @@ description: >
   「命名規則チェック」「/lint-unity」と依頼した場合に使用される。
   Unityアセット・シーン・Prefabのルール準拠チェック（lint）を実行する。
   シーン名、Prefabパス、`--scene`、`--prefabs`、`--assets` をサポート。
-version: 2.0.0
+version: 2.1.0
 context: fork
 agent: unity-linter
 ---
@@ -102,14 +102,10 @@ git 3 件を合算・重複除去。引数なし時は拡張子でカテゴリ�
 Editor に到達できない場合はこの Step を飛ばす。
 
 **必要なコマンドは推測せず発見する**（`rules/unity-cli.md`「コマンドは表で覚えず発見する」）。
-1 レスポンスで発見をまとめる:
+発見は**カタログ 1 本**で足りる。カテゴリごとに `--query` を撃ち分けない（同じカタログを何度も引くだけ）:
 
 ```
-Bash: unity command --query gameobject --detail compact --format json
-Bash: unity command --query scene --detail compact --format json
-Bash: unity command --query asset --detail compact --format json
-Bash: unity command --query prefab --detail compact --format json
-Bash: unity command --query material --detail compact --format json
+Bash: unity command --format json
 ```
 
 発見できた範囲で、下表の情報を取得する。**発見できなかった項目は未検査として報告する**
@@ -133,7 +129,7 @@ Bash: unity command --query material --detail compact --format json
 
 | カテゴリ | 必要な情報 |
 |---|---|
-| [C] SerializeField | グループ1の GameObject のコンポーネント詳細（バッチ10件） |
+| [C] SerializeField | グループ1の GameObject のコンポーネント詳細 |
 | [G] Component | グループ1の GameObject のコンポーネント詳細 |
 | [J] Material | グループ1の Renderer から Material の詳細 |
 

@@ -118,6 +118,50 @@ test("旧名の状態ファイルは apply で新名へ移行される（追随�
   assert.match(out, /setup-sync-state\.json → sync-setup-state\.json/);
 });
 
+// 改名のたびにキーを引き継がずに捨てていたため、正名側に setup-github だけ、最初期の旧名側に
+// setup-unity だけが残った配備先が実在する。畳まずに消すと setup-unity の追随が永久に止まる。
+test("最初期の旧名 .setup-sync.json のキーも正名へ引き継がれる", () => {
+  const target = tempDir("sync-migrate-oldest-");
+  mkdirSync(join(target, ".claude"), { recursive: true });
+  writeFileSync(
+    join(target, ".claude", ".setup-sync.json"),
+    JSON.stringify({ "setup-unity": { version: "1.3.0", flags: ["--architecture"] } }, null, 2) + "\n",
+    "utf8"
+  );
+  writeFileSync(
+    join(target, ".claude", "sync-setup-state.json"),
+    JSON.stringify({ "setup-github": { version: "1.3.0", flags: [] } }, null, 2) + "\n",
+    "utf8"
+  );
+
+  runApply(APPLY, target);
+
+  assert.ok(!existsSync(join(target, ".claude", ".setup-sync.json")), "最初期の旧名が残っている");
+  const state = JSON.parse(readFileSync(join(target, ".claude", "sync-setup-state.json"), "utf8"));
+  assert.ok(state["setup-unity"], "旧名にしか無かった setup-unity のキーが失われた");
+  assert.equal(state["setup-unity"].version, "1.3.0", "引き継いだキーの版が書き換わっている");
+  assert.equal(state["setup-github"].version, PLUGIN_VERSION);
+});
+
+// hook 側も同じ規則で旧名を読む。読まないと、旧名にしか記録の無いスキルの更新を誰も知らせない。
+test("hook: 正名と旧名にキーが散っていても両方のドリフトを知らせる", () => {
+  const target = tempDir("sync-hook-mixed-");
+  mkdirSync(join(target, ".claude"), { recursive: true });
+  writeFileSync(
+    join(target, ".claude", "sync-setup-state.json"),
+    JSON.stringify({ "setup-github": { version: "1.3.0", flags: [] } }, null, 2) + "\n",
+    "utf8"
+  );
+  writeFileSync(
+    join(target, ".claude", ".setup-sync.json"),
+    JSON.stringify({ "setup-unity": { version: "1.0.0", flags: ["--architecture"] } }, null, 2) + "\n",
+    "utf8"
+  );
+  const out = JSON.parse(runSyncHook(target, "1.3.0"));
+  assert.match(out.systemMessage, /setup-unity v1\.0\.0→v1\.3\.0/);
+  assert.doesNotMatch(out.systemMessage, /setup-github v/);
+});
+
 test("旧名の SessionStart hook は実体も settings.json 登録も撤去される", () => {
   const target = tempDir("sync-hookrename-");
   mkdirSync(join(target, ".claude", "hooks"), { recursive: true });

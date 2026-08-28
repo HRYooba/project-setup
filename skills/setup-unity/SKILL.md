@@ -10,7 +10,7 @@ description: >
   Unity CLI 本体と com.unity.pipeline が未導入なら入れる。
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無は、
   実行時に AskUserQuestion で確認する。
-version: 2.1.0
+version: 2.2.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---

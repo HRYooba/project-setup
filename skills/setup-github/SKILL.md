@@ -9,7 +9,7 @@ description: >
   create-issue skill を撒く。ブランチ保護の有無と、PR 自動レビュー3機能（Copilot 自動アサイン /
   watch-pr / resolve-pr）と AGENTS.md 自動生成（Copilot code review にプロジェクト規約を教える）の
   導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.18.0
+version: 1.19.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -101,4 +101,5 @@ Step 2.6 で統合したファイルがあれば、何を採り何を残した�
 - `.claude/settings.json` は**上書きせず追記マージ**（登録済みの hook はテンプレート最新形へ更新、それ以外は変更しない）。JSON パースに失敗した場合は登録をスキップして警告するので、その旨を報告する
 - `.claude/CLAUDE.md` は `templates/claude-md.md` の節の全行が揃っていれば触らない（冪等）。揃っていなければ「要マージ」になり、Step 2.6 で Claude が統合する。現行テンプレに無い行は「テンプレから消えた項目」として除去される（除去対象の一覧はここに持たない。テンプレが正本で、差分は統合時に機械的に出る）
 - apply.mjs は `.githooks/pre-push` を stage する（exec bit 付与のため）。ユーザーが意図しない stage が混ざらないよう、コミット時に確認する。ブランチ保護を「入れない」で再実行した場合は、配備済み pre-push を削除しその削除を stage する（撒く git hook が他に無ければ `core.hooksPath` の SessionStart hook と即時設定も解除する）
+- 状態ファイルは過去に 2 回改名しており、`sync-setup-check.mjs` と `apply.mjs` は旧名（`setup-sync-state.json` / `.setup-sync.json`）も読む。キー単位で新しい世代が勝ち、旧名は apply で正名へ畳まれて消える。**規則の正本は `skills/sync-setup/state.mjs`** で、hook は配備先へ単体コピーされ import できないため同じ規則を自前で持つ（変えるときは両方）
 - `.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）は **repo にコミットする**（次回比較の基準としてバージョン管理下に残す。`.gitignore` しない）。SessionStart の同期チェック hook は新しいセッションから有効になる。バックフィル（既存の展開済みプロジェクトへ状態ファイルを配る）は、各プロジェクトで setup-github / setup-unity を再実行すれば自動生成される
