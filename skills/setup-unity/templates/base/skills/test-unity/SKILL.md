@@ -4,7 +4,7 @@ description: >
   このスキルは、ユーザーが「テスト実行」「テスト生成」「ユニットテスト」「単体テスト」「/test-unity」
   と依頼した場合に使用される。変更差分のテスト責任を判定し、必要なUnityテストの設計・実装・重複整理・実行、
   またはテスト不要理由の報告を行う。ファイルパスやフォルダパスの指定も可。
-version: 2.0.0
+version: 2.1.0
 argument-hint: "[ファイルパス|フォルダパス]"
 context: fork
 agent: unity-tester
@@ -66,14 +66,18 @@ Glob: Assets/App/Scripts/Tests/EditMode/*.asmdef
 Glob: Assets/App/Scripts/Tests/EditMode/**/*Test.cs
 ```
 
-`unity doctor --ci` の判定（**ここで落ちたらテストを書かずに停止する**。実装してから
-「ライセンスが無くて実行できません」と報告するのは時間の無駄）:
+`unity doctor --ci` の判定（**停止するのは exit 6 のときだけ**。確定失敗が分かっているのに
+実装してから「ライセンスが無くて実行できません」と報告するのは時間の無駄）:
 
 | 結果 | 扱い |
 |:--|:--|
 | exit 0 | 続行（warning 行は報告に含めるだけ） |
 | exit 6 | 確定失敗。`errors[]` の code（`LICENSE_NONE` / `EDITOR_NOT_INSTALLED` / `DISK_SPACE_LOW` 等）と remediation を添えて停止 |
-| exit 7 | サービス到達不可で判定不能。1 回だけ再実行し、それでも 7 なら停止 |
+| exit 7 | 判定不能。**続行する**。`data.checks[]` の fail した `code` を報告に載せるだけ |
+
+**exit 7 で止まらない。** `LICENSE_CLIENT_UNREACHABLE` のような判定不能は、Editor もテストも
+問題なく動く機械で日常的に出る。ここで止めると B5 まで一度も到達しない。
+実行できるかどうかは B5 の `unity test` の結果が決める。
 
 `unity pipeline list` は**到達性**の判定に使う（`rules/unity-cli.md`「前提の確認」の表）。
 到達できるなら B3 のコンパイル確認を行い、できないなら飛ばして B5 の `unity test` に兼ねさせる。
@@ -168,8 +172,11 @@ live Editor に到達できない場合はこの段を飛ばし、B5 の `unity 
 unity test --mode EditMode --filter <パターン> --format json
 ```
 
-レポートファイルが要るとき（CI へ渡す等）だけ `--report-format junit --output <path>` を足す。
-既定では書かない — 使わないファイルを作業ツリーへ落とすと `.gitignore` の管理が増える。
+**レポートファイルは常に書かれる。** `--output` の既定が `test-results.xml`（cwd 相対）で、
+下の `--rerun-failed` はこのファイルを読む。よって消さない・パスを毎回変えない。
+`.gitignore` に `test-results.xml` が無ければ足す（作業ツリーに落ちるため）。
+CI へ JUnit も渡すときは `--report-format both --junit-output <path>` を足す
+（`--report-format junit` 単独だと `--output` の中身が JUnit に変わる。既定の NUnit を残す形にしておく）。
 
 **`--filter` に何を渡すか（この節が既定の正本）:**
 

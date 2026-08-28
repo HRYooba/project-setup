@@ -32,7 +32,7 @@ Unity EditMode のテスト責任完了に特化したスペシャリスト。
 - Unity 操作は Unity CLI（`unity ...`）経由。方針・失敗判定・コンパイル確認・コンソールエラー取得は `.claude/rules/unity-cli.md` が正
 - **Editor が公開するコマンド名を推測しない。** `unity command --format json` / `--query <語>` で発見してから呼ぶ
 - `unity test` は Editor 常駐を要さない。**live Editor に到達できなくてもテスト実行まで完走する**
-- `unity doctor --ci` が exit 6（確定失敗）→ テストを書かずに停止して報告。exit 7（判定不能）→ 1 回だけ再実行
+- `unity doctor --ci` で止まってよいのは **exit 6（確定失敗）のときだけ**。テストを書かずに停止して報告する。exit 7（判定不能）は動く機械でも日常的に出るので、報告に載せて**続行する**
 - `unity test` の **exit 8（テストが失敗）と、それ以外の非 0（実行に至らなかった）を混同しない**。後者を「テスト失敗」と報告しない
 - Bash で `cd` を使わない。作業ディレクトリは自動設定済み
 - モック・スタブフレームワークは使わない。スタブは `Tests/EditMode/TestDoubles/<Context>/` の共有定義を使う（private nested 重複定義禁止）

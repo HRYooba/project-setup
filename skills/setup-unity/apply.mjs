@@ -10,10 +10,11 @@
 //
 // 依存なし（Node 標準のみ / Node 16.7+ の fs.cpSync を使用）。
 
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { consolidateSyncState } from "../sync-setup/state.mjs";
 /* global process, console */
 
 // 反映を LLM 判断へ委ねる Markdown（rules/*.md と CLAUDE.md）。apply.mjs は書かず、
@@ -181,21 +182,9 @@ if (!existsSync(claudeMdPath)) {
   claudeMdState = "要マージ";
 }
 
-// 状態ファイルの名前を揃える。旧名のまま残すと sync-run.mjs / sync-setup-check.mjs が
-// 記録版を読めず、その配備先が丸ごと同期対象外になる（黙って追随が止まる）。
-function migrateSyncStateName(claudeDir) {
-  const from = join(claudeDir, "setup-sync-state.json");
-  const to = join(claudeDir, "sync-setup-state.json");
-  if (!existsSync(from)) return null;
-  if (existsSync(to)) {
-    rmSync(from);
-    return "setup-sync-state.json（sync-setup-state.json があるため削除）";
-  }
-  renameSync(from, to);
-  return "setup-sync-state.json → sync-setup-state.json";
-}
-
-const migratedState = migrateSyncStateName(claudeDir);
+// 旧名の状態ファイルを正名へ畳んで消す。規則は skills/sync-setup/state.mjs が正本
+// （読み手側も同じ規則で旧名を解決する。片方だけ直すと配備先が黙って同期対象外になる）。
+const migratedState = consolidateSyncState(claudeDir);
 if (migratedState) console.log(`状態ファイル: ${migratedState}`);
 
 // ---- 状態ファイル sync-setup-state.json への setup-unity キーの記録 ----
