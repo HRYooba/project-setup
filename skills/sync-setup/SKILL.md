@@ -2,7 +2,7 @@
 name: sync-setup
 description: >
   project-setup のテンプレート更新に、対象リポジトリを追随させるセットアップコマンド。
-  SessionStart hook がテンプレ更新を検知したとき、およびユーザーが「sync-setup」
+  テンプレ更新を検知した hook が最初のプロンプトへ差し込んだとき、およびユーザーが「sync-setup」
   「テンプレ同期」「テンプレを最新に追随」などと依頼したときに使う。
   記録版と現行プラグイン版を比較し、更新があれば使い捨て worktree の中で保存フラグから
   apply.mjs を再適用し、要マージの Markdown を統合してから commit → push → 同期 PR を

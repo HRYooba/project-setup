@@ -92,7 +92,7 @@ apply.mjs が次を行う:
   （architecture / class-catalog の追加 + folder-structure / coding-standards / testing / test-designing-guide のレイヤー版差し替え。lint checklist は base に統合済みなので差し替えない）
 - **architecture 導入済みの検知**: `.claude/rules/architecture.md` が既にあれば、`--architecture` 指定なしでも architecture モードを自動継承する（レイヤー版規約が base 版に巻き戻るのを防止）
 - `.claude/rules/*.md` と `.claude/CLAUDE.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。CLAUDE.md へ配る節（検証手順は `rules/testing.md` に従う、というポインタ）は `templates/claude-md.md`
-- `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時のプラグイン版と有効フラグ = `--architecture`）をマージ記録する（setup-github のキーは温存）。**このスキルは settings.json に触れず hook も配らない**（従来どおり）。ドリフト検知の SessionStart hook は setup-github が配る単一の `sync-setup-check.mjs` が担い、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
+- `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時のプラグイン版と有効フラグ = `--architecture`）をマージ記録する（setup-github のキーは温存）。**このスキルは settings.json に触れず hook も配らない**（従来どおり）。ドリフト検知の hook（SessionStart の `sync-setup-check.mjs` と UserPromptSubmit の `sync-setup-prompt.mjs`）は setup-github が配り、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
 
 ### Step 2.5: 要マージの Markdown を統合する
 
@@ -178,7 +178,7 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   「`unity command --format json` で発見する」という手順と、失敗判定・禁止事項・Safe Mode 復旧だけを持つ。
   CLI 自身のコマンド（`unity test` / `unity projects verify` / `unity doctor --ci`）はフラグまで書いてよいが、
   正本は `unity <command> --help` である旨を併記する
-- このスキルは `.claude/settings.json` に触れない。テンプレート自動追随の状態ファイル `.claude/sync-setup-state.json` へは自分のキー（`setup-unity`）だけをマージ記録する（データファイルの更新であり hook 登録ではない）。SessionStart の同期チェック hook 本体と settings.json 登録は setup-github が単独で担う（hook の二重管理を作らないため）
+- このスキルは `.claude/settings.json` に触れない。テンプレート自動追随の状態ファイル `.claude/sync-setup-state.json` へは自分のキー（`setup-unity`）だけをマージ記録する（データファイルの更新であり hook 登録ではない）。同期チェック hook 本体（SessionStart / UserPromptSubmit）と settings.json 登録は setup-github が単独で担う（hook の二重管理を作らないため）
 - **hook 契約の範囲**: 「settings.json へ恒久登録する hook は配らない」が契約であって、「hook を一切配らない」ではない。`unity-parallel` は自身の SKILL.md frontmatter に PreToolUse hook を持つ。これは **その skill を呼び出したセッションでだけ登録され**、settings.json には現れない。並列作業をしていないセッションの挙動は変わらない
 - **テンプレート保守（スキル開発者向け）**: `templates/architecture/` の各ファイル（folder-structure / coding-standards / testing / test-designing-guide）は `templates/base/` の同名ファイルのレイヤー特化版で、architecture モード時に上書き差し替えされる。base 側の規約を変えたら architecture 側にも反映すること（テスト設計ガイドの「テスト責任」「禁止する低品質テスト」一覧やアセットのプレフィックスは、`rules/testing.md` / `rules/asset-naming.md` を単一ソースとして参照させ、重複記載を避ける）
 - CLAUDE.md へ配る節は `templates/claude-md.md` にある（apply.mjs のコード内定数ではない）。文面を変えるとその節の行が配備先と一致しなくなり、次の適用で「要マージ」として検出される。文面の移行リストを保守する必要はない
