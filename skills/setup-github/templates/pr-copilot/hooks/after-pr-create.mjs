@@ -2,6 +2,9 @@
 //
 // コード変更を含む PR のみを対象に:
 //   1. Copilot に自動でレビュー依頼（requested_reviewers 登録）
+//      注: REST の requested_reviewers は Bot 型を返さず、依頼成立後も空配列のまま。
+//      依頼の成否は API の終了コードで判定し、成功時は additionalContext でその旨を明示する
+//      （読み手が REST を見て「付いていない」と誤判定するのを、発火位置で止めるため）。
 //   2. Claude に「watch-pr <番号> を起動せよ」を additionalContext で促す
 //
 // なぜコード変更を含む PR に限るか: docs/設定のみの PR に Copilot を付けて watch-pr を
@@ -92,5 +95,5 @@ if (requested === null) {
 
 // 2. watch-pr 起動を促す
 emitContext(
-  `PR #${prNumber}: Copilot レビューを自動依頼しました。続けて watch-pr スキルを必ず起動してください: Skill(skill: "watch-pr", args: "${prNumber}")`
+  `PR #${prNumber}: Copilot レビューを自動依頼しました（API の成功を確認済み）。REST の requested_reviewers は Bot 型のレビュアーを返さないため、依頼が成立していても空配列に見えます。これを根拠に「レビュアーが付いていない」と判断・報告しないでください（確認するなら GraphQL の reviewRequests）。続けて watch-pr スキルを必ず起動してください: Skill(skill: "watch-pr", args: "${prNumber}")`
 );
