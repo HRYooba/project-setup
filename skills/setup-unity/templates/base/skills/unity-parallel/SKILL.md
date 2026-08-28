@@ -3,17 +3,13 @@ name: unity-parallel
 description: >
   このスキルは、ユーザーが「Unity で並列に作業して」「worktree で並列作業」「複数タスクを同時に進めて」
   「/unity-parallel」と依頼した場合に使用される。git worktree で複数のサブエージェントを並列に動かしつつ、
-  1 つしかない Unity Editor を順番待ちで貸し出す。Editor が必要になったエージェントだけがキューに並び、
-  メインセッションが排他を管理する。Editor の取り合いによる「別のスナップショットを検証して green を返す」
-  事故を hook で機械的に止める。
-version: 1.0.0
+  1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す。Editor が必要に
+  なったエージェントだけがキューに並び、メインセッションが排他を管理する。レーンの取り合いによる
+  「別のスナップショットを検証して green を返す」事故を hook で機械的に止める。
+version: 2.0.0
 argument-hint: "[並列で進めたいタスクの説明]"
 hooks:
   PreToolUse:
-    - matcher: "mcp__.*"
-      hooks:
-        - type: command
-          command: node "${CLAUDE_PROJECT_DIR}/.claude/skills/unity-parallel/guard.mjs"
     - matcher: "Write|Edit|MultiEdit|NotebookEdit"
       hooks:
         - type: command
@@ -32,17 +28,23 @@ hooks:
 
 ## なぜこの仕組みが要るか
 
-Unity Editor は 1 つしか無く、開いているフォルダ 1 つしか見ない。さらに Unity MCP の接続先選択は
-**クライアント単位のグローバル状態**なので、複数のエージェントが同時に Editor を触ると、
-ツール呼び出しは成功を返したまま**別のスナップショットを検証して green を報告する**。
+Unity Editor は開いているフォルダ 1 つしか見ない。そのフォルダ（＝レーン）は貸し出すたびに
+`checkout --detach` で**借り手の commit へ切り替わる**ので、借りていない者がそこへ `unity command` や
+`unity test` を向けると、**別のスナップショットを検証して green を報告する**。
 エラーにならないので気づけない。
 
-だから Editor は「順番に 1 人だけへ貸す排他資源」として扱う。作業自体は並列のままでよい。
+だから レーンは「順番に 1 人だけへ貸す排他資源」として扱う。作業自体は並列のままでよい。
 
-```
-worker A ──実装──[Editor 要る]──→ キュー ─┐
-worker B ──実装────────────────────────    │ 1 人ずつ貸す
-worker C ──実装──[Editor 要る]──→ キュー ─┘
+> `unity test` は Editor 常駐を要さないので原理的には各 worktree で回せるが、worktree は
+> `Library/` を共有しないため初回がフルインポートになり、バッチ Editor がライセンスシートを掴む。
+> 3 本並列で回すより、レーンを順番に貸すほうが速い。
+
+```mermaid
+flowchart LR
+    A[worker A<br/>実装] -->|Editor 要る| Q[キュー]
+    B[worker B<br/>実装] --> Done[Editor 不要のまま完了]
+    C[worker C<br/>実装] -->|Editor 要る| Q
+    Q -->|1 人ずつ貸す| L[レーン<br/>Unity Editor]
 ```
 
 ## 用語
@@ -53,7 +55,8 @@ worker C ──実装──[Editor 要る]──→ キュー ─┘
 
 ## 前提
 
-- `rules/unity-mcp.md` が配備済み（門番が Unity MCP のツール名をここから導出する）
+- `rules/unity-cli.md` が配備済み（借り手が失敗判定・禁止事項をここから読む）
+- Unity CLI が使える（`unity --version`）。レーンのプロジェクトに `com.unity.pipeline` が入っている（`unity pipeline list`）
 - レーンのフォルダで Unity Editor が起動している
 - Node.js が利用可能
 
@@ -97,12 +100,14 @@ node .claude/skills/unity-parallel/lane.mjs grant
 ```
 
 `grant` はレーンを借り手の commit へ `checkout --detach` し、**PREPARING** で止まる。
-この時点ではまだ借り手は Unity MCP を呼べない（門番が止める）。
+この時点ではまだ借り手は Editor を操作できない（門番が止める）。
 
 次に **あなたが** Editor の静止と反映を確認する:
 
+- `unity pipeline list --format json` で Editor に到達できること（**Safe Mode でないこと**。
+  Safe Mode ならコンパイルエラーが残っているので、貸し出しても借り手は何もできない）
 - Play Mode でないこと、インポート・コンパイルが走っていないこと
-- バインディング表の「コンパイル確認」で refresh し、ready を待つ
+- `rules/unity-cli.md` の「コンパイル確認」で refresh し、完了を待つ
 - 「コンソールエラー取得」で切り替え前のエラーが残っていないこと
 
 確認できたら:
@@ -111,7 +116,7 @@ node .claude/skills/unity-parallel/lane.mjs grant
 node .claude/skills/unity-parallel/lane.mjs activate
 ```
 
-**PREPARING のまま借り手を動かさない。** 切り替え途中に Unity MCP を呼ぶと、
+**PREPARING のまま借り手を動かさない。** 切り替え途中に Editor を操作すると、
 古いスナップショットに対する green が出る。これがこの仕組みで防ぎたい事故そのもの。
 
 ### Step 4: 借り手に Editor 作業をさせる
@@ -136,6 +141,11 @@ node .claude/skills/unity-parallel/lane.mjs drain
 ```
 
 Editor 側で**シーン / Prefab Stage を保存させてから** drain する（未保存分は返らない）。
+
+**drain の前提**: 借り手が `unity command --detach` で投げた job を**自分で** `unity job wait` して
+終わらせていること（門番は ACTIVE 中の Editor 操作を借り手にしか許さないので、メインセッションが
+代わりに待つことはできない）。借り手の報告に未完了の job があれば、drain せず完了を待たせる
+（レーンが次の commit へ切り替わった後に走る job の結果は誰のものでもない）。
 
 ```bash
 node .claude/skills/unity-parallel/lane.mjs seal -m "feat: ..."   # レーン上の成果をコミット

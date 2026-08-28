@@ -189,6 +189,6 @@ namespace <Project>.Tests.<Context>
 
 ## 7. プロジェクト固有の注意
 
-- **テスト実行は `/test-unity` 経由**（バインディング表の「テスト実行」直叩き禁止。`rules/testing.md`）。
-- 全件実行で常に失敗する既知のテストは `rules/testing.md`「既知失敗テスト」に記録されている。green/red 判定はそれを除外して（またはプロジェクトのテスト assembly に限定して）行う。
+- **テスト実行は `/test-unity` 経由**（`unity test` の直叩き禁止。`rules/testing.md`）。
+- 全件実行で常に失敗する既知のテストは `rules/testing.md`「テスト実行のスコープ」に記録されている。green/red 判定はその `--filter` の範囲で（またはプロジェクトのテスト assembly に限定して）行う。
 - `R3` の `ReactiveProperty` は購読時に現在値を流す。初期値テストは「外部購読される状態の初期契約」に限り許容（`test-designing-guide.md` §8 例外）。

@@ -17,8 +17,8 @@ export const STATE_VERSION = 1;
 // ---------------------------------------------------------------------------
 
 // Unity がシリアライズするファイル。手編集は GUID / fileID を壊し、しかも壊れたことが
-// その場では分からない（Editor で開いて初めて参照が切れる）。よって Editor（= MCP）経由
-// でしか変更させない。拡張子を足すときはここだけを直す。
+// その場では分からない（Editor で開いて初めて参照が切れる）。よって Editor（= Unity CLI）
+// 経由でしか変更させない。拡張子を足すときはここだけを直す。
 export const UNITY_SERIALIZED_EXT = [
   ".meta",
   ".unity",
@@ -62,19 +62,19 @@ export const PHASES = [
   "QUEUED", // キュー待ち。Editor は他人のもの
   "PREPARING", // トークンは渡ったが Editor はまだ切り替え中
   "ACTIVE", // Editor がこの保持者の commit を指している
-  "DRAINING", // 新規 MCP 呼び出しは締切。実行中のものが終わるのを待つ
+  "DRAINING", // 新規の Editor 操作は締切。実行中のものが終わるのを待つ
   "RETURNING", // 成果を worktree へ戻している最中
   "RELEASED", // 返却済み
   "RECOVERY_REQUIRED", // 異常終了。人が検査するまで誰にも貸さない
 ];
 
-// Unity MCP を許すのは ACTIVE だけ。PREPARING（checkout 途中）で許すと
+// Editor 操作を許すのは ACTIVE だけ。PREPARING（checkout 途中）で許すと
 // 「古いスナップショットを検証して green」が成立してしまうため、ここは緩めない。
-export const MCP_ALLOWED_PHASES = new Set(["ACTIVE"]);
+export const EDITOR_ALLOWED_PHASES = new Set(["ACTIVE"]);
 
 // coordinator（メインセッション）が Editor を触ってよいフェーズ。
 // 切替前の静止確認と、返却時の後始末に必要な最小限だけ。
-export const COORDINATOR_MCP_PHASES = new Set(["PREPARING", "DRAINING", "RETURNING", "RECOVERY_REQUIRED"]);
+export const COORDINATOR_EDITOR_PHASES = new Set(["PREPARING", "DRAINING", "RETURNING", "RECOVERY_REQUIRED"]);
 
 // リース期限。Unity の初回インポートが長いので余裕を持たせる。
 // 期限切れでも自動剥奪はしない（RECOVERY_REQUIRED へ落として人の判断を待つ）。
@@ -200,31 +200,218 @@ export function withStateLock(dir, fn, { retries = 200, waitMs = 50 } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Unity MCP のツール名判定
+// Editor に届く呼び出しの判定
 // ---------------------------------------------------------------------------
 
-// どの MCP サーバーが Unity かは実装ごとに違う。setup-unity が配る
-// rules/unity-mcp.md にはバインディング表の core 節（実際の呼び出し例）が合成されている
-// ので、そこに現れる mcp__<server>__ を正本として抽出する。
-// サーバー名の一覧を guard 側に書き写すと、バインディングを足したときに黙って古くなる。
-export function unityMcpPrefixes(projectDir) {
-  const rulePath = join(projectDir, ".claude", "rules", "unity-mcp.md");
-  if (!existsSync(rulePath)) return null;
-  const text = readFileSync(rulePath, "utf8");
-  const found = new Set();
-  for (const m of text.matchAll(/mcp__([A-Za-z0-9_.-]+)__/g)) found.add(`mcp__${m[1]}__`);
-  return found.size ? [...found] : null;
+// Unity 操作は Unity CLI（`unity <サブコマンド>`）に固定されているので、判定対象は
+// シェルコマンド文字列。ツール名だけでは Unity を触るかどうか分からない。
+//
+// 網羅は原理的に不可能。ここは「うっかり」を落とす網であって、意図的な回避への防壁では
+// ない。何を落とせないかは references/protocol.md に書く（そちらが読者向けの正本）。
+
+// Unity CLI のバイナリ名。Windows のランチャ拡張子まで見る（`unity.cmd test` で抜けない）。
+const UNITY_BINARIES = new Set(["unity", "unity.exe", "unity.cmd", "unity.bat", "unity.ps1"]);
+
+// サブコマンドの別名 → 正規名。`unity --help` の `|` 記法から取る。
+// 別名を READONLY / EDITOR の表へ二重に並べると、片方だけ直して静かにズレる。
+const SUBCOMMAND_ALIASES = new Map([
+  ["cmd", "command"],
+  ["pipe", "pipeline"],
+  ["p", "projects"],
+  ["a", "auth"],
+  ["e", "editors"],
+  ["i", "install"],
+  ["u", "uninstall"],
+  ["t", "templates"],
+  ["im", "install-modules"],
+  ["ip", "install-path"],
+  ["collab", "collaboration"],
+]);
+
+// Editor の状態に触る（＝レーンのスナップショットを読む / 変える）サブコマンド。
+// これらは借りている間だけ許す。
+const EDITOR_SUBCOMMANDS = new Set([
+  "command",
+  "run",
+  "test",
+  "build",
+  "open",
+  "job", // detach したコマンドの状態取得・待機。投げた本人以外が触る意味がない
+  "shell", // REPL の中は hook を通らない
+]);
+
+// Editor の状態も環境も変えない読み取り。借りていなくても通す
+// （借り手以外が状態を見られないと、コーディネーターが順番待ちを判断できない）。
+//
+// 表が 2 つあるのは、族ごと安全なものと、族の中で読み取りだけを抜き出すものを
+// 混ぜると事故るため。`READONLY_FAMILY` に入れてよいのは
+// **その族に破壊的サブコマンドが 1 つも無い**ときだけ。
+const READONLY_FAMILY = new Set([
+  "status",
+  "list",
+  "doctor",
+  "env",
+  "logs",
+  "changelog",
+  "releases",
+  "help",
+]);
+
+// 完全一致でだけ読み取り扱いにするもの。族には破壊的サブコマンドが同居している
+// （`editors prune` / `license return` / `projects clean` / `command eval`）ので、
+// ここへ入れたキーちょうどの形以外は Editor 操作として扱う。
+const READONLY_EXACT = new Set([
+  "command", // 引数なし ＝ カタログの一覧。rules が全員に発見を求めるので通す
+  "pipeline list",
+  "pipeline list-versions",
+  "projects verify",
+  "projects list",
+  "projects info",
+  "projects size",
+  "editors list",
+  "editors running",
+  "editors info",
+  "editors path",
+  "editors verify",
+  "auth status",
+  "auth list",
+  "license list",
+  "license status",
+]);
+
+// セグメント先頭で読み飛ばす制御構文のノイズ。PowerShell の `if ($?) { ... }` や
+// call operator（`& "C:\...\unity.exe"`）、bash のブロックを剥がす。
+const BLOCK_NOISE = new Set(["&", "{", "}", "(", ")", "!", "then", "do", "else", "elseif", "in"]);
+const CONTROL_HEADS = new Set(["if", "while", "foreach", "for", "elseif", "switch"]);
+
+// コマンドの前に置かれるラッパー。これ自身とその後続フラグを読み飛ばして本体を見る。
+const WRAPPER_HEADS = new Set([
+  "sudo",
+  "env",
+  "nohup",
+  "time",
+  "timeout",
+  "nice",
+  "stdbuf",
+  "command",
+  "exec",
+  "builtin",
+  "xargs",
+  "npx",
+  "start",
+  "start-process",
+  "start-job",
+]);
+
+// 「次の引数はコマンド文字列」を意味するフラグ。`sh -c 'unity test'` を追うために使う。
+const NESTED_COMMAND_FLAGS = new Set(["-c", "-lc", "-ic", "-command", "/c", "/k", "-encodedcommand"]);
+const NESTED_COMMAND_HEADS = new Set(["invoke-expression", "iex"]);
+
+// フラグしか付いていない `unity` 呼び出しの目印。サブコマンド名が読めない ＝ 未知。
+const UNKNOWN_INVOCATION = "?";
+
+// クォートを 1 トークンとして扱う字句分割。パスに空白がある Unity CLI
+// （`"C:\Program Files\Unity CLI\unity.exe"`）を 1 語で拾うために要る。
+function tokenize(segment) {
+  const out = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m;
+  while ((m = re.exec(segment)) !== null) {
+    const quoted = m[1] !== undefined || m[2] !== undefined;
+    out.push({ text: m[1] ?? m[2] ?? m[3], quoted });
+  }
+  return out;
 }
 
-// 抽出できなかったときの保険。無関係な MCP サーバー（Slack 等）まで巻き込まないよう、
-// 名前に unity を含むものだけを Unity 扱いにする。
-export function looksLikeUnityTool(toolName) {
-  return /^mcp__[^_]*unity[^_]*__/i.test(String(toolName || ""));
+function basenameOf(text) {
+  return String(text).replace(/^['"]|['"]$/g, "").split(/[\\/]/).pop().toLowerCase();
 }
 
-export function isUnityMcpTool(toolName, prefixes) {
-  const name = String(toolName || "");
-  if (!name.startsWith("mcp__")) return false;
-  if (prefixes && prefixes.length) return prefixes.some((p) => name.startsWith(p));
-  return looksLikeUnityTool(name);
+// コマンド文字列から `unity` 呼び出しのサブコマンド（正規化した最大 2 語）を拾う。
+// 戻り値の各要素は "test" / "projects verify" / ""（サブコマンド無し）のいずれか。
+export function unitySubcommands(command, depth = 0) {
+  const out = [];
+  if (depth > 2) return out; // ネストしたコマンド文字列の追跡打ち切り
+  // `&` 単独（bash のバックグラウンド / PowerShell の call operator）も区切りに含める。
+  // `&&` を先に並べているので 2 連は 1 つの区切りとして食われる。
+  for (const seg of String(command || "").split(/&&|\|\||[;|&\n]/)) {
+    const tokens = tokenize(seg.trim());
+    let i = 0;
+    // 先頭のノイズ（環境変数代入・制御構文・ラッパー）を剥がす
+    for (;;) {
+      const t = tokens[i];
+      if (!t || t.quoted) break;
+      const raw = t.text;
+      const low = raw.toLowerCase();
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(raw)) { i++; continue; } // VAR=x
+      // `($?)` `($i` `1..1)` のような括弧断片も制御構文の一部として剥がす
+      if (BLOCK_NOISE.has(low) || /^[({]/.test(raw) || /[)}]$/.test(raw)) { i++; continue; }
+      if (CONTROL_HEADS.has(low)) { i++; continue; }
+      if (WRAPPER_HEADS.has(basenameOf(raw))) {
+        i++;
+        // ラッパーのフラグと、timeout の秒数のような数値引数を読み飛ばす
+        while (tokens[i] && !tokens[i].quoted && (tokens[i].text.startsWith("-") || /^\d+[smhd]?$/.test(tokens[i].text))) i++;
+        continue;
+      }
+      break;
+    }
+    // `sh -c '<コマンド文字列>'` / `cmd /c unity test` 系。ネストの中を再帰で見る。
+    // クォート済みならそのトークンが丸ごとコマンド文字列。素の並びなら以降が全部そう。
+    for (let j = 0; j < tokens.length - 1; j++) {
+      const flag = tokens[j].quoted ? "" : tokens[j].text.toLowerCase();
+      if (NESTED_COMMAND_FLAGS.has(flag) || NESTED_COMMAND_HEADS.has(basenameOf(tokens[j].text))) {
+        const nested = tokens[j + 1].quoted
+          ? tokens[j + 1].text
+          : tokens.slice(j + 1).map((t) => t.text).join(" ");
+        out.push(...unitySubcommands(nested, depth + 1));
+      }
+    }
+    const head = tokens[i];
+    if (!head) continue;
+    if (!UNITY_BINARIES.has(basenameOf(head.text))) continue;
+    // サブコマンドは**最初のフラグより前**にしか来ない。フラグ以降まで拾うと
+    // `unity command --format json` の `json` をサブコマンド名と読んでしまう
+    // （＝カタログ一覧が Editor 操作に化け、rules が全員に求める発見手順が塞がる）。
+    const rest = tokens.slice(i + 1);
+    const words = [];
+    for (const t of rest) {
+      if (!t.quoted && t.text.startsWith("-")) break;
+      words.push(t.text.replace(/^['"]|['"]$/g, "").toLowerCase());
+      if (words.length === 2) break;
+    }
+    if (words.length) {
+      words[0] = SUBCOMMAND_ALIASES.get(words[0]) ?? words[0];
+      out.push(words.join(" "));
+    } else if (rest.length) {
+      // フラグしか無い（`Start-Process unity -ArgumentList ...` 等）。何をするか読めないので
+      // 未知扱いにして fail-closed 側へ落とす。`--version` / `--help` は先に除外済み。
+      out.push(UNKNOWN_INVOCATION);
+    } else {
+      out.push(""); // 素の `unity`。usage を出すだけ
+    }
+  }
+  return out;
+}
+
+// `--help` / `-h` / `--version` / `-V` はどのサブコマンドでも出力するだけ。
+// rules/unity-cli.md が「フラグの正本は `unity <command> --help`」「前提確認は
+// `unity --version`」と全員に指示しているので、常に通す。
+function isInfoOnly(command) {
+  return /(^|\s)(--help|-h|--version|-V)(\s|$)/.test(String(command || ""));
+}
+
+// レーンのスナップショットに触りうる `unity` 呼び出しか。
+// 未知のサブコマンドは Editor 側に寄せる（fail-closed）。CLI にサブコマンドが増えたとき、
+// 通してしまうより止めて気づかせるほうが安い。
+export function touchesEditorViaCli(command) {
+  if (isInfoOnly(command)) return false;
+  return unitySubcommands(command).some((words) => {
+    // サブコマンド無し（`unity` / `unity --version`）は usage・版数の出力だけ。
+    if (words === "") return false;
+    if (READONLY_EXACT.has(words)) return false;
+    const [first] = words.split(" ");
+    if (READONLY_FAMILY.has(first)) return false;
+    if (EDITOR_SUBCOMMANDS.has(first)) return true;
+    return true;
+  });
 }

@@ -1,12 +1,12 @@
 // テンプレート同期の実行本体。
 //
-// SessionStart hook（setup-sync-check.mjs）は検知して知らせるだけに徹し、実際の同期は
-// **ユーザーのセッションにいる Claude** が `/setup-sync` を実行して行う。要マージ .md の統合は
+// SessionStart hook（sync-setup-check.mjs）は検知して知らせるだけに徹し、実際の同期は
+// **ユーザーのセッションにいる Claude** が `/sync-setup` を実行して行う。要マージ .md の統合は
 // LLM の判断を含む工程なので、進行も判断も見えている場所で走らせる。
 //
 // このスクリプトが「コードで担保」すること（SKILL.md の指示文には委ねない）:
 //   1. 重複防止: 同一同期ブランチの open PR が既にあれば起動しない
-//   2. 試行上限: 同一版につき最大 SETUP_SYNC_MAX_ATTEMPTS 回（既定 2）。データファイルで管理
+//   2. 試行上限: 同一版につき最大 SYNC_SETUP_MAX_ATTEMPTS 回（既定 2）。データファイルで管理
 //   3. merge しない: PR を作るところで止める（不可逆操作は人間のゲートに残す）
 //   4. 作業ツリーを汚さない: 対象リポジトリのブランチは切り替えない。origin の default から
 //      使い捨て worktree を切り、その中だけで apply / commit / push / PR を行う
@@ -14,7 +14,7 @@
 // worktree は sparse-checkout（.claude / .github / .githooks + ルート直下）で展開する。
 // Unity リポジトリを全展開すると Windows の MAX_PATH（260 字）に当たり、数 GB と数分を払う。
 //
-// drift 判定（記録版 vs 現行版）と現行版の読み取りは setup-sync-check.mjs と同じロジックを
+// drift 判定（記録版 vs 現行版）と現行版の読み取りは sync-setup-check.mjs と同じロジックを
 // 持つ。hook は配備先へ単体コピーされる制約上 import できず共有 lib 化できないため、ここは
 // 意図的な重複。挙動を変えるときは両方を揃える（cmpVer / installed_plugins.json の読み方）。
 //
@@ -35,11 +35,11 @@
 //     --dry-run: git/gh を一切叩かず、同期計画（対象スキル・フラグ・ブランチ・試行回数）を
 //                出力して終了する（試行回数も増やさない）。テストと事前確認用。--phase は不要。
 //   環境変数（主にテスト用の差し替え）:
-//     SETUP_SYNC_PLUGINS_JSON  installed_plugins.json のパス
-//     SETUP_SYNC_ATTEMPTS_JSON 試行回数ファイルのパス
-//     SETUP_SYNC_MAX_ATTEMPTS  試行上限（既定 2）
-//     SETUP_SYNC_PLAN_JSON     フェーズ間引き継ぎファイルのパス
-//     SETUP_SYNC_DATA_DIR      worktree を置くデータディレクトリ
+//     SYNC_SETUP_PLUGINS_JSON  installed_plugins.json のパス
+//     SYNC_SETUP_ATTEMPTS_JSON 試行回数ファイルのパス
+//     SYNC_SETUP_MAX_ATTEMPTS  試行上限（既定 2）
+//     SYNC_SETUP_PLAN_JSON     フェーズ間引き継ぎファイルのパス
+//     SYNC_SETUP_DATA_DIR      worktree を置くデータディレクトリ
 //
 // 依存なし（Node 標準のみ）。
 
@@ -69,7 +69,7 @@ function readJson(path) {
   }
 }
 
-// "1.2.0" 同士を数値比較。a > b で正（setup-sync-check.mjs と同一仕様）。
+// "1.2.0" 同士を数値比較。a > b で正（sync-setup-check.mjs と同一仕様）。
 function cmpVer(a, b) {
   const pa = String(a).split(".").map((n) => parseInt(n, 10));
   const pb = String(b).split(".").map((n) => parseInt(n, 10));
@@ -147,12 +147,12 @@ const target = args.find((a) => !a.startsWith("--")) || process.env.CLAUDE_PROJE
 
 // ---- 現行プラグイン版と installPath の解決（hook と同じ読み方） ----
 const pluginsJsonPath =
-  process.env.SETUP_SYNC_PLUGINS_JSON || join(homedir(), ".claude", "plugins", "installed_plugins.json");
+  process.env.SYNC_SETUP_PLUGINS_JSON || join(homedir(), ".claude", "plugins", "installed_plugins.json");
 const installed = readJson(pluginsJsonPath);
 if (!installed || !installed.plugins) {
   fail(
     `インストール済みプラグイン情報を読めませんでした: ${pluginsJsonPath}\n` +
-      "project-setup が導入されているか、SETUP_SYNC_PLUGINS_JSON の指定を確認してください。"
+      "project-setup が導入されているか、SYNC_SETUP_PLUGINS_JSON の指定を確認してください。"
   );
 }
 const key = Object.keys(installed.plugins).find((k) => /^project-setup@/.test(k));
@@ -168,20 +168,20 @@ if (!currentVersion || currentVersion === "unknown") {
   const pj = installPath && readJson(join(installPath, ".claude-plugin", "plugin.json"));
   currentVersion = pj?.version;
 }
-// installPath が無ければ、この sync-run.mjs の位置から plugin root を推定（skills/setup-sync/ の 2 つ上）。
+// installPath が無ければ、この sync-run.mjs の位置から plugin root を推定（skills/sync-setup/ の 2 つ上）。
 if (!installPath) installPath = join(here, "..", "..");
 if (!currentVersion) fail("現行プラグイン版を特定できませんでした（installed_plugins.json も plugin.json も読めず）。");
 
-const branch = `chore/setup-sync-v${currentVersion}`;
+const branch = `chore/sync-setup-v${currentVersion}`;
 
 // ---- 試行回数（同一版につき上限まで）とフェーズ間引き継ぎ ----
-const maxAttempts = parseInt(process.env.SETUP_SYNC_MAX_ATTEMPTS || "2", 10);
+const maxAttempts = parseInt(process.env.SYNC_SETUP_MAX_ATTEMPTS || "2", 10);
 const dataDir =
-  process.env.SETUP_SYNC_DATA_DIR || join(homedir(), ".claude", "plugins", "data", "project-setup");
-const attemptsPath = process.env.SETUP_SYNC_ATTEMPTS_JSON || join(dataDir, "sync-attempts.json");
-const planPath = process.env.SETUP_SYNC_PLAN_JSON || join(dataDir, "sync-plan.json");
+  process.env.SYNC_SETUP_DATA_DIR || join(homedir(), ".claude", "plugins", "data", "project-setup");
+const attemptsPath = process.env.SYNC_SETUP_ATTEMPTS_JSON || join(dataDir, "sync-attempts.json");
+const planPath = process.env.SYNC_SETUP_PLAN_JSON || join(dataDir, "sync-plan.json");
 // .md 統合で矛盾が出たとき Claude が書き残すメモ。publish が PR 本文へ転記して消す。
-const notesPath = process.env.SETUP_SYNC_NOTES_MD || join(dataDir, "sync-notes.md");
+const notesPath = process.env.SYNC_SETUP_NOTES_MD || join(dataDir, "sync-notes.md");
 const repoId = git(target, "remote", "get-url", "origin") || target;
 const attemptKey = `${repoId}@v${currentVersion}`;
 const attempts = readJson(attemptsPath) || {};
@@ -205,7 +205,7 @@ if (phase === "publish") {
   carriedWarnings = Array.isArray(plan.warnings) ? plan.warnings : [];
   planWorktree = plan.worktree || null;
 } else {
-  const statePath = join(target, ".claude", "setup-sync-state.json");
+  const statePath = join(target, ".claude", "sync-setup-state.json");
   if (!existsSync(statePath)) {
     console.log(`同期対象外: ${statePath} がありません（未セットアップ、またはバックフィル前）。`);
     process.exit(0);
@@ -315,7 +315,12 @@ if (phase === "apply") {
   }
   // sparse-checkout でテンプレが触る領域だけ展開する。全展開は Unity リポで MAX_PATH に当たる。
   // cone モードのルート直下ファイル（CLAUDE.md / AGENTS.md 等）は常に含まれる。
-  git(worktree, "sparse-checkout", "set", "--cone", ".claude", ".github", ".githooks");
+  //
+  // ProjectSettings は書き込み対象ではないが、setup-unity の apply.mjs が
+  // `ProjectSettings/ProjectVersion.txt` の存在で Unity プロジェクトかを判定するため要る。
+  // 展開しないと Unity リポの同期が毎回「Unity プロジェクトではありません」で落ち、
+  // 試行上限に達して以後どの更新も届かなくなる。数ファイルなので MAX_PATH の懸念は無い。
+  git(worktree, "sparse-checkout", "set", "--cone", ".claude", ".github", ".githooks", "ProjectSettings");
   if (git(worktree, "checkout") === null) fail("worktree の sparse checkout に失敗しました。");
   // 同期ブランチは常に origin/default から引き直す（前回の中断が残っていても上書きする）。
   if (git(worktree, "switch", "-C", branch) === null) {
@@ -335,9 +340,14 @@ if (phase === "apply") {
       console.log(`--- ${d.skill} ---`);
       console.log(out.trimEnd());
       if (out.includes("要マージ（")) anyNeedsMerge = true;
-      // apply.mjs の「警告:」節を PR 本文へ転記するため保持する。
-      const idx = out.indexOf("警告:");
-      if (idx >= 0) warnings.push(`### ${d.skill}\n\n\`\`\`\n${out.slice(idx).trim()}\n\`\`\``);
+      // apply.mjs が人へ向けて書いた行を PR 本文へ転記する。語は skill ごとに違う
+      // （setup-github は「警告:」、setup-unity は「注意:」）ので両方拾う。片方しか
+      // 見ないと、旧配備物の削除やフラグの無視が PR 本文に一切現れない。
+      const idx = ["警告:", "注意:"]
+        .map((w) => out.indexOf(w))
+        .filter((i) => i >= 0)
+        .sort((a, b) => a - b)[0];
+      if (idx !== undefined) warnings.push(`### ${d.skill}\n\n\`\`\`\n${out.slice(idx).trim()}\n\`\`\``);
     } catch (e) {
       fail(`${d.skill} の apply.mjs 実行に失敗しました: ${String(e.message || e).trim()}`);
     }
@@ -381,7 +391,7 @@ if (currentBranch !== branch) {
 
 // ---- commit ----
 if (git(wt, "add", "-A") === null) fail("git add に失敗しました。");
-// 空コミットは作らない防御。ただし apply.mjs は setup-sync-state.json に新版を必ず書くため、
+// 空コミットは作らない防御。ただし apply.mjs は sync-setup-state.json に新版を必ず書くため、
 // 版が上がった通常ケースでは（テンプレ本体に実差分が無くても）状態ファイルの差分が必ず出る。
 // つまりここで止まるのは「apply.mjs が状態ファイルも含め何も書かなかった」異常時のみ。
 // 版のみ更新の PR（記録版を進めるだけ）はノイズに見えるが、次回の hook 再通知を止めるために必要。
@@ -402,7 +412,7 @@ if (existsSync(notesPath)) {
   rmSync(notesPath, { force: true });
 }
 const body =
-  `project-setup テンプレートの更新に自動追随する PR です（\`/setup-sync\`）。\n\n` +
+  `project-setup テンプレートの更新に自動追随する PR です（\`/sync-setup\`）。\n\n` +
   `## 同期内容\n\n${drifted.map((d) => `- ${d.skill}: v${d.from} → v${currentVersion}（flags: ${d.flags.join(" ") || "なし"}）`).join("\n")}\n\n` +
   (carriedNotes ? `## 要確認（テンプレと現物が矛盾）\n\n${carriedNotes}\n\n` : "") +
   (carriedWarnings.length ? `## apply.mjs の警告\n\n${carriedWarnings.join("\n\n")}\n` : "警告はありません。\n");
@@ -428,7 +438,7 @@ try {
 try {
   const raw = gh(wt, "pr", "list", "--state", "open", "--json", "number,title,headRefName", "--limit", "100");
   for (const p of JSON.parse(raw)) {
-    if (!/^chore\/setup-sync-v/.test(String(p.headRefName || "")) || p.headRefName === branch) continue;
+    if (!/^chore\/sync-setup-v/.test(String(p.headRefName || "")) || p.headRefName === branch) continue;
     gh(wt, "pr", "close", String(p.number), "--comment", `より新しい同期 PR（${createdUrl}）に置き換えたためクローズします。`);
     console.log(`古い同期 PR を閉じました: #${p.number} ${p.title}`);
   }

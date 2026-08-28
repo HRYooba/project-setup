@@ -1,4 +1,4 @@
-# 要マージ Markdown の統合手順（setup-github / setup-unity / setup-sync 共通）
+# 要マージ Markdown の統合手順（setup-github / setup-unity / sync-setup 共通）
 
 `apply.mjs` は `.claude/rules/*.md` と `.claude/CLAUDE.md` を**書かない**。既存があり内容が
 異なるときは「要マージ」として報告するだけで止める。プロジェクト側で育った記述を機械的に

@@ -29,11 +29,14 @@ Unity EditMode のテスト責任完了に特化したスペシャリスト。
 
 - 出力・メッセージは日本語、思考・推論は英語
 - `Assets/ThirdParty/`・`Assets/Plugins/` の変更禁止
-- MCP ツールの具体呼び出しは `.claude/skills/test-unity/references/unity-mcp-tools.md`（バインディング表）が正。操作名（「コンパイル確認」等）で表を参照し、コンテキストに無ければ最初のターンで Read する
-- Unity MCP が接続失敗 or バインディング表の「失敗判定」に該当 → 停止して報告
+- Unity 操作は Unity CLI（`unity ...`）経由。方針・失敗判定・コンパイル確認・コンソールエラー取得は `.claude/rules/unity-cli.md` が正
+- **Editor が公開するコマンド名を推測しない。** `unity command --format json` / `--query <語>` で発見してから呼ぶ
+- `unity test` は Editor 常駐を要さない。**live Editor に到達できなくてもテスト実行まで完走する**
+- `unity doctor --ci` が exit 6（確定失敗）→ テストを書かずに停止して報告。exit 7（判定不能）→ 1 回だけ再実行
+- `unity test` の **exit 8（テストが失敗）と、それ以外の非 0（実行に至らなかった）を混同しない**。後者を「テスト失敗」と報告しない
 - Bash で `cd` を使わない。作業ディレクトリは自動設定済み
 - モック・スタブフレームワークは使わない。スタブは `Tests/EditMode/TestDoubles/<Context>/` の共有定義を使う（private nested 重複定義禁止）
-- 既存テストがある場合は Edit を優先し、無い場合のみ Write で作成（MCP のスクリプト作成ツールは使わない。バインディング表「禁止事項」）
+- 既存テストがある場合は Edit を優先し、無い場合のみ Write で作成（Editor 側のスクリプト作成コマンドは使わない。`rules/unity-cli.md`「禁止事項」）
 - **追加前ゲート**（designing-guide §5）を各テストに適用: 回帰特定 / 一意性 / 仕様語↔assertion 整合 / ダブル語彙。1 つでも満たせないテストは追加しない
 - **ゲートを通ったケースが 0 件なら、テストを 1 件も書かずに理由を報告して終わる**。実装段は無条件段ではない
 - **1 対象クラスあたりの新規テストが 5 件を超える場合、超過分は書かずに候補一覧として報告する**（設計側に問題がある兆候）
@@ -47,11 +50,11 @@ Unity EditMode のテスト責任完了に特化したスペシャリスト。
 
 ## Workflow Overview
 
-1. 対象ファイル検出（git diff + Glob。default branch は実行時に検出）
+1. 前提判定（`unity doctor --ci`）+ 対象ファイル検出（git diff + Glob。default branch は実行時に検出）
 2. 対象選別（designing-guide §1。対象外のみなら「テスト不要」で終了）
-3. 仕様ソース + クラス解析 + **設計**（designing-guide でケース選別・追加前ゲート適用）
+3. 整合性検査（`unity projects verify`。`CONFLICT_MARKERS` / `MANIFEST_INVALID` / `GUID_DUPLICATE` があれば停止）+ 仕様ソース + クラス解析 + **設計**（designing-guide でケース選別・追加前ゲート適用）
 4. **ゲート通過ケースが 0 件なら 5〜6 を飛ばして 7 へ**（テストを書かずに実行のみ）
 5. **実装**（writing-guide に従い、ゲートを通ったテストだけ追加・更新）
-6. コンパイル確認（バインディング表の手順、エラー時は最大 3 回修正）→ **重複整理**（designing-guide §7）→ 再コンパイル確認
-7. テスト実行（バインディング表の「テスト実行」→「テスト結果取得」。`rules/testing.md`「既知失敗テスト」の記録を除外して判定）
+6. コンパイル確認（`rules/unity-cli.md` の手順、エラー時は最大 3 回修正）→ **重複整理**（designing-guide §7）→ 再コンパイル確認
+7. テスト実行（`unity test --mode EditMode --filter <スコープ> --format json`。スコープは `rules/testing.md`「テスト実行のスコープ」）。red なら `--rerun-failed` で再現性を確認し、再現しなければ `--retries` で flaky を判定する
 8. 結果レポート（`rules/testing.md`「完了報告」に従う。PR があれば `gh pr comment`）

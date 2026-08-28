@@ -16,7 +16,7 @@
 //   activate                  Editor の準備完了を確認して ACTIVE にする
 //   delegate <agentType>      検証エージェント（unity-tester 等）へ一時的に権限を渡す
 //   undelegate                委譲を戻す
-//   drain                     新規 MCP を締め切る（ACTIVE → DRAINING）
+//   drain                     新規の Editor 操作を締め切る（ACTIVE → DRAINING）
 //   seal -m <msg>             レーン上の Editor 成果をコミットする（.meta の取りこぼし防止）
 //   return                    成果を worktree へ cherry-pick して返却する
 //   abandon --reason <text>   成果を戻さずに返却する（レーンの変更は破棄しない）
@@ -26,6 +26,7 @@
 //
 // 依存なし（Node 標準のみ）。
 
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
@@ -161,12 +162,12 @@ function inspectRange(worktreePath, base, target) {
 
     if (paths.some((p) => isUnitySerialized(p))) {
       violations.push(
-        `${status} ${paths.join(" -> ")} : Unity がシリアライズするファイルは Editor（MCP）経由でしか変更できません`
+        `${status} ${paths.join(" -> ")} : Unity がシリアライズするファイルは Editor（Unity CLI）経由でしか変更できません`
       );
       continue;
     }
     // .cs / .asmdef の rename・delete は .meta の GUID が分岐する。
-    // Editor を借りている間に MCP のアセット操作で行う必要がある。
+    // Editor を借りている間に Unity CLI のアセット操作で行う必要がある。
     if (/^R/.test(status) && /\.(cs|asmdef|asmref)$/i.test(target1)) {
       violations.push(`${status} ${paths.join(" -> ")} : アセットの移動・改名は Editor 経由で行ってください（.meta が分岐します）`);
     }
@@ -258,7 +259,7 @@ function cmdRequest() {
   if (violations.length) {
     console.error(`検証レーンへ載せられません（${gateBase.slice(0, 8)}...${shortSha(target)} に禁止された変更があります）:`);
     for (const v of violations) console.error(`  - ${v}`);
-    console.error("\nこれらは Editor を借りている間に MCP 経由で行ってください。");
+    console.error("\nこれらは Editor を借りている間に Unity CLI 経由で行ってください。");
     process.exit(1);
   }
 
@@ -329,8 +330,8 @@ function cmdGrant() {
   ok("");
   ok("次にメインセッションが行うこと:");
   ok("  1. Editor が Play Mode でなく、インポート・コンパイルが終わっていることを確認する");
-  ok("  2. バインディング表の「コンパイル確認」で refresh し、ready を待つ");
-  ok("  3. node lane.mjs activate  ← ここで初めて借り手が Unity MCP を呼べるようになる");
+  ok("  2. rules/unity-cli.md の「コンパイル確認」で refresh し、完了を待つ");
+  ok("  3. node lane.mjs activate  ← ここで初めて借り手が Editor を操作できるようになる");
 }
 
 function cmdActivate() {
@@ -346,7 +347,7 @@ function cmdActivate() {
     st.holder.activatedAt = new Date().toISOString();
   });
   appendJournal(stateDir, { event: "activate", holder: loadState().holder });
-  ok("ACTIVE にしました。借り手が Unity MCP を使えます。");
+  ok("ACTIVE にしました。借り手が Unity CLI で Editor を操作できます。");
 }
 
 function cmdDelegate() {
@@ -377,7 +378,7 @@ function cmdDrain() {
     st.holder.delegate = null;
   });
   appendJournal(stateDir, { event: "drain" });
-  ok("DRAINING にしました。新規の Unity MCP 呼び出しは止まります。");
+  ok("DRAINING にしました。新規の Editor 操作は止まります。");
   ok("Editor 側でシーン / Prefab Stage を保存し、lane.mjs seal -m \"...\" で成果をコミットしてください。");
 }
 
@@ -564,18 +565,22 @@ function cmdDoctor() {
     }
   }
 
-  // Unity MCP の実装をルールから導出できるか（guard がツール名を判定するのに使う）
-  const rulePath = join(repoRoot(), ".claude", "rules", "unity-mcp.md");
-  if (!existsSync(rulePath)) {
-    problems.push(`.claude/rules/unity-mcp.md がありません（setup-unity を実行してください）`);
+  // Unity 操作の常時ルールが配備されているか（借り手が失敗判定・禁止事項を読む先）
+  if (!existsSync(join(repoRoot(), ".claude", "rules", "unity-cli.md"))) {
+    problems.push(`.claude/rules/unity-cli.md がありません（setup-unity を実行してください）`);
+  }
+
+  // Unity CLI 本体。無いと借り手が Editor を操作できない。
+  // ここでは版数の取得だけにする。`unity pipeline list` は Editor へ問い合わせるので
+  // doctor が待たされうるため、案内に留める。
+  const ver = spawnSync("unity", ["--version", "--no-banner"], { encoding: "utf8", timeout: 15000 });
+  if (ver.error || ver.status !== 0) {
+    problems.push(
+      `Unity CLI が使えません（unity --version が失敗）。winget install Unity.CLI で導入し、シェルを開き直してください`
+    );
   } else {
-    const prefixes = new Set();
-    for (const m of readFileSync(rulePath, "utf8").matchAll(/mcp__([A-Za-z0-9_.-]+)__/g)) prefixes.add(`mcp__${m[1]}__`);
-    if (!prefixes.size) {
-      problems.push("rules/unity-mcp.md から Unity MCP のツール接頭辞を導出できません（門番が名前で推測する縮退動作になります）");
-    } else {
-      ok(`Unity MCP 接頭辞: ${[...prefixes].join(" ")}`);
-    }
+    ok(`Unity CLI: ${String(ver.stdout).trim()}`);
+    ok("  Editor 到達性は unity pipeline list --format json で確認する（Pipeline: Installed / Safe Mode）");
   }
 
   const stale = join(stateDir, "state.lock");

@@ -6,20 +6,23 @@
 //   - drift 無し / 状態ファイル無し → 何もしないで exit 0
 //   - 試行上限ガード（非 dry-run でも副作用前に停止し、試行回数を増やさない）
 //   - フェーズ指定の必須化と、publish を計画なし / worktree なしで叩いたときの停止
+//   - --phase=apply の通し（worktree 作成 → apply.mjs 起動）。ここを誰も通していなかったため、
+//     sparse-checkout と apply.mjs の前提の食い違いがユニットテスト全 pass の裏を素通りしていた
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { SYNC_RUN, tempDir } from "./helpers.mjs";
+import { dirname } from "node:path";
 /* global process */
 
 // 偽の installed_plugins.json を書き、sync-run.mjs を本番同様に子プロセスで起動する。
 function runSyncRun(
   target,
   currentVersion,
-  { dryRun = false, phase = "apply", attemptsPath, planPath, maxAttempts, installPath } = {}
+  { dryRun = false, phase = "apply", attemptsPath, planPath, maxAttempts, installPath, dataDir } = {}
 ) {
   const dir = tempDir("syncrun-plugins-");
   const pluginsJson = join(dir, "installed_plugins.json");
@@ -44,17 +47,18 @@ function runSyncRun(
   // --dry-run は phase 不要（計画のみ）。非 dry-run は --phase が必須。
   if (dryRun) args.push("--dry-run");
   else if (phase) args.push(`--phase=${phase}`);
-  const env = { ...process.env, SETUP_SYNC_PLUGINS_JSON: pluginsJson };
-  if (attemptsPath) env.SETUP_SYNC_ATTEMPTS_JSON = attemptsPath;
-  if (planPath) env.SETUP_SYNC_PLAN_JSON = planPath;
-  if (maxAttempts != null) env.SETUP_SYNC_MAX_ATTEMPTS = String(maxAttempts);
+  const env = { ...process.env, SYNC_SETUP_PLUGINS_JSON: pluginsJson };
+  if (attemptsPath) env.SYNC_SETUP_ATTEMPTS_JSON = attemptsPath;
+  if (planPath) env.SYNC_SETUP_PLAN_JSON = planPath;
+  if (maxAttempts != null) env.SYNC_SETUP_MAX_ATTEMPTS = String(maxAttempts);
+  if (dataDir) env.SYNC_SETUP_DATA_DIR = dataDir;
   const res = spawnSync(process.execPath, args, { encoding: "utf8", env });
   return { status: res.status, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
 }
 
 function writeState(target, obj) {
   mkdirSync(join(target, ".claude"), { recursive: true });
-  writeFileSync(join(target, ".claude", "setup-sync-state.json"), JSON.stringify(obj, null, 2) + "\n", "utf8");
+  writeFileSync(join(target, ".claude", "sync-setup-state.json"), JSON.stringify(obj, null, 2) + "\n", "utf8");
 }
 
 test("dry-run: drift があれば計画（スキル・保存フラグ・ブランチ）を出し、副作用を起こさない", () => {
@@ -67,7 +71,7 @@ test("dry-run: drift があれば計画（スキル・保存フラグ・ブラ�
   assert.equal(status, 0);
   assert.match(stdout, /setup-github: v1\.0\.0 → v1\.3\.0/);
   assert.match(stdout, /--pr-copilot --review-targets=src/);
-  assert.match(stdout, /chore\/setup-sync-v1\.3\.0/);
+  assert.match(stdout, /chore\/sync-setup-v1\.3\.0/);
   assert.match(stdout, /dry-run/);
   // 副作用ゼロ: 試行回数ファイルは作られない。
   assert.ok(!existsSync(attemptsPath), "dry-run で試行回数ファイルが作られた");
@@ -144,7 +148,7 @@ test("publish: 計画はあるが worktree が消えていればエラー終了�
     JSON.stringify({
       key: `${target}@v1.3.0`,
       version: "1.3.0",
-      branch: "chore/setup-sync-v1.3.0",
+      branch: "chore/sync-setup-v1.3.0",
       repo: target,
       worktree: join(target, "does-not-exist"),
       drifted: [{ skill: "setup-github", from: "1.0.0", flags: [] }],
@@ -155,4 +159,55 @@ test("publish: 計画はあるが worktree が消えていればエラー終了�
   const { status, stderr } = runSyncRun(target, "1.3.0", { phase: "publish", planPath });
   assert.equal(status, 1);
   assert.match(stderr, /worktree が見つかりません/);
+});
+
+// ---------------------------------------------------------------------------
+// apply フェーズの通し
+// ---------------------------------------------------------------------------
+
+function git(args, cwd) {
+  const res = spawnSync("git", args, { cwd, encoding: "utf8" });
+  assert.equal(res.status, 0, `git ${args.join(" ")} 失敗: ${res.stderr}`);
+  return res.stdout.trim();
+}
+
+test("apply: Unity プロジェクトの worktree で setup-unity の apply.mjs が完走する", () => {
+  // sparse-checkout が展開する範囲と apply.mjs が要求する前提は噛み合っていなければならない。
+  // setup-unity は ProjectSettings/ProjectVersion.txt で Unity プロジェクトかを判定するので、
+  // 展開されていないと毎回落ち、試行上限に達して以後どの更新も配備先へ届かなくなる。
+  const root = tempDir("syncrun-apply-");
+  const origin = join(root, "origin.git");
+  const repo = join(root, "repo");
+
+  git(["init", "-q", "--bare", "-b", "main", origin], root);
+  git(["init", "-q", "-b", "main", repo], root);
+  git(["config", "user.email", "t@example.com"], repo);
+  git(["config", "user.name", "t"], repo);
+  mkdirSync(join(repo, "ProjectSettings"), { recursive: true });
+  writeFileSync(join(repo, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 6000.3.9f1\n", "utf8");
+  writeState(repo, { "setup-unity": { version: "1.0.0", flags: ["--architecture", "--mcp", "mcp-for-unity"] } });
+  git(["add", "-A"], repo);
+  git(["commit", "-q", "-m", "init"], repo);
+  git(["remote", "add", "origin", origin], repo);
+  git(["push", "-q", "-u", "origin", "main"], repo);
+
+  const dataDir = join(root, "data");
+  const { status, stdout, stderr } = runSyncRun(repo, "9.9.9", {
+    phase: "apply",
+    installPath: join(dirname(SYNC_RUN), "..", ".."),
+    attemptsPath: join(dataDir, "attempts.json"),
+    planPath: join(dataDir, "plan.json"),
+    dataDir,
+  });
+
+  assert.equal(status, 0, `apply フェーズが失敗した:
+${stdout}
+${stderr}`);
+  // worktree の中で apply.mjs が走り、CLI 前提の rules が置かれていること
+  const worktrees = join(dataDir, "worktrees");
+  const wt = join(worktrees, readdirSync(worktrees)[0]);
+  assert.ok(existsSync(join(wt, "ProjectSettings", "ProjectVersion.txt")), "ProjectSettings が展開されていない");
+  assert.ok(existsSync(join(wt, ".claude", "rules", "unity-cli.md")), "rules/unity-cli.md が配置されていない");
+  // 廃止フラグを渡されても止まらず、警告が出力に載る
+  assert.match(stdout, /--mcp mcp-for-unity は無視しました/);
 });
