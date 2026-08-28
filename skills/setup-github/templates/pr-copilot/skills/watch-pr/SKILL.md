@@ -4,7 +4,7 @@ description: >
   PR作成後に Claude が自動で起動するスキル。
   Monitor ツールで PR のレビューをポーリング監視し、指摘があれば resolve-pr を自動実行する。
   PR番号またはURLを指定。
-version: 1.1.0
+version: 1.2.0
 user-invocable: false
 argument-hint: [PR番号 or URL]
 ---
@@ -34,11 +34,26 @@ Skill(skill: "watch-pr", args: "{pr_number}")
 2. **リポジトリ情報取得**: `gh repo view --json owner,name`
 3. **Copilot レビュアー確認**（監視前ガード）:
 
-   ```
-   gh api "repos/{owner}/{repo}/pulls/{pr}" --jq '[.requested_reviewers[].login | select(test("copilot"; "i"))] | length'
+   ```bash
+   gh api graphql -F owner={owner} -F repo={repo} -F pr={pr} -f query='
+     query($owner:String!, $repo:String!, $pr:Int!) {
+       repository(owner:$owner, name:$repo) {
+         pullRequest(number:$pr) {
+           reviewRequests(first:20) {
+             nodes { requestedReviewer { ... on Bot { login } ... on User { login } } }
+           }
+         }
+       }
+     }' \
+     --jq '[.data.repository.pullRequest.reviewRequests.nodes[].requestedReviewer.login // empty
+            | select(test("copilot"; "i"))] | length'
    ```
 
-   結果が `0` なら「PR #{pr} に Copilot レビュアーが付いていないため監視しません」と報告して**ここで終了する**（Monitor を起動しない）。レビューが来ない PR を 30 分ポーリングする無駄を防ぐガード
+   結果が `0` なら「PR #{pr} に Copilot レビュアーが付いていないため監視しません」と報告して**ここで終了する**（Monitor を起動しない）。レビューが来ない PR を 30 分ポーリングする無駄を防ぐガード。
+
+   **REST（`repos/{owner}/{repo}/pulls/{pr}` の `requested_reviewers`）を使ってはいけない。** このフィールドは User 型しか返さず、Copilot は Bot 型のため、依頼が成立していても常に空配列になる。REST で判定すると Copilot 付き PR を全部弾く（ガードの意図が反転する）。
+
+   コマンド自体が失敗した（GraphQL エラー・権限不足等で件数を取得できない）場合は、`0` とみなさず監視を続行する。watch-pr の起動指示は after-pr-create hook が Copilot 依頼の成功を確認して出しているため、判定不能時は依頼済みとして扱うほうが安全
 4. **開始時刻記録**: `date -u +%Y-%m-%dT%H:%M:%SZ` → `{start_time}`
 
 ---
