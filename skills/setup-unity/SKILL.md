@@ -6,10 +6,11 @@ description: >
   「このプロジェクトにUnity開発ルールを入れて」などと依頼したときに使用する。
   カレントのリポジトリの .claude/ に rules（unity-cli / folder-structure / hierarchy /
   asset-naming / coding-standards / testing）、skills（test-unity / lint-unity / unity-parallel）、
-  agents（unity-tester / unity-linter / unity-worker）を撒く。Unity 操作は Unity CLI に固定。
+  agents（unity-tester / unity-linter / unity-worker）を撒く。Unity 操作は Unity CLI に固定で、
+  Unity CLI 本体と com.unity.pipeline が未導入なら入れる。
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無は、
   実行時に AskUserQuestion で確認する。
-version: 2.0.0
+version: 2.1.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -22,13 +23,16 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 2. **test-unity** — 変更差分のテスト責任判定・設計・実装・重複整理・実行（skill + `unity-tester` agent + 設計/実装ガイド）
 3. **lint-unity** — アセット・シーン・Prefab のルール準拠チェック（skill + `unity-linter` agent + チェックリスト）
 4. **unity-parallel** — git worktree で複数の `unity-worker` を並列に動かしつつ、1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す（skill + `lane.mjs`（貸し出し管理）+ `guard.mjs`（PreToolUse hook）+ `unity-worker` agent + `references/protocol.md`）。**この skill は自身の frontmatter で hook を登録する** — 呼び出したセッションでだけ有効になり、`settings.json` には触れない
-5. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards / testing / テスト設計ガイドへの差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
+5. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
+6. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards / testing / テスト設計ガイドへの差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
 
 ## 前提（満たされていないと skills が動かない）
 
 - 対象が Unity プロジェクトである（`ProjectSettings/ProjectVersion.txt` が存在する）
-- **Unity CLI が導入済み**（`unity --version`。未導入なら Windows は `winget install Unity.CLI` / macOS は `brew install --cask unity-cli`）
-- **live Editor 操作には `com.unity.pipeline` と Unity 6.0 LTS 以降が必要**（`unity auth login` → `unity pipeline install`）。
+- **Unity CLI**（`unity --version`）。未導入なら**このコマンドが入れる**（Step 2.6）
+- **live Editor 操作には `com.unity.pipeline` と Unity 6.0 LTS 以降が必要**。
+  Pipeline は**このコマンドが入れる**（Step 2.7）。要るのは Unity アカウントへのサインインだけで、
+  未サインインなら `unity auth login` の実行を頼む（ブラウザが開く対話フローなので代打しない）。
   6.0 未満でも `unity test` / `unity build` / `unity projects verify` は動くので、test-unity は完走し、
   lint-unity は Editor 不要カテゴリだけ実行する縮退動作になる
 - `com.unity.ai.assistant` を入れているなら **2.13 以降**（それ未満は CLI と競合する）
@@ -96,6 +100,48 @@ apply.mjs の出力に「要マージ」節があれば、`${CLAUDE_PLUGIN_ROOT}
 を Read し、そこに書かれた手順と判断基準に従って各ファイルを統合する。**この工程を飛ばすと
 テンプレ更新がその配備先に届かない。**「要マージ」節が無ければ何もしない。
 
+### Step 2.6: Unity CLI の導入
+
+Step 1 で **CLI 未導入**（`unity --version` が失敗）と分かっていたら、ここで入れる。
+プラットフォームで分岐する:
+
+| OS | コマンド |
+|:--|:--|
+| Windows | `winget install Unity.CLI --accept-package-agreements --accept-source-agreements` |
+| macOS | `brew install --cask unity-cli` |
+| Linux | Unity 公式の apt / dnf リポジトリ（`unity --version` が通るまでは手順を案内して止める） |
+
+- **入れた直後、このセッションでは `unity` が使えない**（PATH がシェルに反映されていない）。
+  よって Step 2.7 は飛ばし、Step 3 で「新しいセッションで `/setup-unity` を再実行すると
+  Pipeline まで入る」と伝える。どのみち rules / skill の反映にセッション再読み込みが要る
+- インストールが失敗したら、出力をそのまま添えて報告し止める（配備物はそのまま残る）
+
+### Step 2.7: Pipeline パッケージの導入
+
+Step 1 で **Pipeline 未導入**と分かっていて、Editor 版が **6.0 LTS 以降**で、
+かつ **CLI が Step 2.6 で入れたものでない**（＝このセッションで `unity` が使える）なら、ここで入れる。
+`unity command`（シーン・Prefab・コンポーネント操作、コンパイル確認）がこれを前提にしているため、
+入れないと test-unity / lint-unity が縮退動作のままになる。
+
+```bash
+unity pipeline install --project-path {target} --format json
+```
+
+- **冪等**。導入済みなら「変更なし」を返すので、条件を取り違えても壊れない
+- 終了コードで分岐する（`rules/unity-cli.md`「失敗判定」）:
+  - **exit 3（認証失敗）** → `unity auth login` はブラウザを開く対話フローなので**代わりに打たない**。
+    ユーザーに `! unity auth login` を実行してもらい、済んだら上のコマンドを再実行する
+  - **exit 0 以外のその他** → `errors[0].code` を添えて報告し、手順を案内して止める（配備物はそのまま）
+- 成功したら **Unity Editor 側の再コンパイルを待つ**必要がある旨を伝える。
+  その後 `unity pipeline list --format json` で `hasPipelinePackage` を確認する
+
+**この工程は apply.mjs に入れない。** テンプレ同期は sparse worktree の中で apply.mjs を直接
+起動するので、そこで `Packages/manifest.json` を書くと同期 PR に混入する（`Packages/` は
+worktree に展開されてすらいない）。Pipeline の導入は人が `/setup-unity` を打った時だけ走らせる。
+
+- **Editor 版が 6.0 未満** / **Safe Mode** / **CLI をこのセッションで入れたばかり** のときは
+  この工程を飛ばし、Step 3 で状況に応じた案内をする
+
 ### Step 3: 結果報告
 
 apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝える。Step 2.5 で統合したファイルが
@@ -103,8 +149,10 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
 
 - 反映には**新しいセッションでの再読み込みが必要**（rules・skill・agent はセッション開始時に読み込まれる）
 - Step 1 の調査結果に応じて次を案内する（どれも配備物のやり直しは不要）:
-  - **CLI 未導入** → `winget install Unity.CLI`（macOS は `brew install --cask unity-cli`）→ シェルを開き直す
-  - **Pipeline 未導入** → `unity auth login` → `unity pipeline install` → Editor 側の再コンパイルを待つ → `unity pipeline list` で `Pipeline: Installed`
+  - **CLI を Step 2.6 で入れた** → **新しいセッションで `/setup-unity` を再実行**すると Pipeline まで入る
+  - **CLI を入れられなかった** → 出力を添えて手順を案内する
+  - **Pipeline を Step 2.7 で入れた** → **Editor 側の再コンパイルを待つ**よう伝える（待たずに `unity command` を叩いても繋がらない）
+  - **Pipeline が入れられなかった** → 止まった理由（認証・CLI 未導入・6.0 未満・Safe Mode）と、解消後に `/setup-unity` を再実行すれば入る旨を伝える
   - **Safe Mode** → 導入の問題ではない。`rules/unity-cli.md`「Safe Mode」の手順でコンパイルエラーを解消する
   - **Editor 版が 6.0 未満** → live Editor 操作は使えない。lint-unity は Editor 不要カテゴリのみの縮退動作になる
 - 公式の `unity-cli` skill（`unity skill install claude-code`。`--local` でプロジェクトへも入る）は
