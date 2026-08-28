@@ -77,6 +77,44 @@ test("dry-run: drift があれば計画（スキル・保存フラグ・ブラ�
   assert.ok(!existsSync(attemptsPath), "dry-run で試行回数ファイルが作られた");
 });
 
+// 状態ファイルは過去に 2 回改名している。読み手が正名しか見ないと、旧名だけが残った配備先は
+// 「同期対象外」で静かに落ちる。改名の後始末は apply.mjs にあるが、apply は drift 検知の後に
+// しか走らないので永久に到達しない（＝黙って追随が止まったまま誰も気づけない）。
+test("旧名の状態ファイルしか無くても drift を検知する", () => {
+  const target = tempDir("syncrun-legacyname-");
+  mkdirSync(join(target, ".claude"), { recursive: true });
+  writeFileSync(
+    join(target, ".claude", "setup-sync-state.json"),
+    JSON.stringify({ "setup-github": { version: "1.0.0", flags: [] } }, null, 2) + "\n",
+    "utf8"
+  );
+  const { status, stdout } = runSyncRun(target, "1.3.0", { dryRun: true });
+  assert.equal(status, 0);
+  assert.match(stdout, /setup-github: v1\.0\.0 → v1\.3\.0/);
+  assert.match(stdout, /旧名の状態ファイルを読みました/);
+});
+
+// 旧名 → 正名の改名でキーが引き継がれず、正名側に setup-github だけ、旧名側に setup-unity だけが
+// 残った配備先が実在する。マージして読まないと setup-unity のテンプレ更新が永久に届かない。
+test("正名と旧名にキーが散っていれば、両方を見て drift を判定する", () => {
+  const target = tempDir("syncrun-mixedname-");
+  mkdirSync(join(target, ".claude"), { recursive: true });
+  writeFileSync(
+    join(target, ".claude", "sync-setup-state.json"),
+    JSON.stringify({ "setup-github": { version: "1.3.0", flags: [] } }, null, 2) + "\n",
+    "utf8"
+  );
+  writeFileSync(
+    join(target, ".claude", ".setup-sync.json"),
+    JSON.stringify({ "setup-unity": { version: "1.0.0", flags: ["--architecture"] } }, null, 2) + "\n",
+    "utf8"
+  );
+  const { status, stdout } = runSyncRun(target, "1.3.0", { dryRun: true });
+  assert.equal(status, 0);
+  assert.match(stdout, /setup-unity: v1\.0\.0 → v1\.3\.0/);
+  assert.doesNotMatch(stdout, /setup-github: v/, "正名側の追随済みキーが旧名に引きずられている");
+});
+
 test("状態ファイルが無ければ同期対象外で exit 0", () => {
   const target = tempDir("syncrun-nostate-");
   const { status, stdout } = runSyncRun(target, "1.3.0", { dryRun: true });
@@ -159,6 +197,36 @@ test("publish: 計画はあるが worktree が消えていればエラー終了�
   const { status, stderr } = runSyncRun(target, "1.3.0", { phase: "publish", planPath });
   assert.equal(status, 1);
   assert.match(stderr, /worktree が見つかりません/);
+});
+
+// apply と publish の間にプラグインが自動更新されることがある。現行版で計画を照合すると鍵が
+// 食い違い、成果の入った worktree ごと最初からやり直しになる（空振りの試行も 1 回記録される）。
+// worktree の中身は apply 時の版のテンプレで作られているので、その版として publish するのが正しい。
+test("publish: apply 後にプラグイン版が上がっても計画を捨てない", () => {
+  const target = tempDir("syncrun-verdrift-");
+  writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
+  const planPath = join(tempDir("syncrun-plan-verdrift-"), "sync-plan.json");
+  const repoId = target; // git repo でない temp dir では target が repoId
+  writeFileSync(
+    planPath,
+    JSON.stringify({
+      key: `${repoId}@v1.3.0`,
+      version: "1.3.0",
+      branch: "chore/sync-setup-v1.3.0",
+      repo: target,
+      worktree: join(target, "does-not-exist"),
+      drifted: [{ skill: "setup-github", from: "1.0.0", flags: [] }],
+      warnings: [],
+    }),
+    "utf8"
+  );
+  // 現行版は 1.4.0（apply 時は 1.3.0 だった）。
+  const { status, stdout, stderr } = runSyncRun(target, "1.4.0", { phase: "publish", planPath });
+  assert.match(stdout, /apply 時のプラグイン版は v1\.3\.0/);
+  // 計画は生きているので、止まる理由は「worktree が無い」であって「計画が無い」ではない。
+  assert.equal(status, 1);
+  assert.match(stderr, /worktree が見つかりません/);
+  assert.doesNotMatch(stderr, /同期計画が見つかりません/);
 });
 
 // ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ description: >
   記録版と現行プラグイン版を比較し、更新があれば使い捨て worktree の中で保存フラグから
   apply.mjs を再適用し、要マージの Markdown を統合してから commit → push → 同期 PR を
   作成する（merge はしない）。重複 PR 防止・試行上限・作業ツリー分離はコード担保。
-version: 1.3.0
+version: 1.4.0
 user-invocable: true
 argument-hint: "[対象ディレクトリ（省略時はカレント）]"
 ---
@@ -108,5 +108,13 @@ PR が作られた場合は「merge はしていないので、内容を確認�
   実行し直す（同じ場所の worktree を作り直す。試行回数は 1 消費されている点に注意）
 - 同期 PR はリポジトリごとに常に 1 本・最新版だけに保つ。新しい版の PR を作った後、
   `chore/sync-setup-v*` の古い open PR は close する（reopen できる可逆操作。ブランチは残る）
+- 状態ファイルは過去に 2 回改名している（`.setup-sync.json` → `setup-sync-state.json` →
+  `sync-setup-state.json`）。**読み手が旧名も見る**ので、旧名しか無い配備先も検知できる。
+  キー単位で新しい世代が勝ち、旧名は新しい世代がまだ知らないキーだけを補う。旧名は次の apply で
+  正名へ畳まれて消える。規則の正本は `skills/sync-setup/state.mjs`（配備先の hook は import
+  できないため同じ規則を自前で持つ。変えるときは両方）
+- apply と publish の間にプラグインが自動更新されても、**publish は apply 時の版で PR を出す**
+  （worktree の中身はその版のテンプレで作られているため）。新しい版への追随は次のセッションで
+  改めて検知される
 - Unity のような巨大リポジトリを全チェックアウトすると Windows の MAX_PATH（260 字）に当たる。
   worktree を sparse-checkout で切っているのはそのため。展開範囲を広げるときはここを思い出す
