@@ -39,6 +39,8 @@ test("初回適用 → 再実行で重複せず、review-config が温存され�
   // 初回: 配置物
   for (const f of [
     ".claude/hooks/sync-setup-check.mjs",
+    ".claude/hooks/sync-setup-prompt.mjs",
+    ".claude/hooks/lib/sync-setup-drift.mjs",
     ".claude/hooks/lib/reviewable-files.mjs",
     ".claude/hooks/review-config.json",
     ".claude/sync-setup-state.json",
@@ -333,8 +335,9 @@ test("pr-copilot 配備済みはフラグ無し再実行でも自動継承され
   assert.equal(settings.hooks.PostToolUse.length, 1);
 });
 
-// 同期結果の報告 hook（UserPromptSubmit）は配らない。同期はユーザーのセッションで走り、
+// 同期結果の報告 hook（旧 setup-sync-report.mjs）は配らない。同期はユーザーのセッションで走り、
 // 結果は会話にそのまま出るため。実体と settings.json 登録の両方を掃除する。
+// UserPromptSubmit 自体は sync-setup-prompt.mjs が使うので、イベントごと消えるわけではない。
 test("配備済みの setup-sync-report は実体も settings.json 登録も撤去される", () => {
   const target = tempDir("apply-test-");
   mkdirSync(join(target, ".claude", "hooks"), { recursive: true });
@@ -371,5 +374,7 @@ test("配備済みの setup-sync-report は実体も settings.json 登録も撤�
   );
   assert.match(out, /setup-sync-report\.mjs\): deregistered/);
   const settings = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
-  assert.ok(!settings.hooks.UserPromptSubmit, "UserPromptSubmit の登録が残っている");
+  const ups = (settings.hooks.UserPromptSubmit ?? []).flatMap((g) => (g.hooks ?? []).map((h) => h.command));
+  assert.ok(!ups.some((c) => c.includes("setup-sync-report.mjs")), "setup-sync-report の登録が残っている");
+  assert.ok(ups.some((c) => c.includes("sync-setup-prompt.mjs")), "sync-setup-prompt まで巻き添えで消えた");
 });

@@ -14,8 +14,9 @@
 //     - .claude/skills/create-issue/（templates/base/skills の同梱スナップショットをコピー）
 //     - .github/pull_request_template.md と .github/ISSUE_TEMPLATE/*.yml
 //       （templates/base/.github の seed。**既存があれば触らない** — リポジトリ所有の成果物のため）
-//     - .claude/settings.json へ hooksPath 自動設定(SessionStart) とテンプレ更新の検知(SessionStart)
-//       を登録する（配らなくなった hook は実体を消し、登録も解除する）
+//     - .claude/settings.json へ hooksPath 自動設定(SessionStart)、テンプレ更新の検知(SessionStart)、
+//       更新時に最初のプロンプトへ /sync-setup を差し込む hook(UserPromptSubmit) を登録する
+//       （配らなくなった hook は実体を消し、登録も解除する）
 //     - 実行者の clone へ core.hooksPath を即時設定 + pre-push へ exec bit 付与（mac/linux 対策）
 //
 //   --pr-copilot（任意）:
@@ -167,8 +168,9 @@ function readPluginVersion() {
 
 // 状態ファイル `.claude/sync-setup-state.json` へ自分のキー（skillKey）をマージ更新する。
 // setup-github / setup-unity が同じファイルに各自のキーで書くため、相手のキーや未知フィールドは
-// 消さない（読み → 該当キーだけ差し替え → 書き戻し）。SessionStart hook（sync-setup-check.mjs）が
-// このファイルの記録版と現行版を比較して、更新時に `/sync-setup`（sync-run.mjs）の実行を促す。
+// 消さない（読み → 該当キーだけ差し替え → 書き戻し）。両 hook（sync-setup-check.mjs /
+// sync-setup-prompt.mjs）がこのファイルの記録版と現行版を比較し、更新時に `/sync-setup`
+//（sync-run.mjs）へ繋ぐ。比較の実体は lib/sync-setup-drift.mjs。
 function writeSyncState(skillKey, version, flags) {
   const p = join(claudeDir, "sync-setup-state.json");
   let obj = {};
@@ -273,7 +275,12 @@ if (rxArg !== undefined) {
 }
 
 cpSync(join(templatesDir, "base", "hooks"), join(claudeDir, "hooks"), { recursive: true });
-copied.push(".claude/hooks/sync-setup-check.mjs", ".claude/hooks/lib/reviewable-files.mjs");
+copied.push(
+  ".claude/hooks/sync-setup-check.mjs",
+  ".claude/hooks/sync-setup-prompt.mjs",
+  ".claude/hooks/lib/sync-setup-drift.mjs",
+  ".claude/hooks/lib/reviewable-files.mjs"
+);
 
 // 名前を変えた hook の旧実体を削除する（settings.json からの登録解除は下の deregister が担当）。
 {
@@ -613,6 +620,25 @@ if (settingsReadable) {
     },
   });
 
+  // 実行のトリガーはこちら。SessionStart の時点ではモデルが呼ばれないため、テンプレ更新を
+  // 検知していても人が何か打つまで何も起きない。最初のプロンプトを updatedInput で包んで
+  // /sync-setup を先に走らせる（1 セッション 1 回。詳細は sync-setup-prompt.mjs の冒頭）。
+  register("UserPromptSubmit", {
+    label: "sync-setup-prompt.mjs",
+    owns: (cmd) => cmd.includes("sync-setup-prompt.mjs"),
+    entry: {
+      hooks: [
+        {
+          type: "command",
+          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/sync-setup-prompt.mjs"',
+          // UserPromptSubmit の既定 timeout は 30 秒（他 hook の 600 秒ではない）。
+          // ここはローカル JSON を数本読むだけなので 10 秒で足りる。
+          timeout: 10,
+        },
+      ],
+    },
+  });
+
   // 同期結果の報告 hook は配らない（同期はメインセッションで走り、報告は会話に出る）。
   // 既存配備先の settings.json から登録を外す。
   deregister("SessionStart", {
@@ -655,7 +681,7 @@ const migratedState = consolidateSyncState(claudeDir);
 if (migratedState) console.log(`状態ファイル: ${migratedState}`);
 
 // ---- 5b. 状態ファイル sync-setup-state.json の書き込み ----
-// 適用時のプラグイン版と有効フラグを記録する。SessionStart hook がこれと現行版を比較し、
+// 適用時のプラグイン版と有効フラグを記録する。テンプレ更新検知の hook がこれと現行版を比較し、
 // 更新時に `/sync-setup`（sync-run.mjs）の実行を促す。フラグは「有効値」を明示保存する
 // （配備済み設定からの継承に依存せず、テンプレ同期の再適用が決定的に同じ構成を再現できるように）。
 const syncStates = [];
