@@ -9,7 +9,7 @@ description: >
   create-issue skill を撒く。ブランチ保護の有無と、PR 自動レビュー3機能（Copilot 自動アサイン /
   watch-pr / resolve-pr）と AGENTS.md 自動生成（Copilot code review にプロジェクト規約を教える）の
   導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.18.0
+version: 1.19.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -40,7 +40,8 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ## 前提
 
 - base: 対象が git リポジトリであること（git repo でなくてもファイル配置は行うが、hooksPath 設定はスキップされる）
-- pr-copilot モード: `gh` CLI が認証済み（`gh auth status`）かつ、そのリポジトリで GitHub Copilot code review が有効
+- pr-copilot モード: `gh` CLI が認証済み（`gh auth status`）かつ、**その token が `workflow` scope を持つ**（`.github/workflows/agents-md-sync.yml` を配置するため。確認と復旧は Step 1.5）かつ、そのリポジトリで GitHub Copilot code review が有効
+  - base モードはこの scope を要求しない（`.github/workflows/` を書かないため）
 
 ## 手順
 
@@ -60,6 +61,33 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 
 - 回答 → フラグ変換: ブランチ保護「入れない」= `--no-pre-push`（「入れる」= フラグを渡さない＝既定 ON） / PR 自動レビュー「入れる」= `--pr-copilot` / フォルダ指定 = `--review-targets=<csv>` / 「絞らない」= `--review-targets=`（空値で明示解除。再実行時に配備済みの値が温存されないよう必ず明示する） / 除外の変更 = `--review-excludes=<csv>` / 「除外なし」= `--review-excludes=`（空値で明示解除） / 「デフォルトのまま」= フラグを渡さない（テンプレートのデフォルト or 配備済み値の温存）
 - ブランチ自動削除の回答は apply.mjs のフラグにはしない（GitHub API 設定でありファイル配置ではないため）。Step 2.5 で gh により反映する
+
+### Step 1.5: `workflow` scope の確認（pr-copilot モードのときだけ）
+
+PR 自動レビューを**「入れる」と答えた場合のみ**実行する。「入れない」（base モードのみ）なら
+`.github/workflows/` を書かないため、この確認はスキップする。
+
+pr-copilot モードは `.github/workflows/agents-md-sync.yml` を配置する。`.github/workflows/` 配下の
+変更を含む push は、token に `workflow` scope が無いと GitHub 側で拒否される。ファイル配置
+（Step 2）は scope 無しでも通り、後からコミットを push する段で初めて失敗するため、**書き込む前の
+この段で確かめる**。
+
+```bash
+gh auth status
+```
+
+出力の `- Token scopes:` 行を読む（例: `- Token scopes: 'gist', 'read:org', 'repo', 'workflow'`）。
+その一覧に `workflow` が含まれていれば OK でそのまま Step 2 へ進む。含まれていなければ、次を
+**ユーザー自身に実行してもらう**よう案内する（ブラウザでの再認可が必要で、Claude が代わりに
+走らせても完了しない）:
+
+```bash
+gh auth refresh -h github.com -s workflow
+```
+
+scope を付け直さないまま進める判断もユーザーは採れる。その場合は
+`.github/workflows/agents-md-sync.yml` を含むコミットの push が拒否されうる旨を Step 3 の報告に
+含める（apply.mjs 自体は止めない）。
 
 ### Step 2: インストール実行
 
