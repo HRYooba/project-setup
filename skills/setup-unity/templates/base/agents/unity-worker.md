@@ -1,6 +1,6 @@
 ---
 name: unity-worker
-description: Unity 並列作業の実装担当。自分の git worktree の中だけで実装を進め、Unity Editor が必要になったら検証レーンの順番待ちに入る。Editor は 1 つしか無いので、貸し出されている間だけ Unity MCP を使う。
+description: Unity 並列作業の実装担当。自分の git worktree の中だけで実装を進め、Unity Editor が必要になったら検証レーンの順番待ちに入る。レーンは 1 つしか無いので、貸し出されている間だけ Unity CLI で Editor を操作する。
 disallowedTools: EnterPlanMode
 model: sonnet
 effort: medium
@@ -20,9 +20,12 @@ maxTurns: 60
 
 ## Unity Editor は借り物
 
-Unity Editor は 1 つしか無く、開いているフォルダ 1 つしか見ない。さらに Unity MCP の接続先選択は
-クライアント単位のグローバル状態なので、**借りていないのに Unity MCP を呼ぶと、
-自分とは別のスナップショットを検証して「通った」という結果が返る**。エラーにならないので気づけない。
+検証レーン（Editor が開いているフォルダ）は 1 つで、貸し出すたびに `checkout --detach` で
+**借り手の commit へ切り替わる**。つまり借りていない間、レーンは誰か別の worker のコードを指している。
+
+**借りていないのに `unity command` / `unity test` をレーンに向けて実行すると、
+自分とは別のスナップショットを検証して「通った」という結果が返る。**
+エラーにならないので気づけない。これがこの仕組みで防ぎたい事故そのもの。
 
 だから Editor は順番待ちで借りる。手順は以下。
 
@@ -51,8 +54,19 @@ node .claude/skills/unity-parallel/lane.mjs request --worktree <worktree名>
 
 ### 4. Editor 作業（ACTIVE のときだけ）
 
-MCP ツールの具体的な呼び出しは `.claude/skills/test-unity/references/unity-mcp-tools.md`
-（バインディング表）が正。操作名（「コンパイル確認」等）で表を参照し、コンテキストに無ければ Read する。
+Unity 操作は Unity CLI 経由。方針・失敗判定・コンパイル確認・コンソールエラー取得は
+`.claude/rules/unity-cli.md` が正。**コマンド名は推測せず `unity command --format json` で発見する。**
+
+時間のかかる Editor コマンドは投げっぱなしにできる。順番待ちを短くしたいときに使う:
+
+```bash
+unity command <name> --detach          # job ID が即返る
+unity job status <job-id> --format json
+unity job wait <job-id> --format json  # 完了まで待って結果を出す
+```
+
+**job を投げたまま返却しない。** レーンが次の借り手の commit へ切り替わった後に job が
+走ると、その結果は誰のものでもない。`unity job wait` で終わらせてから報告する。
 
 終わったらメインセッションへ「Editor 作業が終わった」と報告する。返却（drain / seal / return）は
 メインセッションが行う。**自分で返却コマンドを打たない。**
@@ -65,7 +79,7 @@ Unity がシリアライズするファイル（`.meta` `.unity` `.prefab` `.ass
 理由は、手編集が GUID / fileID を壊し、**しかも壊れたことがその場では分からない**から。
 Editor で開いて初めて参照が切れていることに気づく。
 
-これらが必要な変更は、Editor を借りている間に MCP 経由で行う:
+これらが必要な変更は、Editor を借りている間に Unity CLI 経由で行う:
 
 - Prefab の作成・変更、Inspector の配線
 - シーンへの配置
@@ -84,6 +98,14 @@ Editor を待つ間に進められるものは進める。順番待ちの回数�
 - `.cs` の実装・リファクタ
 - テストコードの追加（実行は Editor が要る）
 - `asmdef` の JSON としての妥当性、参照先の存在、循環の確認（`Read` / `Glob` で足りる）
+- `unity projects verify --format json`（`.meta` 欠落・GUID 重複・衝突マーカーの検査。Editor 不要・高速）
+
+`unity test` は Editor 常駐を要さないので原理的には自分の worktree で回せるが、**既定では回さない**:
+
+- worktree は `Library/` を共有しないため、初回はフルインポートになる（分〜十分単位）
+- バッチ Editor はライセンスシートを 1 つ掴む。worker が同時に走ると取り合いになる
+
+テストはレーンを借りている間に実行する。worktree で回したいときはメインセッションに相談する。
 
 **まとめて 1 回借りる**。コンパイルエラーを 1 件ずつ確認するために何度も並び直さない。
 

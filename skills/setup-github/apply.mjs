@@ -14,8 +14,9 @@
 //     - .claude/skills/create-issue/（templates/base/skills の同梱スナップショットをコピー）
 //     - .github/pull_request_template.md と .github/ISSUE_TEMPLATE/*.yml
 //       （templates/base/.github の seed。**既存があれば触らない** — リポジトリ所有の成果物のため）
-//     - .claude/settings.json へ hooksPath 自動設定(SessionStart) とテンプレ更新の検知(SessionStart)
-//       を登録する（配らなくなった hook は実体を消し、登録も解除する）
+//     - .claude/settings.json へ hooksPath 自動設定(SessionStart)、テンプレ更新の検知(SessionStart)、
+//       更新時に最初のプロンプトへ /sync-setup を差し込む hook(UserPromptSubmit) を登録する
+//       （配らなくなった hook は実体を消し、登録も解除する）
 //     - 実行者の clone へ core.hooksPath を即時設定 + pre-push へ exec bit 付与（mac/linux 対策）
 //
 //   --pr-copilot（任意）:
@@ -52,6 +53,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { consolidateSyncState } from "../sync-setup/state.mjs";
 /* global process, console */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -164,19 +166,20 @@ function readPluginVersion() {
   }
 }
 
-// 状態ファイル `.claude/setup-sync-state.json` へ自分のキー（skillKey）をマージ更新する。
+// 状態ファイル `.claude/sync-setup-state.json` へ自分のキー（skillKey）をマージ更新する。
 // setup-github / setup-unity が同じファイルに各自のキーで書くため、相手のキーや未知フィールドは
-// 消さない（読み → 該当キーだけ差し替え → 書き戻し）。SessionStart hook（setup-sync-check.mjs）が
-// このファイルの記録版と現行版を比較して、更新時に `/setup-sync`（sync-run.mjs）の実行を促す。
+// 消さない（読み → 該当キーだけ差し替え → 書き戻し）。両 hook（sync-setup-check.mjs /
+// sync-setup-prompt.mjs）がこのファイルの記録版と現行版を比較し、更新時に `/sync-setup`
+//（sync-run.mjs）へ繋ぐ。比較の実体は lib/sync-setup-drift.mjs。
 function writeSyncState(skillKey, version, flags) {
-  const p = join(claudeDir, "setup-sync-state.json");
+  const p = join(claudeDir, "sync-setup-state.json");
   let obj = {};
   if (existsSync(p)) {
     try {
       const parsed = JSON.parse(readFileSync(p, "utf8").replace(/^\uFEFF/, ""));
       if (parsed && typeof parsed === "object") obj = parsed;
     } catch {
-      warnings.push("setup-sync-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）");
+      warnings.push("sync-setup-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）");
     }
   }
   obj[skillKey] = { version, flags };
@@ -272,7 +275,21 @@ if (rxArg !== undefined) {
 }
 
 cpSync(join(templatesDir, "base", "hooks"), join(claudeDir, "hooks"), { recursive: true });
-copied.push(".claude/hooks/setup-sync-check.mjs", ".claude/hooks/lib/reviewable-files.mjs");
+copied.push(
+  ".claude/hooks/sync-setup-check.mjs",
+  ".claude/hooks/sync-setup-prompt.mjs",
+  ".claude/hooks/lib/sync-setup-drift.mjs",
+  ".claude/hooks/lib/reviewable-files.mjs"
+);
+
+// 名前を変えた hook の旧実体を削除する（settings.json からの登録解除は下の deregister が担当）。
+{
+  const p = join(claudeDir, "hooks", "setup-sync-check.mjs");
+  if (existsSync(p)) {
+    rmSync(p);
+    removed.push(".claude/hooks/setup-sync-check.mjs（sync-setup-check.mjs へ改名）");
+  }
+}
 
 // 同期結果の報告 hook は配らない（同期はメインセッションで走り、結果は会話にそのまま出る）。
 // 配備先に残っていれば削除する（settings.json からの登録解除は下の deregister が担当）。
@@ -588,15 +605,34 @@ if (settingsReadable) {
   }
 
   register("SessionStart", {
-    label: "setup-sync-check.mjs",
-    owns: (cmd) => cmd.includes("setup-sync-check.mjs"),
+    label: "sync-setup-check.mjs",
+    owns: (cmd) => cmd.includes("sync-setup-check.mjs"),
     entry: {
       hooks: [
         {
           type: "command",
-          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/setup-sync-check.mjs"',
+          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/sync-setup-check.mjs"',
           // 版番号の比較だけ。差があってもここでは知らせるだけで、同期そのものは
-          // /setup-sync（sync-run.mjs）が走らせる。セッション開始は待たされない。
+          // /sync-setup（sync-run.mjs）が走らせる。セッション開始は待たされない。
+          timeout: 10,
+        },
+      ],
+    },
+  });
+
+  // 実行のトリガーはこちら。SessionStart の時点ではモデルが呼ばれないため、テンプレ更新を
+  // 検知していても人が何か打つまで何も起きない。最初のプロンプトを updatedInput で包んで
+  // /sync-setup を先に走らせる（1 セッション 1 回。詳細は sync-setup-prompt.mjs の冒頭）。
+  register("UserPromptSubmit", {
+    label: "sync-setup-prompt.mjs",
+    owns: (cmd) => cmd.includes("sync-setup-prompt.mjs"),
+    entry: {
+      hooks: [
+        {
+          type: "command",
+          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/sync-setup-prompt.mjs"',
+          // UserPromptSubmit の既定 timeout は 30 秒（他 hook の 600 秒ではない）。
+          // ここはローカル JSON を数本読むだけなので 10 秒で足りる。
           timeout: 10,
         },
       ],
@@ -605,6 +641,11 @@ if (settingsReadable) {
 
   // 同期結果の報告 hook は配らない（同期はメインセッションで走り、報告は会話に出る）。
   // 既存配備先の settings.json から登録を外す。
+  deregister("SessionStart", {
+    label: "setup-sync-check.mjs（旧名）",
+    owns: (cmd) => cmd.includes("setup-sync-check.mjs"),
+  });
+
   deregister("UserPromptSubmit", {
     label: "setup-sync-report.mjs",
     owns: (cmd) => cmd.includes("setup-sync-report.mjs"),
@@ -634,9 +675,14 @@ if (settingsReadable) {
   }
 }
 
-// ---- 5b. 状態ファイル setup-sync-state.json の書き込み ----
-// 適用時のプラグイン版と有効フラグを記録する。SessionStart hook がこれと現行版を比較し、
-// 更新時に `/setup-sync`（sync-run.mjs）の実行を促す。フラグは「有効値」を明示保存する
+// 旧名の状態ファイルを正名へ畳んで消す。規則は skills/sync-setup/state.mjs が正本
+// （読み手側も同じ規則で旧名を解決する。片方だけ直すと配備先が黙って同期対象外になる）。
+const migratedState = consolidateSyncState(claudeDir);
+if (migratedState) console.log(`状態ファイル: ${migratedState}`);
+
+// ---- 5b. 状態ファイル sync-setup-state.json の書き込み ----
+// 適用時のプラグイン版と有効フラグを記録する。テンプレ更新検知の hook がこれと現行版を比較し、
+// 更新時に `/sync-setup`（sync-run.mjs）の実行を促す。フラグは「有効値」を明示保存する
 // （配備済み設定からの継承に依存せず、テンプレ同期の再適用が決定的に同じ構成を再現できるように）。
 const syncStates = [];
 const pluginVersion = readPluginVersion();
@@ -649,11 +695,11 @@ if (pluginVersion) {
   syncFlags.push(`--review-targets=${csv(effectiveTargets)}`);
   syncFlags.push(`--review-excludes=${csv(effectiveExcludes)}`);
   writeSyncState("setup-github", pluginVersion, syncFlags);
-  copied.push(".claude/setup-sync-state.json");
+  copied.push(".claude/sync-setup-state.json");
   syncStates.push(`setup-github v${pluginVersion}（flags: ${syncFlags.join(" ") || "なし"}）`);
 } else {
   warnings.push(
-    ".claude-plugin/plugin.json のバージョンを読めなかったため setup-sync-state.json を書きませんでした（テンプレ自動追随は無効のまま）"
+    ".claude-plugin/plugin.json のバージョンを読めなかったため sync-setup-state.json を書きませんでした（テンプレ自動追随は無効のまま）"
   );
 }
 
@@ -740,7 +786,7 @@ for (const s of hookStates) console.log(`  - ${s}`);
 console.log("git:");
 for (const s of gitStates) console.log(`  - ${s}`);
 if (syncStates.length) {
-  console.log("状態ファイル(setup-sync-state.json):");
+  console.log("状態ファイル(sync-setup-state.json):");
   for (const s of syncStates) console.log(`  - ${s}`);
 }
 if (agentsState) {

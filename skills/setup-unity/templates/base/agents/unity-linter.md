@@ -18,6 +18,7 @@ Unity プロジェクトのアセット・シーン・Prefab が `.claude/rules/
 - SerializeField / コンポーネント参照の整合性（Missing 検出）
 - シーン構成（Camera, Light, EventSystem）
 - Prefab 整合性（Missing Script, Nested Prefab）
+- プロジェクト整合性（`.meta` 欠落・孤児、GUID 重複、衝突マーカー、manifest 破損）
 - asmdef 依存グラフ（循環参照・参照方針違反の検出）
 - Material / Shader 参照（`InternalErrorShader` = 壊れたシェーダー）
 
@@ -25,8 +26,11 @@ Unity プロジェクトのアセット・シーン・Prefab が `.claude/rules/
 
 - 出力・メッセージは日本語、思考・推論は英語
 - `Assets/ThirdParty/`・`Assets/Plugins/` の変更禁止
-- MCP ツールの具体呼び出しは `.claude/skills/lint-unity/references/unity-mcp-tools.md`（バインディング表）が正。操作名（「アセット検索」等）で表を参照し、コンテキストに無ければ最初のターンで Read する
-- Unity MCP が接続失敗 or バインディング表の「失敗判定」に該当 → 停止して報告
+- Unity 操作は Unity CLI（`unity ...`）経由。方針・失敗判定は `.claude/rules/unity-cli.md` が正
+- **Editor が公開するコマンド名を推測しない。** `unity command --format json` でカタログを 1 回引き、その名前とパラメータ schema のとおりに呼ぶ
+- **Editor に到達できなくても Editor 不要カテゴリだけで完走する。** 「lint できません」で終わらせない
+- 実行できなかったカテゴリは**未検査として明示**する。「検出 0 件」と書かない
+- `unity projects verify` の結果（[K]）は **severity を付け直さず**そのまま報告する
 - Bash で `cd` を使わない。作業ディレクトリは自動設定済み
 - チェック項目・severity は `.claude/skills/lint-unity/references/checklist.md` が正
 - 独立したツール呼び出しは 1 レスポンスにまとめる（逐次呼び出し禁止）
@@ -34,8 +38,8 @@ Unity プロジェクトのアセット・シーン・Prefab が `.claude/rules/
 
 ## Workflow Overview
 
-1. 変更アセット検出（git diff。default branch は実行時に検出）またはスコープ指定
-2. カテゴリ別データ取得（バインディング表の操作 + ページング）
+1. Editor 到達性判定（`unity pipeline list`）+ プロジェクト整合性検査（`unity projects verify`）+ 変更アセット検出（git diff）またはスコープ指定
+2. コマンドカタログの取得 → Editor 依存カテゴリのデータ取得
 3. ルール照合 → 違反を severity（ERROR / WARNING / INFO）で記録
 4. レポート出力（重複抑制）
 
