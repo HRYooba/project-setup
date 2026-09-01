@@ -170,6 +170,9 @@ C# のコンパイルエラーがあると Editor は Safe Mode で起動し、`
 | テスト実行 | `unity test --format json`（詳細は `/test-unity`） |
 
 `unity projects verify` は**検出のみで修復しない**（meta / GUID の修復は Editor のアセット
-データベースが必要）。検出コードの一覧と扱いは `.claude/skills/lint-unity/references/checklist.md`
-の `[K]` が正本。**exit 0 を「問題なし」と読まない** — `summary.unverifiable` が 0 でないときは
+データベースが必要）。検出コードの一覧は `unity projects verify --help` の `--check` が正本。
+**exit 0 を「問題なし」と読まない** — `summary.unverifiable` が 0 でないときは
 見ていないサブツリーがある。
+
+PR ごとの実行は `.github/workflows/unity-ci.yml` の verify ジョブが `--strict` で行う。
+ローカルで撃つのは、テストや lint の結果が信用できる状態かを先に確かめたいときだけでよい。

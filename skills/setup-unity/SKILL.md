@@ -8,9 +8,10 @@ description: >
   asset-naming / coding-standards / testing）、skills（test-unity / lint-unity / unity-parallel）、
   agents（unity-tester / unity-linter / unity-worker）を撒く。Unity 操作は Unity CLI に固定で、
   Unity CLI 本体と com.unity.pipeline が未導入なら入れる。
-  レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無は、
-  実行時に AskUserQuestion で確認する。
-version: 2.2.0
+  レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無だけを
+  実行時に AskUserQuestion で確認する。コーディング規約を機械で止める Roslyn analyzer と、
+  PR ゲートの GitHub Actions は常時配布する。
+version: 2.3.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -25,6 +26,8 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 4. **unity-parallel** — git worktree で複数の `unity-worker` を並列に動かしつつ、1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す（skill + `lane.mjs`（貸し出し管理）+ `guard.mjs`（PreToolUse hook）+ `unity-worker` agent + `references/protocol.md`）。**この skill は自身の frontmatter で hook を登録する** — 呼び出したセッションでだけ有効になり、`settings.json` には触れない
 5. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
 6. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards / testing / テスト設計ガイドへの差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
+7. **Roslyn analyzer** — `coding-standards.md` の**型を見ないと判定できない規約**をコンパイル時に止める。`Assets/Analyzers/`（DLL + `.meta` + README）を**`.claude/` ではなく Unity プロジェクト本体へ**置く。既製の analyzer や `.editorconfig` の naming rules では書けない部分だけを担当する（`private _camelCase`・定数 `PascalCase`・`Async` サフィックスは既製ルールの領分なので持たない）。**設定ファイル（`.ruleset` / `.globalconfig`）は配らない** — 全規則 Warning 固定で、PR の gate は次の CI が担う
+8. **PR ゲートの GitHub Actions** — `.github/workflows/unity-ci.yml` と `.github/actions/setup-unity-cli/`。`unity projects verify --strict`（Editor 不要）と `unity test --mode EditMode`（GameCI の Editor イメージ上）を走らせ、コンパイルログに `warning UCS` があれば落とす。**Unity ライセンスの secret 登録が要る**（未登録なら test ジョブが赤くなる。verify ジョブは secret 不要で常に動く）
 
 ## 前提（満たされていないと skills が動かない）
 
@@ -70,7 +73,7 @@ cat <target>/ProjectSettings/ProjectVersion.txt   # Editor 版（6.0 LTS 以降�
 | アーキテクチャ規約 | レイヤードアーキテクチャ規約（architecture / class-catalog + レイヤー前提の各規約差し替え）を入れるか | 入れる / 入れない。導入済みリポジトリで「入れない」が選ばれた場合は、巻き戻しに `.claude/rules/architecture.md` / `class-catalog.md` の手動削除が必要な旨を伝えて意思を再確認する（apply.mjs は導入済みなら自動継承するため） |
 | Assets/App（無い場合のみ） | 規約は `Assets/App/` 前提。無いまま続行するか（新規プロジェクトならこれから作ればよい。既存の別ルート構成なら導入後に規約か構成のどちらかを合わせる必要がある） | 続行 / 中止 |
 
-- 回答 → フラグ変換: アーキテクチャ「入れる」= `--architecture`
+- 回答 → フラグ変換: アーキテクチャ「入れる」= `--architecture`。analyzer と CI は常時配布なのでフラグは無い
 
 ### Step 2: インストール実行
 
@@ -86,15 +89,22 @@ apply.mjs が次を行う:
   `skills/{test-unity,lint-unity}/references/unity-mcp-tools.md`）が配備先にあれば**取り除く**。
   残すと `rules/unity-cli.md` と手順が二重になり、常時コンテキストに並ぶため
   （プロジェクト固有の追記があった場合は配備先の git 履歴から復元できる）
-- `--mcp <値>` を渡されても**エラーにせず注意を出して無視**する
+- 廃止したフラグ（`--mcp <値>` / `--analyzer` / `--analyzer-severity=...`）を渡されても
+  **エラーにせず注意を出して無視**する
   （`sync-setup-state.json` に記録が残っている配備先があり、テンプレ同期がそのまま渡してくるため。次の適用で state から消える）
 - `--architecture` 時は `templates/architecture/` を上から上書きコピー
   （architecture / class-catalog の追加 + folder-structure / coding-standards / testing / test-designing-guide のレイヤー版差し替え。lint checklist は base に統合済みなので差し替えない）
 - **architecture 導入済みの検知**: `.claude/rules/architecture.md` が既にあれば、`--architecture` 指定なしでも architecture モードを自動継承する（レイヤー版規約が base 版に巻き戻るのを防止）
+- `templates/project/` を `{target}/`（**`.claude/` ではなくプロジェクト直下**）へ**常時**コピーする。
+  中身は `Assets/Analyzers/`（analyzer の DLL / `.meta` / README）と `.github/`（PR ゲートの
+  workflow と Unity CLI 導入の composite action）。Unity は `Assets/` 配下にあり `RoslynAnalyzer`
+  ラベルの付いた DLL だけを C# コンパイラへ渡すので、置き場所と `.meta` が動作条件そのものになる。
+  どれもビルド成果物・配布物なので上書きする（**設定ファイルは配らない**ので、配備先が育てる
+  ファイルがここに無い ＝ マージ判定が要らない）
 - `.claude/rules/*.md` と `.claude/CLAUDE.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。CLAUDE.md へ配る節（検証手順は `rules/testing.md` に従う、というポインタ）は `templates/claude-md.md`
 - `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時のプラグイン版と有効フラグ = `--architecture`）をマージ記録する（setup-github のキーは温存）。**このスキルは settings.json に触れず hook も配らない**（従来どおり）。ドリフト検知の hook（SessionStart の `sync-setup-check.mjs` と UserPromptSubmit の `sync-setup-prompt.mjs`）は setup-github が配り、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
 
-### Step 2.5: 要マージの Markdown を統合する
+### Step 2.5: 要マージのファイルを統合する
 
 apply.mjs の出力に「要マージ」節があれば、`${CLAUDE_PLUGIN_ROOT}/skills/md-merge-contract.md`
 を Read し、そこに書かれた手順と判断基準に従って各ファイルを統合する。**この工程を飛ばすと
@@ -160,9 +170,33 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   スナップショットなので、配備先ごとに CLI の版が違えば内容も違い、`rules/unity-cli.md` の
   「発見してから呼ぶ」方針とも役割が重ならないため
 - アーキテクチャ規約の後付けは、再実行してセットアップ質問で選び直せばよい
-- `rules/testing.md` の「テスト実行のスコープ」欄は空（全件実行）で配置される。プロジェクト外の
-  常時失敗テストを拾うプロジェクトでは、ここに `unity test --filter` へ渡す値を記録する
-  （**人が読む一覧ではなくコマンドへ渡る値**なので、記述と実行の乖離が起きない）
+- **analyzer について**は、次を伝える:
+  - 反映には **Unity Editor 側の再コンパイル**が要る（Editor を開いているならフォーカスを戻す）
+  - **効いていることを一度確かめる**。`Assets/App/` 配下に規約違反（例: `Base` の付かない
+    `abstract class`）を一時的に書き、Console に `UCS` 診断が出るのを見てから消す。
+    ラベルや配置が崩れていると **診断が 1 件も出ない**＝「違反ゼロ」と見分けが付かないため、
+    最初の 1 回だけは陽性を確認する価値がある
+  - **severity は Warning 固定で、Error には上げない**。Unity は C# のコンパイルエラーで Safe Mode に
+    入るため、命名違反 1 件で Editor が作業不能になる。PR を止めるのは CI の役目
+  - 正当な例外は `#pragma warning disable UCS0006` のように範囲を絞って抑制し、理由をコメントに書く。
+    詳細は配置される `Assets/Analyzers/README.md`
+- **CI について**は、次を伝える:
+  - **Unity ライセンスの secret 登録が要る**。登録するまで `unity-ci` の test ジョブは赤くなる
+    （verify ジョブは secret 不要で最初から動く）:
+
+    | ライセンス | 登録する secret |
+    |:--|:--|
+    | Personal | `UNITY_LICENSE`（`.ulf` ファイルの中身をそのまま貼る） |
+    | Plus / Pro | `UNITY_SERIAL` + `UNITY_CLIENT_ID` + `UNITY_CLIENT_SECRET`（Unity Cloud のサービスアカウントキー。アカウントのパスワードは使わない） |
+
+  - **gate も一度は陽性を確かめる**。規約違反を 1 つ含む PR を出して `unity-ci` が赤くなるのを見る。
+    analyzer と同じ理由で、通っている状態と見ていない状態は外から区別できない
+  - 両ジョブを **branch protection の必須チェック**に登録するのはリポジトリ側の設定
+    （このスキルは触らない）
+- 全件のテスト実行は CI（`unity-ci` の test ジョブ）が担う。`/test-unity` は差分に対応する
+  テストだけ回す。プロジェクト外の常時失敗テストを拾うプロジェクトでは、workflow の
+  `TEST_FILTER` に自分のテスト名前空間を書いて絞る（**人が読む一覧ではなくコマンドへ渡る値**なので、
+  記述と実行の乖離が起きない）
 - coding-standards / architecture / class-catalog の先頭にある `<!-- agents-md: include -->` は、
   setup-github（--pr-copilot）の AGENTS.md 自動生成が「Copilot code review に教える規約」として
   取り込むための目印。setup-github 未導入なら不活性なだけで無害（導入後の次のコミットで自動反映される）
@@ -172,7 +206,7 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
 - `skills/` `agents/` `references/` は**上書きコピー**される。導入先で手編集していた場合は上書きされる点を伝える。`rules/*.md` と `CLAUDE.md` だけは上書きせず「要マージ」にして Claude が統合する（Step 2.5）
 - `--architecture` から base へ「戻す」機能はない。導入済みなら再実行時に自動で architecture モードが継承される。
   base に戻す場合は `.claude/rules/architecture.md` / `class-catalog.md` を手動削除してから再実行する
-- 不明な `--` オプションはエラー終了する（typo で意図しないモードのまま成功しない）。例外は `--mcp <値>`（注意を出して無視。上記）
+- 不明な `--` オプションはエラー終了する（typo で意図しないモードのまま成功しない）。例外は廃止フラグ（`--mcp <値>` / `--analyzer` / `--analyzer-severity=...`。注意を出して無視。上記）
 - **Unity 操作のコマンド表を持たない。** Editor が公開するコマンドは Editor 側（`com.unity.pipeline` と
   プロジェクトの `[CliCommand]`）が定義するため、一覧を書くと必ず腐る。`rules/unity-cli.md` は
   「`unity command --format json` で発見する」という手順と、失敗判定・禁止事項・Safe Mode 復旧だけを持つ。
@@ -180,5 +214,13 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   正本は `unity <command> --help` である旨を併記する
 - このスキルは `.claude/settings.json` に触れない。テンプレート自動追随の状態ファイル `.claude/sync-setup-state.json` へは自分のキー（`setup-unity`）だけをマージ記録する（データファイルの更新であり hook 登録ではない）。同期チェック hook 本体（SessionStart / UserPromptSubmit）と settings.json 登録は setup-github が単独で担う（hook の二重管理を作らないため）
 - **hook 契約の範囲**: 「settings.json へ恒久登録する hook は配らない」が契約であって、「hook を一切配らない」ではない。`unity-parallel` は自身の SKILL.md frontmatter に PreToolUse hook を持つ。これは **その skill を呼び出したセッションでだけ登録され**、settings.json には現れない。並列作業をしていないセッションの挙動は変わらない
+- **`templates/project/` は `.claude/` の外へ出る配置物**（analyzer の DLL と PR ゲートの workflow）。
+  テンプレ同期の sparse-checkout が `Assets/Analyzers` と `.github` を展開している必要がある
+  （`skills/sync-setup/sync-run.mjs`）。配置先を変えるならそちらも合わせる —
+  片方だけ変えると同期 PR からその更新だけが静かに落ちる
+- **analyzer の配布物はコミット済みの DLL**（`templates/project/Assets/Analyzers/`）。
+  ソース（`analyzers/src/`）を変えたら **`npm run build:analyzer` を流してコミットする**。
+  流し忘れは `npm test` が `analyzers/dist.json` の sourceHash で検出する。
+  規則そのものの正しさは `npm run test:analyzer`（CI の analyzer ジョブ）が見る
 - **テンプレート保守（スキル開発者向け）**: `templates/architecture/` の各ファイル（folder-structure / coding-standards / testing / test-designing-guide）は `templates/base/` の同名ファイルのレイヤー特化版で、architecture モード時に上書き差し替えされる。base 側の規約を変えたら architecture 側にも反映すること（テスト設計ガイドの「テスト責任」「禁止する低品質テスト」一覧やアセットのプレフィックスは、`rules/testing.md` / `rules/asset-naming.md` を単一ソースとして参照させ、重複記載を避ける）
 - CLAUDE.md へ配る節は `templates/claude-md.md` にある（apply.mjs のコード内定数ではない）。文面を変えるとその節の行が配備先と一致しなくなり、次の適用で「要マージ」として検出される。文面の移行リストを保守する必要はない

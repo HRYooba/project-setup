@@ -5,7 +5,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 | skill | 内容 |
 |:------|:-----|
 | `setup-github` | GitHub 開発フロー一式を導入する。ブランチ保護（pre-push。既定 ON・質問で外せる）、PR 前レビュー運用（`/code-review` + `/security-review` のソフト指示）、git 運用規約（Git Flow / Conventional Commits）、create-issue skill。任意で Copilot PR 自動レビュー（自動アサイン / watch-pr / resolve-pr）と AGENTS.md 自動生成 |
-| `setup-unity` | Unity 開発規約一式を導入する。rules（Unity 操作 / フォルダ構成 / Hierarchy / アセット命名 / コーディング規約 / テスト）、skills（test-unity / lint-unity / unity-parallel）、agents（unity-tester / unity-linter / unity-worker）。Unity 操作は **Unity CLI** 固定。任意でレイヤードアーキテクチャ規約 |
+| `setup-unity` | Unity 開発規約一式を導入する。rules（Unity 操作 / フォルダ構成 / Hierarchy / アセット命名 / コーディング規約 / テスト）、skills（test-unity / lint-unity / unity-parallel）、agents（unity-tester / unity-linter / unity-worker）。Unity 操作は **Unity CLI** 固定。コーディング規約を機械で止める Roslyn analyzer と PR ゲートの GitHub Actions も配る。任意でレイヤードアーキテクチャ規約 |
 | `sync-setup` | プラグインのテンプレート更新に、展開済みリポジトリを追随させる。保存フラグで apply.mjs を再適用し、同期 PR を作成する（merge はしない）。UserPromptSubmit hook が最初のプロンプトへ差し込む、または手動で `/sync-setup` を実行する |
 
 どちらも**冪等**（再実行安全）で、導入オプションは実行時に対話で確認する。配置物は対象リポジトリの `.claude/` などにコミットされるため、plugin を持たないチームメイトにもそのまま効く。
@@ -95,8 +95,15 @@ skills/
     ├─ apply.mjs
     └─ templates/
         ├─ claude-md.md … CLAUDE.md へ配る節
-        ├─ base/        … 常時導入分（rules / skills / agents）
+        ├─ base/        … 常時導入分（rules / skills / agents）→ .claude/
+        ├─ project/     … 常時導入分。**.claude/ の外**へ配る
+        │                  （Assets/Analyzers/ の Roslyn analyzer と .github/ の PR ゲート）
         └─ architecture/ … レイヤードアーキテクチャ規約導入時のみ
+
+analyzers/                … 配布 analyzer の C# ソースとテスト
+├─ build.mjs              … dotnet build → DLL を templates/project/ へ焼き込み
+├─ source-hash.mjs        … 焼き込み忘れ検知のハッシュ（build と test の単一ソース）
+└─ dist.json              … 配布 DLL の生成元記録
 ```
 
 テンプレートは plugin に同梱されたスナップショットであり、この plugin 単体で完結する（外部ファイルを参照しない）。
@@ -109,4 +116,7 @@ apply.mjs の冪等性・Markdown の要マージ判定（配る / 触らない 
 node --test "tests/*.test.mjs"
 ```
 
-CI（`.github/workflows/test.yml`）が PR ごとに同じテストを実行する。
+配布する Roslyn analyzer の規則そのものは `npm run test:analyzer`（dotnet test）が検証する。
+Node 側のテストは「ソースを変えて `npm run build:analyzer` を流し忘れていないか」しか見ない。
+
+CI（`.github/workflows/test.yml`）が PR ごとに両方を実行する。

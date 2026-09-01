@@ -1,0 +1,155 @@
+# Unity プロジェクトの PR ゲート（setup-unity が配布）。
+#
+# 2 段構え:
+#   verify — Editor を起動せずプロジェクトの整合性を見る。数十秒で返るので早期に赤が出る
+#   test   — Editor を起動して EditMode テストを走らせ、ついでにコーディング規約違反を拾う
+#
+# 規約違反（UCS 診断）は analyzer が warning として出す。Error にすると Unity が Safe Mode へ
+# 落ちて Editor が作業不能になるため、severity は Warning のまま据え置き、**ここで落とす**。
+# eslint の --max-warnings 0 と同じ考え方で、severity と gate を別レイヤーに分けている。
+#
+# 必要な secret（未設定だと test ジョブが赤くなる。verify は secret 不要で常に動く）:
+#   UNITY_LICENSE  — Personal ライセンスの .ulf ファイルの中身をそのまま貼る
+#   UNITY_SERIAL / UNITY_CLIENT_ID / UNITY_CLIENT_SECRET — Plus / Pro の場合はこちら 3 本
+#     （Unity Cloud のサービスアカウントキー。アカウントのパスワードは要らない）
+name: unity-ci
+
+# paths / paths-ignore で絞らない。branch protection の必須チェックにしたとき、
+# パスフィルタで skip された実行は「未完了」として扱われ、PR が永久にマージできなくなる。
+# docs だけの PR でも Editor が起動する分は払う。
+on:
+  pull_request:
+  push:
+    branches: [main, master, develop]
+
+# 同じブランチへ続けて push したとき、古い実行を捨てる。Editor の起動は高価なので、
+# 追い越された実行に Actions 分数を払わない。
+concurrency:
+  group: unity-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Editor 版を ProjectSettings/ProjectVersion.txt から取り出して後続へ渡す。
+  # ワークフローに版を直書きすると、Editor を上げたときに黙ってズレる。
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      editor-version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: |
+          version=$(sed -n 's/^m_EditorVersion: //p' ProjectSettings/ProjectVersion.txt | tr -d '[:space:]')
+          if [ -z "$version" ]; then
+            echo "::error::ProjectSettings/ProjectVersion.txt から m_EditorVersion を読めませんでした"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Editor: $version"
+
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: ./.github/actions/setup-unity-cli
+      # --strict で warning も落とす。META_MISSING / GUID_DUPLICATE / CONFLICT_MARKERS は
+      # どれもマージ事故の残骸で、放置するとビルドが壊れる。
+      - run: unity projects verify --strict --format github --non-interactive
+
+  test:
+    needs: [resolve]
+    runs-on: ubuntu-latest
+    # GameCI の Editor 入りイメージ。headless の Unity に要るシステムライブラリが揃っている。
+    # 末尾の数字は GameCI 側のイメージ改訂番号で、Editor 版からは導出できない（手で上げる）。
+    # 取り違えても image pull が失敗して赤くなるだけで、静かに間違った版で走ることはない。
+    container:
+      image: unityci/editor:${{ needs.resolve.outputs.editor-version }}-base-3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: ./.github/actions/setup-unity-cli
+
+      # Library をキャッシュする。初回インポートは数十分かかるので、これが無いと毎回それを払う。
+      # キーに Packages/ProjectSettings を含めるのは、パッケージ構成が変わると Library が
+      # 作り直しになるため。restore-keys で近いものから温める。
+      - uses: actions/cache@v4
+        with:
+          path: Library
+          key: "Library-${{ hashFiles('Packages/packages-lock.json', 'ProjectSettings/**') }}"
+          restore-keys: |
+            Library-
+
+      - name: ライセンス認証
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+          UNITY_CLIENT_ID: ${{ secrets.UNITY_CLIENT_ID }}
+          UNITY_CLIENT_SECRET: ${{ secrets.UNITY_CLIENT_SECRET }}
+        run: |
+          if [ -n "$UNITY_SERIAL" ]; then
+            # Plus / Pro。サービスアカウントでサインインしてからシリアルを認証する。
+            # --secret-from-stdin で secret を argv に載せない。
+            printf '%s' "$UNITY_CLIENT_SECRET" |
+              unity auth login --client-id "$UNITY_CLIENT_ID" --secret-from-stdin --non-interactive
+            unity license activate --serial "$UNITY_SERIAL" --non-interactive
+          elif [ -n "$UNITY_LICENSE" ]; then
+            # Personal。.ulf をそのまま食わせる。seat の概念が無いので返却も要らない。
+            printf '%s' "$UNITY_LICENSE" > "$RUNNER_TEMP/Unity_lic.ulf"
+            unity license activate --file "$RUNNER_TEMP/Unity_lic.ulf" --non-interactive
+          else
+            echo "::error::Unity ライセンスの secret が未設定です。Personal なら UNITY_LICENSE（.ulf の中身）、Plus/Pro なら UNITY_SERIAL + UNITY_CLIENT_ID + UNITY_CLIENT_SECRET をリポジトリの secrets に登録してください"
+            exit 1
+          fi
+
+      # ログを丸ごと残すのは、次のステップが規約違反（UCS）をここから拾うため。
+      # pipefail が無いと tee の終了コードで上書きされ、テストの失敗が緑になる。
+      - name: EditMode テスト
+        env:
+          # 全件実行が既定。外部パッケージ由来の常時失敗テストを抱えるプロジェクトだけ、
+          # ここに値を入れて自分のテスト名前空間へ絞る（--filter は選択であって除外ではない）。
+          # ローカルの /test-unity は差分から対象を導出するので、この値は CI 専用。
+          TEST_FILTER: ""
+        run: |
+          set -o pipefail
+          unity test --mode EditMode \
+            --editor-path "$UNITY_PATH/Editor/Unity" \
+            ${TEST_FILTER:+--filter "$TEST_FILTER"} \
+            --report-format both --junit-output test-results.junit.xml \
+            --non-interactive 2>&1 | tee unity-test.log
+
+      # テストが落ちても規約違反は見たいので always()。
+      - name: コーディング規約違反（UCS）を検出したら落とす
+        if: always()
+        run: |
+          # テストへ到達せず落ちた場合はログが無い。その失敗は前のステップが既に赤くしている。
+          [ -f unity-test.log ] || exit 0
+          if grep -nE "warning UCS[0-9]{4}" unity-test.log; then
+            echo "::error::コーディング規約違反が残っています（上の行）。.claude/rules/coding-standards.md を参照して直してください"
+            exit 1
+          fi
+
+      - name: テスト結果を残す
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-test-results
+          path: |
+            test-results.xml
+            test-results.junit.xml
+            unity-test.log
+          if-no-files-found: warn
+
+      # seat が有限なシリアル認証だけ返す。ジョブが落ちても返すので always()。
+      # Personal（.ulf）は返却の概念が無いので何もしない。
+      - name: ライセンス返却
+        if: always()
+        env:
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        run: |
+          if [ -n "$UNITY_SERIAL" ]; then
+            unity license return --non-interactive || echo "::warning::ライセンスの返却に失敗しました（seat を消費したままの可能性があります）"
+          fi

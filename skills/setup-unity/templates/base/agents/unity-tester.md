@@ -56,5 +56,5 @@ Unity EditMode のテスト責任完了に特化したスペシャリスト。
 4. **ゲート通過ケースが 0 件なら 5〜6 を飛ばして 7 へ**（テストを書かずに実行のみ）
 5. **実装**（writing-guide に従い、ゲートを通ったテストだけ追加・更新）
 6. コンパイル確認（`rules/unity-cli.md` の手順、エラー時は最大 3 回修正）→ **重複整理**（designing-guide §7）→ 再コンパイル確認
-7. テスト実行（`unity test --mode EditMode --filter <スコープ> --format json`。スコープは `rules/testing.md`「テスト実行のスコープ」）。red なら `--rerun-failed` で再現性を確認し、再現しなければ `--retries` で flaky を判定する
+7. テスト実行（`unity test --mode EditMode --filter <差分のテスト名前空間> --format json`。**全件実行はしない** — それは PR の `unity-ci` が行う）。red なら `--rerun-failed` で再現性を確認し、再現しなければ `--retries` で flaky を判定する
 8. 結果レポート（`rules/testing.md`「完了報告」に従う。PR があれば `gh pr comment`）

@@ -2,6 +2,9 @@
 //
 // 対象 Unity プロジェクトの .claude/ に開発規約一式（rules / skills / agents）を撒く。
 // --architecture 指定時はレイヤードアーキテクチャ規約のオーバーレイを上書き配置する。
+// templates/project/ は .claude/ ではなく Unity プロジェクト本体へ配る（常時）:
+// Roslyn analyzer（Assets/Analyzers/。Unity は Assets 配下の RoslynAnalyzer ラベル付き DLL だけを
+// csc へ渡すので置き場所が動作条件そのもの）と、PR ゲートの GitHub Actions（.github/）。
 // Unity 操作の手段は Unity CLI に固定。配備先に OBSOLETE_PATHS のファイルがあれば取り除く。
 // 冪等（再実行安全）。
 //
@@ -50,14 +53,22 @@ const OBSOLETE_PATHS = [
 const rawArgs = process.argv.slice(2);
 const KNOWN_FLAGS = new Set(["--architecture"]);
 const args = [];
-// --mcp は受け取らないフラグ。配備先の sync-setup-state.json に記録が残っていることがあり、
-// テンプレ同期はそれをそのまま渡してくる。ここでエラー終了すると同期が永久に失敗するため、
-// 値ごと捨てて続行する（次の適用で state から消える）。「不明なオプションはエラー」の唯一の例外。
-let droppedMcpArg = null;
+// 廃止したフラグ。配備先の sync-setup-state.json に記録が残っていることがあり、テンプレ同期は
+// それをそのまま渡してくる。ここでエラー終了すると同期が永久に失敗するため、注意を出して捨てて
+// 続行する（次の適用で state から消える）。「不明なオプションはエラー」の唯一の例外。
+//   --mcp <値>           Unity 操作は Unity CLI に固定した
+//   --analyzer           analyzer は常時配置になった（coding-standards.md が常時配られる以上、
+//                        その機械実装だけ任意にする理由が無い）
+//   --analyzer-severity  severity は Warning 固定になった（Error にすると Unity が Safe Mode へ
+//                        落ちる。PR の gate は CI が担う）
+const droppedFlags = [];
 for (let i = 0; i < rawArgs.length; i++) {
   const a = rawArgs[i];
   if (a === "--mcp") {
-    droppedMcpArg = rawArgs[i + 1] && !rawArgs[i + 1].startsWith("--") ? rawArgs[++i] : "(値なし)";
+    const value = rawArgs[i + 1] && !rawArgs[i + 1].startsWith("--") ? rawArgs[++i] : "(値なし)";
+    droppedFlags.push(`--mcp ${value}`);
+  } else if (a === "--analyzer" || a.split("=")[0] === "--analyzer-severity") {
+    droppedFlags.push(a);
   } else {
     args.push(a);
   }
@@ -81,6 +92,9 @@ if (!useArchitecture && existsSync(join(claudeDir, "rules", "architecture.md")))
   architectureInherited = true;
 }
 
+// .claude/ の外へ配るもの（analyzer の DLL と PR ゲートの workflow）。常時配置。
+const projectTemplate = join(here, "templates", "project");
+
 const layers = ["base"];
 if (useArchitecture) layers.push("architecture");
 
@@ -89,6 +103,14 @@ for (const layer of layers) {
     console.error(`テンプレートが見つかりません: ${join(here, "templates", layer)}`);
     process.exit(1);
   }
+}
+
+if (!existsSync(join(projectTemplate, "Assets", "Analyzers", "UnityCodingStandards.Analyzers.dll"))) {
+  console.error(
+    `analyzer の配布物が見つかりません: ${projectTemplate}\n` +
+      "（開発リポジトリでは `node analyzers/build.mjs` を先に実行する）"
+  );
+  process.exit(1);
 }
 
 if (!existsSync(join(target, "ProjectSettings", "ProjectVersion.txt"))) {
@@ -182,6 +204,18 @@ if (!existsSync(claudeMdPath)) {
   claudeMdState = "要マージ";
 }
 
+// ---- Unity プロジェクト本体へ配るもの（.claude/ の外）----
+// Roslyn analyzer は Assets 配下にあり RoslynAnalyzer ラベルの付いた DLL だけが csc へ渡るため、
+// 置き場所と .meta が動作条件そのものになる。PR ゲートの workflow は .github/ へ。
+// どちらもビルド成果物・配布物なので無条件に上書きする（設定ファイルは配らないので、
+// 配備先が育てる余地のあるファイルはここに無い ＝ マージ判定が要らない）。
+const projectStates = [];
+cpSync(projectTemplate, target, { recursive: true });
+for (const f of walk(projectTemplate)) {
+  projectStates.push(`${relative(projectTemplate, f).split(sep).join("/")}: 配置`);
+}
+projectStates.sort();
+
 // 旧名の状態ファイルを正名へ畳んで消す。規則は skills/sync-setup/state.mjs が正本
 // （読み手側も同じ規則で旧名を解決する。片方だけ直すと配備先が黙って同期対象外になる）。
 const migratedState = consolidateSyncState(claudeDir);
@@ -242,9 +276,11 @@ if (architectureInherited) {
   console.log("注意: 導入済みの architecture 規約を検出したため、--architecture 指定なしでも architecture モードで適用しました（巻き戻り防止）。");
 }
 console.log("Unity 操作: Unity CLI（rules/unity-cli.md）");
-if (droppedMcpArg) {
+if (droppedFlags.length) {
+  console.log(`注意: 廃止したオプションを無視しました: ${droppedFlags.join(" / ")}`);
   console.log(
-    `注意: --mcp ${droppedMcpArg} は無視しました（このスキルは受け取らないフラグです）。Unity 操作は Unity CLI に固定です。`
+    "  Unity 操作は Unity CLI に固定、analyzer は常時配置・severity は Warning 固定です" +
+      "（PR の gate は .github/workflows/unity-ci.yml が担います）。"
   );
 }
 if (removedLegacy.length) {
@@ -259,6 +295,8 @@ console.log("配置ファイル:");
 for (const [f, layer] of [...copied.entries()].sort()) {
   console.log(`  - .claude/${f}${layer === "base" ? "" : `  (${layer})`}`);
 }
+console.log("Unity プロジェクト本体（.claude/ の外）:");
+for (const state of projectStates) console.log(`  - ${state}`);
 console.log("Markdown（rules / CLAUDE.md）:");
 for (const s of mdStates) console.log(`  - .claude/${s}`);
 console.log(`  - .claude/CLAUDE.md: ${claudeMdState}`);

@@ -5,7 +5,7 @@ description: >
   「命名規則チェック」「/lint-unity」と依頼した場合に使用される。
   Unityアセット・シーン・Prefabのルール準拠チェック（lint）を実行する。
   シーン名、Prefabパス、`--scene`、`--prefabs`、`--assets` をサポート。
-version: 2.1.0
+version: 2.2.0
 context: fork
 agent: unity-linter
 ---
@@ -22,8 +22,7 @@ Unity 操作の方針・失敗判定・コマンドの発見手順は `.claude/r
 
 `references/checklist.md` の各カテゴリには **Editor 依存** の区分がある。
 
-- **Editor 不要**（[K] / [E] / [H] / ファイル名で判定できる [A] の一部）は `unity projects verify` と
-  `Glob` / `Read` だけで完結する
+- **Editor 不要**（[E] / [H] / ファイル名で判定できる [A] の一部）は `Glob` / `Read` だけで完結する
 - **Editor 必須**（[B] [C] [D] [F] [G] [I] [J]）は live Editor が要る
 
 **Editor に到達できないときは、Editor 不要のカテゴリだけ実行して完走する。**
@@ -37,12 +36,12 @@ Unity 操作の方針・失敗判定・コマンドの発見手順は `.claude/r
 | `--scene <名前>` | B, C, D, G, I, J |
 | `--prefabs` | A, C, F, G, J |
 | `--assets <パス>` | A, E, J |
-| `--all` | A〜K 全て |
+| `--all` | A〜J 全て |
 | `.prefab` ファイルパス | A, C, F, G, J |
-| 引数なし | 未コミット変更から自動検出（+ K は常に実行） |
+| 引数なし | 未コミット変更から自動検出 |
 
-**[K] は上表のどのパターンでも常に実行する**（表の「実行カテゴリ」列は K を除いた指定分）。
-プロジェクト全体の整合性検査で、スコープ指定と独立に成立する（しかも Editor も引数も要らない）。
+プロジェクト整合性（`unity projects verify`）はこの skill では見ない。
+`.github/workflows/unity-ci.yml` の verify ジョブが担う（同じ検査を 2 箇所で走らせない）。
 
 **除外:** `Assets/ThirdParty/`（E1のみ例外）、`Assets/Plugins/`、`Library/`、`Packages/`
 
@@ -50,14 +49,14 @@ Unity 操作の方針・失敗判定・コマンドの発見手順は `.claude/r
 
 | Turn | ステップ | 並列呼び出し内容 |
 |:-----|:---------|:----------------|
-| 1 | Step 1 | 到達性判定 + `unity projects verify` + git diff x3（並列） |
+| 1 | Step 1 | 到達性判定 + git diff x3（並列） |
 | 2 | Step 2 グループ1 | Editor 依存カテゴリの初回データ取得（並列） |
 | 3 | Step 2 グループ2 | グループ1依存の追加データ取得（並列） |
 | 4 | Step 3 | レポート出力 |
 
 ---
 
-### Step 1: 準備と Editor 不要チェック [Turn 1]
+### Step 1: 準備と対象決定 [Turn 1]
 
 引数をパースし、スコープと実行カテゴリを決定する。
 
@@ -67,7 +66,6 @@ default branch は `git symbolic-ref --short refs/remotes/origin/HEAD` で検出
 以下を並列で呼び出す:
 ```
 Bash: unity pipeline list --format json
-Bash: unity projects verify --format json
 Bash: git symbolic-ref --short refs/remotes/origin/HEAD && git diff --name-only origin/<default>...HEAD -- '*.unity' '*.prefab' '*.asset' '*.mat' '*.anim' '*.controller' '*.shadergraph' '*.shader' '*.hlsl' '*.vfx' '*.renderTexture' '*.playable' '*.asmdef' '*.png' '*.jpg' '*.tga' '*.exr' '*.wav' '*.mp3' '*.ogg'
 Bash: git diff --name-only HEAD -- (同上)
 Bash: git ls-files --others --exclude-standard -- (同上)
@@ -78,10 +76,6 @@ Bash: git ls-files --others --exclude-standard -- (同上)
   `data.instances[].pipelineServer.isReachable` を見る。到達不可なら Editor 依存カテゴリを未検査に落とす。
   Safe Mode（`data.summary.instancesInSafeMode > 0`）なら、**lint より先にコンパイルエラーの解消が要る**旨を
   レポート冒頭に書く（`rules/unity-cli.md`「Safe Mode」）
-- `unity projects verify` の `data.findings[]` を **[K] の検出結果としてそのまま使う**。
-  code / severity / path / hint がそのまま入っているので、独自に severity を付け直さない
-  （verify が warning としたものを ERROR に昇格させない。判定の出所が二重になる）
-- verify が exit 6 → findings に error 級がある。exit 0 で warning のみのこともある。どちらも報告する
 
 git 3 件を合算・重複除去。引数なし時は拡張子でカテゴリ自動選択:
 
@@ -95,7 +89,7 @@ git 3 件を合算・重複除去。引数なし時は拡張子でカテゴリ�
 | `.wav`/`.mp3`/`.ogg` | A, E |
 | `.asmdef` | H |
 
-変更アセットが無くても **[K] の結果があれば報告する**（「対象なし」で黙らない）。
+変更アセットが無ければ「対象なし」と報告して終わる。
 
 ### Step 2: Editor 依存チェック [Turn 2-3]
 
@@ -143,8 +137,7 @@ Bash: unity command --format json
 
 ### Step 3: レポート出力 [Turn 4]
 
-**重複抑制:** 同一問題は具体的なカテゴリ側のみ報告。特に **[K] と [C] / [H] は重なる**
-（欠落 `.meta` は参照破損として現れる）。[K] が拾ったものは [K] 側にだけ書く。
+**重複抑制:** 同一問題は具体的なカテゴリ側のみ報告する。
 
 ```markdown
 ## Unity Lint レポート
@@ -152,7 +145,7 @@ Bash: unity command --format json
 ### 概要
 - **対象範囲**: {対象}
 - **Editor 到達性**: {到達 / 未到達（理由）/ Safe Mode}
-- **検出件数**: N（ERROR: X, WARNING: Y, INFO: Z）— [K] は verify の error を ERROR、warning を WARNING として数える（付け直しはしない）
+- **検出件数**: N（ERROR: X, WARNING: Y, INFO: Z）
 - **未検査カテゴリ**: {ID 一覧と理由（Editor 未到達 / コマンド未発見）。無ければ「なし」}
 
 ### 検出結果

@@ -9,7 +9,7 @@ description: >
   create-issue skill を撒く。ブランチ保護の有無と、PR 自動レビュー3機能（Copilot 自動アサイン /
   watch-pr / resolve-pr）と AGENTS.md 自動生成（Copilot code review にプロジェクト規約を教える）の
   導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.22.0
+version: 1.23.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -32,8 +32,8 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ## pr-copilot モード（質問で「PR 自動レビューを入れる」を選んだ場合）
 
 8. **Copilot 自動アサイン** — `gh pr create` 直後、コード変更を含む PR に Copilot レビュアーを自動で付ける（PostToolUse hook）。watch-pr の起動指示はこの hook の additionalContext が唯一のトリガー（CLAUDE.md には書かない。無条件の起動指示は hook の「コード変更を含む PR のみ」ガードを迂回し、レビューが来ない PR への空監視を生むため）。Copilot 依頼に失敗した PR には watch-pr を起動させない
-9. **watch-pr** — PR レビューをポーリング監視し、指摘を検出したら resolve-pr を自動起動（skill）。監視前に Copilot のレビューが既に届いていないかだけ確認し、届いていれば Monitor を挟まず resolve-pr へ直行する。依頼が成立しているかの判定は hook に寄せ、skill 側では行わない（同じ事実を 2 箇所で判定すると skill が hook の事実を上書きして誤報告する）。1 PR につき 1 回のみ
-10. **resolve-pr** — レビューコメントの取得・修正・commit/push・リプライ・スレッド Resolve を一括実行（skill + `review-responder` agent）
+9. **watch-pr** — PR のレビューと CI チェックをポーリング監視し、**両方が出揃ってから** resolve-pr を自動起動（skill）。監視前に現在値を 1 回だけ確認し、既に出揃っていれば Monitor を挟まず直行する。Copilot 依頼が成立しているかの判定は hook に寄せ、skill 側では行わない（同じ事実を 2 箇所で判定すると skill が hook の事実を上書きして誤報告する）。1 PR につき 1 回のみ
+10. **resolve-pr** — レビューコメントと**失敗した CI チェック**の取得・修正・commit/push・リプライ・スレッド Resolve を一括実行（skill + `review-responder` agent）。1 巡で終え、push 後に回り直す CI は待たない
 11. **AGENTS.md 自動生成** — `.claude/rules/*.md` のうち先頭 5 行以内に「agents-md: include」マーカー（HTML コメント）を持つファイルを、固定文（言語: 日本語（対話・出力）、英語（思考・推論）／コードレビューの対象はスクリプトのみ）とともに連結し、ルートの `AGENTS.md` を生成する。Copilot code review はルートの AGENTS.md を自動で読むため、これが Copilot にプロジェクト規約を教える経路になる。同期は `.githooks/pre-commit` がコミットごとに再生成 → 差分があれば stage（rules 更新と AGENTS.md の乖離が構造的に起きない）。手書きの AGENTS.md（生成ヘッダー無し）は上書きせず警告。マーカー付き rules が無い場合は固定文だけの AGENTS.md になる（setup-unity 等が後からマーカー付き rules を撒けば、次のコミットで自動的に取り込まれる）
 12. **AGENTS.md 乖離の CI ガード** — `.github/workflows/agents-md-sync.yml`。PR と保護ブランチへの push の両方で AGENTS.md を再生成して差分が出ないか検証する（`git add -N` で未追跡の生成物も検出）。ローカルの pre-commit は `--no-verify` / GitHub Web UI 編集 / hooksPath 未設定の clone / node 不在（fail-open）で素通りするため、その経路のドリフト（PR を経ない保護ブランチ直 push も含む）を検出する最後の砦
 

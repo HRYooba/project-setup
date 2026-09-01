@@ -37,7 +37,7 @@
 
 | 対象 | 規則 |
 |:-----|:-----|
-| Observable | 末尾に `Observable` を付与 |
+| Observable | 末尾に `Observable` を付与。event を表すものは `On` + 名詞 + `Observable`（例: `OnClickObservable`） |
 | Subject | 末尾に `Subject` を付与。privateのみ使用可能。 |
 | ReactiveProperty | `_` + `camelCase` 。privateのみ使用可能。 |
 | IReadOnlyReactiveProperty | `PascalCase` |

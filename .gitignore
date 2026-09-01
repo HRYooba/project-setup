@@ -1,1 +1,5 @@
 node_modules/
+
+# .NET のビルド中間物（配布物は analyzers/build.mjs が templates/ へ置く）
+analyzers/**/bin/
+analyzers/**/obj/
