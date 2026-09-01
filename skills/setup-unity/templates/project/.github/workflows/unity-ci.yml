@@ -73,9 +73,22 @@ jobs:
 
       - uses: ./.github/actions/setup-unity-cli
 
+      # イメージ内の Editor の所在を先に確定させる。パスが違えば診断を出してここで落とす
+      # （--editor-path を外すと CLI が Hub のレジストリを見に行き、CI では別の失敗に化ける）。
+      - name: Editor の所在を確認
+        run: |
+          editor="${UNITY_PATH:-/opt/unity}/Editor/Unity"
+          if [ ! -x "$editor" ]; then
+            echo "::error::Unity Editor が $editor にありません（UNITY_PATH=${UNITY_PATH:-未設定}）"
+            ls -la /opt 2>/dev/null || true
+            exit 1
+          fi
+          echo "UNITY_EDITOR=$editor" >> "$GITHUB_ENV"
+
       # Library をキャッシュする。初回インポートは数十分かかるので、これが無いと毎回それを払う。
       # キーに Packages/ProjectSettings を含めるのは、パッケージ構成が変わると Library が
       # 作り直しになるため。restore-keys で近いものから温める。
+      # 高いのはアセットのインポートで、スクリプトのコンパイルは安い。後者は次のステップで捨てる。
       - uses: actions/cache@v4
         with:
           path: Library
@@ -105,29 +118,50 @@ jobs:
             exit 1
           fi
 
-      # ログを丸ごと残すのは、次のステップが規約違反（UCS）をここから拾うため。
-      # pipefail が無いと tee の終了コードで上書きされ、テストの失敗が緑になる。
+      # **スクリプトのコンパイル成果物だけ捨てる。**
+      # 温まった Library のまま走らせると Unity は再コンパイルせず、analyzer の警告が
+      # 1 行も出ない（実測済み: 2 回目の実行で UCS が 0 件になる）。次のステップの gate は
+      # コンパイルログを見るので、これを消さないと**違反があっても静かに緑になる**。
+      # Library/Artifacts（アセットのインポート結果）は残るのでキャッシュの効果は保たれる。
+      - name: スクリプトの再コンパイルを強制する
+        run: rm -rf Library/ScriptAssemblies Library/Bee
+
       - name: EditMode テスト
+        id: test
         env:
           # 全件実行が既定。外部パッケージ由来の常時失敗テストを抱えるプロジェクトだけ、
           # ここに値を入れて自分のテスト名前空間へ絞る（--filter は選択であって除外ではない）。
           # ローカルの /test-unity は差分から対象を導出するので、この値は CI 専用。
           TEST_FILTER: ""
         run: |
-          set -o pipefail
           unity test --mode EditMode \
-            --editor-path "$UNITY_PATH/Editor/Unity" \
+            --editor-path "$UNITY_EDITOR" \
             ${TEST_FILTER:+--filter "$TEST_FILTER"} \
             --report-format both --junit-output test-results.junit.xml \
-            --non-interactive 2>&1 | tee unity-test.log
+            --non-interactive
 
-      # テストが落ちても規約違反は見たいので always()。
+      # テストが落ちても規約違反は見たいので always()。テスト自体が走らなかったときだけ飛ばす。
+      #
+      # **`unity test` の標準出力にコンパイル警告は載らない**（実測済み: 出力は空）。
+      # 診断は Editor が既定のログファイルへ書くので、そこを読む。
+      # ログが見つからないときは緑にせず落とす — 「違反ゼロ」と「見ていない」は
+      # 外から区別が付かず、素通しの gate は無い gate より悪い。
       - name: コーディング規約違反（UCS）を検出したら落とす
-        if: always()
+        if: always() && steps.test.outcome != 'skipped'
         run: |
-          # テストへ到達せず落ちた場合はログが無い。その失敗は前のステップが既に赤くしている。
-          [ -f unity-test.log ] || exit 0
-          if grep -nE "warning UCS[0-9]{4}" unity-test.log; then
+          log=""
+          for candidate in \
+            "$HOME/.config/unity3d/Editor.log" \
+            "$HOME/.config/unity3d/Unity/Editor/Editor.log"; do
+            if [ -f "$candidate" ]; then log="$candidate"; break; fi
+          done
+          if [ -z "$log" ]; then
+            echo "::error::Editor のログが見つからず、規約違反を検査できませんでした"
+            find "$HOME/.config" -name "*.log" 2>/dev/null | head -20
+            exit 1
+          fi
+          echo "EDITOR_LOG=$log" >> "$GITHUB_ENV"
+          if grep -nE "warning UCS[0-9]{4}" "$log"; then
             echo "::error::コーディング規約違反が残っています（上の行）。.claude/rules/coding-standards.md を参照して直してください"
             exit 1
           fi
@@ -140,7 +174,7 @@ jobs:
           path: |
             test-results.xml
             test-results.junit.xml
-            unity-test.log
+            ${{ env.EDITOR_LOG }}
           if-no-files-found: warn
 
       # seat が有限なシリアル認証だけ返す。ジョブが落ちても返すので always()。
