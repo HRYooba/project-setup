@@ -228,7 +228,7 @@ test("setup-unity: カスタマイズされた rules/*.md は cpSync に上書�
   writeFileSync(join(target, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 2022.3.0f1\n", "utf8");
   runApplyUnity(target);
 
-  const rulePath = join(target, ".claude", "rules", "testing.md");
+  const rulePath = join(target, ".claude", "rules", "coding-standards.md");
   const customized = `${readFileSync(rulePath, "utf8")}\n## このプロジェクト固有\n\n- 追記した規約\n`;
   writeFileSync(rulePath, customized, "utf8");
   // 触っていない規約は「変更なし」のままであることも同時に確かめる。
@@ -236,13 +236,13 @@ test("setup-unity: カスタマイズされた rules/*.md は cpSync に上書�
 
   const out = runApplyUnity(target);
 
-  assert.match(out, /rules\/testing\.md: 要マージ/);
+  assert.match(out, /rules\/coding-standards\.md: 要マージ/);
   assert.match(out, /rules\/hierarchy\.md: 変更なし/);
   assert.equal(readFileSync(rulePath, "utf8"), customized, "cpSync がカスタマイズを上書きした");
   assert.equal(readFileSync(join(target, ".claude", "rules", "hierarchy.md"), "utf8"), untouched);
   // 要マージのファイルは「配置ファイル」に出さない（実際に書いていないため）。
   const placed = out.slice(out.indexOf("配置ファイル:"), out.indexOf("Markdown（"));
-  assert.ok(!placed.includes("rules/testing.md"), "書いていないファイルが配置ファイルに出ている");
+  assert.ok(!placed.includes("rules/coding-standards.md"), "書いていないファイルが配置ファイルに出ている");
 });
 
 test("setup-unity: このスキルが配らないファイルは再適用で取り除かれる", () => {
@@ -261,6 +261,8 @@ test("setup-unity: このスキルが配らないファイルは再適用で取�
     ["skills", "test-unity", "references", "test-writing-guide.md"],
     ["skills", "test-unity", "references", "unity-mcp-tools.md"],
     ["skills", "lint-unity", "references", "unity-mcp-tools.md"],
+    ["rules", "testing.md"],
+    ["rules", "dev-flow.md"],
     ["references", "test-designing-guide.md"],
     ["references", "test-writing-guide.md"],
     ["agents", "unity-tester.md"],
@@ -282,9 +284,7 @@ test("setup-unity: このスキルが配らないファイルは再適用で取�
   assert.ok(existsSync(join(target, ".claude", "rules", "unity-cli.md")), "rules/unity-cli.md が無い");
   // 空の殻が残ると、配備先を見た人が「まだあるもの」と読む
   assert.ok(!existsSync(join(target, ".claude", "skills", "test-unity")), "空になった test-unity が残っている");
-  // 移転先は rules の 2 本だけ。references は撒かないので、空の殻も残らない
-  assert.ok(existsSync(join(target, ".claude", "rules", "testing.md")), "rules/testing.md が無い");
-  assert.ok(existsSync(join(target, ".claude", "rules", "dev-flow.md")), "rules/dev-flow.md が無い");
+  // テスト専用の rules / skill / references は撒かない。空の殻も残らない
   assert.ok(!existsSync(join(target, ".claude", "references")), "空になった references が残っている");
 });
 

@@ -13,7 +13,7 @@
 - `Infrastructure/`
 - `Presentation/`
 - `Composition/`
-- `Tests/EditMode/`  
+- `Tests/EditMode/` / `Tests/PlayMode/`  
 
 **フォルダパス はnamespaceと一致させる** (C# 標準慣習)
 

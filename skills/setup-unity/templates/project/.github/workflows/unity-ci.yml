@@ -2,7 +2,7 @@
 #
 # 2 段構え:
 #   verify — Editor を起動せずプロジェクトの整合性を見る。数十秒で返るので早期に赤が出る
-#   test   — Editor を起動して EditMode テストを走らせ、ついでにコーディング規約違反を拾う
+#   test   — Editor を起動して EditMode / PlayMode のテストを走らせ、ついでにコーディング規約違反を拾う
 #
 # 規約違反（UCS 診断）は analyzer が warning として出す。Error にすると Unity が Safe Mode へ
 # 落ちて Editor が作業不能になるため、severity は Warning のまま据え置き、**ここで落とす**。
@@ -72,6 +72,15 @@ jobs:
     # 取り違えても image pull が失敗して赤くなるだけで、静かに間違った版で走ることはない。
     container:
       image: unityci/editor:${{ needs.resolve.outputs.editor-version }}-base-3
+    # テスト実行と件数チェックの両方が読むので、ジョブ側に 1 箇所だけ置く。
+    env:
+      # 全件実行が既定。外部パッケージ由来の常時失敗テストを抱えるプロジェクトだけ、
+      # ここに値を入れて自分のテスト名前空間へ絞る（--filter は選択であって除外ではない）。
+      # ローカルでは差分のスコープだけ回すので、この値は CI 専用。
+      TEST_FILTER: ""
+      # PlayMode はフレーム経過やシーン読み込みを待つため、実装の不具合で永久に返らないことが
+      # ある。既定は無効なので明示する（Actions の 6 時間上限まで回し続けるのを避ける）。
+      TEST_TIMEOUT: "1800"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -134,13 +143,12 @@ jobs:
       - name: スクリプトの再コンパイルを強制する
         run: rm -rf Library/ScriptAssemblies Library/Bee
 
-      - name: EditMode テスト
+      # EditMode と PlayMode を順に走らせる。**matrix で並列にしない** — seat は同時 2 台までで、
+      # 並列にすると自分のジョブ同士で seat を食い合う。同一ジョブなら取得済みのライセンスと
+      # 温まった Library をそのまま使える。
+      # 片方が落ちても他方は走らせる（先に落ちた側だけ見て直すと、もう一方の失敗が次の PR に回る）。
+      - name: EditMode / PlayMode テスト
         id: test
-        env:
-          # 全件実行が既定。外部パッケージ由来の常時失敗テストを抱えるプロジェクトだけ、
-          # ここに値を入れて自分のテスト名前空間へ絞る（--filter は選択であって除外ではない）。
-          # ローカルの /test-unity は差分から対象を導出するので、この値は CI 専用。
-          TEST_FILTER: ""
         run: |
           # **仮想ディスプレイが要る。** Unity は batchmode でも X ディスプレイを開こうとし、
           # 無いと Editor がテストを 1 件も走らせずに終了する
@@ -151,11 +159,61 @@ jobs:
             echo "::error::xvfb-run がありません。Unity が X ディスプレイを開けず Editor が起動しません"
             exit 1
           fi
-          xvfb-run --auto-servernum \
-            unity test --mode EditMode \
-              --editor-path "$UNITY_EDITOR" \
-              ${TEST_FILTER:+--filter "$TEST_FILTER"} \
-              --non-interactive
+          rc=0
+          for mode in EditMode PlayMode; do
+            echo "::group::$mode"
+            # 出力先を mode ごとに分ける（既定は両方 test-results.xml で、後者が前者を潰す）
+            xvfb-run --auto-servernum \
+              unity test --mode "$mode" \
+                --editor-path "$UNITY_EDITOR" \
+                --output "test-results-$(echo "$mode" | tr 'A-Z' 'a-z').xml" \
+                --timeout "$TEST_TIMEOUT" \
+                ${TEST_FILTER:+--filter "$TEST_FILTER"} \
+                --non-interactive || rc=$?
+            echo "::endgroup::"
+          done
+          exit $rc
+
+      # **`--filter` は 0 件マッチでも exit 0 を返す。** 名前空間をリネームすると
+      # 「1 件も走らなかった」がそのまま緑として通る。件数はここで見る
+      # （人に数えさせる手順にすると忘れられるので、構造で止める）。
+      # 結果 XML が読めないときも落とす — 「0 件」と「見ていない」は外から区別が付かない。
+      #
+      # 両モードの合計で見る。片方が 0 件なのは正常（PlayMode テストを持たないプロジェクト）。
+      # 合計 0 件は、絞り込みが外れているか、テスト asmdef が壊れているかのどちらか。
+      # ただし TEST_FILTER が空のときは「まだテストが 1 本も無い」新規プロジェクトもあり得るので、
+      # そこは落とさず warning にする（撒いた直後に赤い CI を渡さない）。
+      - name: テストが 1 件も走っていなければ落とす
+        if: steps.test.outcome == 'success'
+        run: |
+          sum=0
+          seen=0
+          for xml in test-results-editmode.xml test-results-playmode.xml; do
+            [ -f "$xml" ] || continue
+            seen=1
+            # NUnit XML の root は <test-run ... total="N" ...>。属性の並び順に依存しないよう
+            # 属性だけを抜いて数字を取る（total は test-suite にも出るので root の 1 件目）。
+            n=$(grep -o 'total="[0-9]*"' "$xml" | head -1 | tr -dc '0-9')
+            if [ -z "$n" ]; then
+              echo "::error::$xml から test-run の total を読めませんでした"
+              head -c 500 "$xml"
+              exit 1
+            fi
+            echo "$xml: $n 件"
+            sum=$((sum + n))
+          done
+          if [ "$seen" -eq 0 ]; then
+            echo "::error::結果 XML が 1 つも無く、実行件数を確認できませんでした（unity test が結果を書いていない）"
+            exit 1
+          fi
+          echo "合計: $sum 件"
+          if [ "$sum" -eq 0 ]; then
+            if [ -n "$TEST_FILTER" ]; then
+              echo "::error::テストが 1 件も実行されていません。TEST_FILTER='$TEST_FILTER' が何にもマッチしていないか、テスト asmdef が壊れています"
+              exit 1
+            fi
+            echo "::warning::テストが 1 件もありません（テストを 1 本でも入れたら、以降ここで 0 件は異常として扱える）"
+          fi
 
       # テストが落ちても規約違反は見たいので always()。テスト自体が走らなかったときだけ飛ばす。
       #
@@ -189,7 +247,8 @@ jobs:
         with:
           name: unity-test-results
           path: |
-            test-results.xml
+            test-results-editmode.xml
+            test-results-playmode.xml
             ${{ env.EDITOR_LOG }}
           if-no-files-found: warn
 

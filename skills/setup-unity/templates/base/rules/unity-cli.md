@@ -167,7 +167,7 @@ C# のコンパイルエラーがあると Editor は Safe Mode で起動し、`
 |:--|:--|
 | 前提の事前判定（ライセンス・Editor 有無・空き容量） | `unity doctor --ci --format json` |
 | プロジェクト整合性（meta 欠落・孤児・GUID 重複・conflict marker・manifest 破損） | `unity projects verify --format json` |
-| テスト実行 | `unity test --format json`（方針は `rules/testing.md`） |
+| テスト実行 | `unity test --format json`（方針は `rules/coding-standards.md`「テスト」） |
 
 `unity projects verify` は**検出のみで修復しない**（meta / GUID の修復は Editor のアセット
 データベースが必要）。検出コードの一覧は `unity projects verify --help` の `--check` が正本。

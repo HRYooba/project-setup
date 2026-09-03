@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import { consolidateSyncState } from "../sync-setup/state.mjs";
 /* global process, console */
 
-// 反映を LLM 判断へ委ねる Markdown（rules/*.md と CLAUDE.md）。apply.mjs は書かず、
+// 反映を LLM 判断へ委ねる Markdown（rules/*.md）。apply.mjs は書かず、
 // ここへ積んで報告するだけ。実際の統合は SKILL 手順で Claude が現物とテンプレを読んで行う。
 // 機械的な上書きはプロジェクト側で育った記述を消し、機械的なスキップはテンプレ更新を
 // 永久に届かなくする。どちらも避けるための委譲（テンプレが扱う話題はテンプレ側を正とし、
@@ -44,11 +44,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 // 現行の rules と手順が二重になるので取り除く。
 // （プロジェクト固有の追記があった場合は配備先の git 履歴から復元できる）
 //
-// test-unity は skill をやめた。判断基準と決めごとは rules/testing.md、実装後に回す検査は
-// rules/dev-flow.md が持つ。skill / agent / 旧 references が残っていると古い基準で動くため消す。
+// テストの規約は rules/coding-standards.md の「テスト」節へ畳んだ。専用の skill / agent /
+// references / rules を持たない。残っていると古い基準で動き、常時コンテキストにも二重に載る。
 const OBSOLETE_PATHS = [
   "rules/unity-mcp.md",
   "rules/unity-mcp-tools.md",
+  "rules/testing.md",
+  "rules/dev-flow.md",
   "skills/test-unity/SKILL.md",
   "skills/test-unity/references/test-designing-guide.md",
   "skills/test-unity/references/test-writing-guide.md",
@@ -197,36 +199,6 @@ for (const f of readdirSync(rulesDir).filter((n) => n.endsWith(".md"))) {
   }
 }
 
-// ---- CLAUDE.md への反映（apply.mjs は書かない） ----
-// 配る内容は templates/claude-md.md（節そのもの）。配る文面を定数で持ち、移行を完全一致の
-// 置換で追いかける書き方はしない（文面を変えるたびに移行コードが増える＝腐る）。
-// 古い運用行は SKILL 手順のマージで Claude がテンプレ側を正として置き換える。
-const claudeMdPath = join(claudeDir, "CLAUDE.md");
-const claudeMdSrc = join(here, "templates", "claude-md.md");
-const claudeMdSection = readFileSync(claudeMdSrc, "utf8");
-
-// テンプレは「節」を配るので全文一致では判定できない。節の非空行がすべて配備先にあれば
-// 反映済みとみなす。判定基準がテンプレ本体から導出されるので、別途マーカー文字列を維持
-// する必要がない（文面を変えれば行が一致しなくなり、その時だけ要マージになる）。
-function sectionApplied(dstText, sectionText) {
-  return sectionText
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .every((l) => dstText.includes(l));
-}
-
-let claudeMdState;
-if (!existsSync(claudeMdPath)) {
-  writeFileSync(claudeMdPath, claudeMdSection, "utf8");
-  claudeMdState = "新規作成";
-} else if (sectionApplied(readFileSync(claudeMdPath, "utf8"), claudeMdSection)) {
-  claudeMdState = "変更なし";
-} else {
-  needsMerge.push({ label: ".claude/CLAUDE.md", dst: claudeMdPath, src: claudeMdSrc });
-  claudeMdState = "要マージ";
-}
-
 // ---- Unity プロジェクト本体へ配るもの（.claude/ の外）----
 // Roslyn analyzer は Assets 配下にあり RoslynAnalyzer ラベルの付いた DLL だけが csc へ渡るため、
 // 置き場所と .meta が動作条件そのものになる。PR ゲートの workflow は .github/ へ。
@@ -320,9 +292,8 @@ for (const [f, layer] of [...copied.entries()].sort()) {
 }
 console.log("Unity プロジェクト本体（.claude/ の外）:");
 for (const state of projectStates) console.log(`  - ${state}`);
-console.log("Markdown（rules / CLAUDE.md）:");
+console.log("Markdown（rules）:");
 for (const s of mdStates) console.log(`  - .claude/${s}`);
-console.log(`  - .claude/CLAUDE.md: ${claudeMdState}`);
 // 要マージは「apply.mjs が意図的に書かなかったファイル」。SKILL 手順がこの一覧を読んで
 // Claude にマージさせる。ここで止めずに続行するのは、他の配置物は決定的に配り切るため。
 if (needsMerge.length) {
