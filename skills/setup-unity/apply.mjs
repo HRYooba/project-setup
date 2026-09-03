@@ -44,8 +44,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 // 現行の rules と手順が二重になるので取り除く。
 // （プロジェクト固有の追記があった場合は配備先の git 履歴から復元できる）
 //
-// test-unity は skill をやめ、判断基準を rules/testing.md へ、技法と実装規約を
-// references/ へ移した。skill と agent が残っていると古い基準で動くため消す。
+// test-unity は skill をやめた。判断基準と決めごとは rules/testing.md、実装後に回す検査は
+// rules/dev-flow.md が持つ。skill / agent / 旧 references が残っていると古い基準で動くため消す。
 const OBSOLETE_PATHS = [
   "rules/unity-mcp.md",
   "rules/unity-mcp-tools.md",
@@ -54,6 +54,8 @@ const OBSOLETE_PATHS = [
   "skills/test-unity/references/test-writing-guide.md",
   "skills/test-unity/references/unity-mcp-tools.md",
   "skills/lint-unity/references/unity-mcp-tools.md",
+  "references/test-designing-guide.md",
+  "references/test-writing-guide.md",
   "agents/unity-tester.md",
 ];
 
