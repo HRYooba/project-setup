@@ -2,10 +2,11 @@
   "name": "project-setup",
   "version": "0.0.0",
   "private": true,
-  "description": "project-setup プラグインの開発用ツール（lint / test）。プラグイン本体は .claude-plugin/plugin.json で定義され、この package.json は配布物には含まれない（テンプレートは templates/ 配下のみコピーされる）。",
+  "description": "project-setup プラグインの開発用ツール（lint / test / validate）。プラグイン本体は .claude-plugin/plugin.json で定義され、この package.json は配布物には含まれない（テンプレートは templates/ 配下のみコピーされる）。",
   "scripts": {
     "lint": "eslint .",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "validate": "npx --yes @anthropic-ai/claude-code plugin validate .claude-plugin/marketplace.json --json --strict && npx --yes @anthropic-ai/claude-code plugin validate .claude-plugin/plugin.json --json --strict"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

@@ -1,8 +1,13 @@
 name: test
 
-# lint（eslint）とユニットテスト（Node 標準の test runner）。
+# lint（eslint）とユニットテスト（Node 標準の test runner）と配布物検証（公式 validator）。
 # eslint はテンプレート .mjs（配備先へコピーされる hook / installer）が配備先の CI を
 # 壊さないよう source 側で検証する。テスト対象は hook（PR 前門番・effort nudge）と apply.mjs。
+# validate は配布物そのもの（manifest とコンポーネント）を検査する。この2本が緑のまま
+# marketplace 経由の導入側でだけ壊れる層を、配布前に落とすのが目的。
+# 実行内容の正本は package.json の scripts.validate（marketplace.json と plugin.json を
+# 別々に渡すのは、validator が前者からは plugin.json までしか辿らず skills/ を見ず、
+# 後者からは skills/ を見るが marketplace を見ないため。両方渡して初めて全層を覆える）。
 
 on:
   pull_request:
@@ -21,3 +26,4 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run test
+      - run: npm run validate
