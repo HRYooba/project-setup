@@ -79,24 +79,20 @@ summary は **1〜2 文**。複数の責務を箇条書きするのは責務分�
 `<see cref>` は**構造化タグ**（`<param>` / `<returns>` / `<exception>` / `<typeparam>`）では
 必須（tooling が機械的に拾う）。`<summary>` / `<remarks>` の自然文中では plain text でよい。
 
-### 依存方向制約 (asmdef と同じく依存方向を summary でも守る)
+### 依存方向制約
 
-`<summary>` / `<remarks>` 本文中で他の型を言及する場合、 **asmdef レベルの依存方向制約をそのまま summary にも適用する**。 上位レイヤーの型名を下位レイヤーの summary で言及してはならない。
+`<summary>` / `<remarks>` 本文で他の型に言及するときも、`rules/architecture.md`「依存ルール」の
+依存方向をそのまま適用する。上位レイヤーの型名を下位レイヤーの summary に書かない。
 
-| この層の summary | 言及してよい型 (cref / plain 問わず) |
-|:---|:---|
-| **Shared** | `Shared` 配下のみ |
-| **Domain** | `Domain` / `Shared` |
-| **Application** | `Application` / `Domain` / `Shared` |
-| **Infrastructure** | `Application` / `Domain` / `Shared` (+ 外部 SDK / UnityEngine) |
-| **Presentation** | `Application` / `Domain` (enum 限定) / `Shared` / 同 `Presentation` 配下 (+ UnityEngine) |
-| **Composition** | 全層参照可 (配線目的) |
+型名でない単語も同じ。上位レイヤー・Infrastructure 詳細（HTTP status code、SDK 名）・asset API 名
+（`ScriptableObject` / `Texture2D` 等）を下位レイヤーの summary に書かず、概念名・port 名で表す
+（層間で受け渡す UnityEngine の値型は例外。`<param>` の cref 必須規定もそのまま適用される）。
 
-> **plain text の単語も同じ依存方向ルールに従う**。 型名でない単語であっても、 上位レイヤーや Infrastructure 詳細（HTTP status code、 SDK 名）、 asset 系 API 名（ScriptableObject / Texture2D 等）を下位レイヤーの summary に書かない。 例: Application 層 summary で「HTTP 500」「Vivox 経由」「AudioMixer SE bus」 のような言及は NG、 概念名・port 名で表現する。 ただし **UnityEngine の値型（`Vector3` / `Quaternion` 等）は層間データ受け渡しで許容されているため、 引数・戻り値として言及してよい**（`<param>` の cref 必須規定もそのまま適用される）。
+違反例: `Application/Auth/LoginUseCase.cs` の summary に「`LoginView` から呼ばれる」→ Application は
+Presentation を知らないので NG。
 
-違反例: `Application/Auth/LoginUseCase.cs` の summary に 「`LoginView` から呼ばれる」 と書く → Application は Presentation を知らないので NG。 同様に Domain の summary で UseCase 名を出すのも NG。
-
-summary の中で参照する型が上位レイヤーに属する場合、 そもそも責務配置が間違っている疑いが強い。 まず実装の依存方向を見直すこと。
+summary で参照する型が上位レイヤーに属するなら、そもそも責務配置が間違っている疑いが強い。
+まず実装の依存方向を見直す。
 
 ## エラーハンドリング / 初期化失敗の扱い
 

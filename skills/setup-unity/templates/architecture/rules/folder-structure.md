@@ -7,6 +7,9 @@
 ## Assets/App/
 
 ### Scripts/
+
+レイヤー直下は機能単位で分ける（例: `Application/Auth/`）。
+
 - `Shared/`
 - `Domain/`
 - `Application/`
