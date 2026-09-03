@@ -27,7 +27,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 5. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
 6. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards / testing / テスト設計ガイドへの差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
 7. **Roslyn analyzer** — `coding-standards.md` の**型を見ないと判定できない規約**をコンパイル時に止める。`Assets/Analyzers/`（DLL + `.meta` + README）を**`.claude/` ではなく Unity プロジェクト本体へ**置く。既製の analyzer や `.editorconfig` の naming rules では書けない部分だけを担当する（`private _camelCase`・定数 `PascalCase`・`Async` サフィックスは既製ルールの領分なので持たない）。**設定ファイル（`.ruleset` / `.globalconfig`）は配らない** — 全規則 Warning 固定で、PR の gate は次の CI が担う
-8. **PR ゲートの GitHub Actions** — `.github/workflows/unity-ci.yml` と `.github/actions/setup-unity-cli/`。`unity projects verify --strict`（Editor 不要）と `unity test --mode EditMode`（GameCI の Editor イメージ上）を走らせ、コンパイルログに `warning UCS` があれば落とす。**Unity ライセンスの secret 登録が要る**（未登録なら test ジョブが赤くなる。verify ジョブは secret 不要で常に動く）
+8. **PR ゲートの GitHub Actions** — `.github/workflows/unity-ci.yml` と `.github/actions/setup-unity-cli/`。`unity projects verify --strict`（Editor 不要）と `unity test --mode EditMode`（GameCI の Editor イメージ上）を走らせ、Editor のコンパイルログに `warning UCS` があれば落とす。**Unity ライセンスの secret 登録と Plus / Pro 以上の seat が要る**（未登録なら test ジョブが赤くなる。verify ジョブは secret 不要で常に動く）
 
 ## 前提（満たされていないと skills が動かない）
 
@@ -181,13 +181,22 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   - 正当な例外は `#pragma warning disable UCS0006` のように範囲を絞って抑制し、理由をコメントに書く。
     詳細は配置される `Assets/Analyzers/README.md`
 - **CI について**は、次を伝える:
-  - **Unity ライセンスの secret 登録が要る**。登録するまで `unity-ci` の test ジョブは赤くなる
-    （verify ジョブは secret 不要で最初から動く）:
+  - **CI のテスト実行には Plus / Pro 以上のライセンスが要る**。Unity は Personal の
+    非対話・オフライン有効化を Enterprise / Industry 限定にしており、手元の `.ulf` を
+    持ち込む経路も Licensing Client が拒否する。Personal のプロジェクトでは test ジョブが
+    赤いままになる（**verify ジョブはライセンス不要なので動く**）
+  - **secret を登録するまで test ジョブは赤くなる**:
 
-    | ライセンス | 登録する secret |
+    | secret | 内容 |
     |:--|:--|
-    | Personal | `UNITY_LICENSE`（`.ulf` ファイルの中身をそのまま貼る） |
-    | Plus / Pro | `UNITY_SERIAL` + `UNITY_CLIENT_ID` + `UNITY_CLIENT_SECRET`（Unity Cloud のサービスアカウントキー。アカウントのパスワードは使わない） |
+    | `UNITY_EMAIL` | Unity アカウントのメールアドレス |
+    | `UNITY_PASSWORD` | Unity アカウントのパスワード |
+    | `UNITY_SERIAL` | 任意。永続ライセンス等でシリアルが要る契約のときだけ。seat が割り当てられていれば無くてよい |
+
+  - ライセンス認証だけ Unity CLI を使わず Editor バイナリへ直接渡している。
+    `unity license activate` はどの経路でもサインイン済みセッションを要求し、
+    `unity auth login` は資格情報を OS のキーリングへ保存しようとするため、
+    コンテナでは通らない。`unity test` / `unity projects verify` は CLI のまま
 
   - **gate も一度は陽性を確かめる**。規約違反を 1 つ含む PR を出して `unity-ci` が赤くなるのを見る。
     analyzer と同じ理由で、通っている状態と見ていない状態は外から区別できない

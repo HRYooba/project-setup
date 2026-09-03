@@ -9,9 +9,15 @@
 # eslint の --max-warnings 0 と同じ考え方で、severity と gate を別レイヤーに分けている。
 #
 # 必要な secret（未設定だと test ジョブが赤くなる。verify は secret 不要で常に動く）:
-#   UNITY_LICENSE  — Personal ライセンスの .ulf ファイルの中身をそのまま貼る
-#   UNITY_SERIAL / UNITY_CLIENT_ID / UNITY_CLIENT_SECRET — Plus / Pro の場合はこちら 3 本
-#     （Unity Cloud のサービスアカウントキー。アカウントのパスワードは要らない）
+#   UNITY_EMAIL    — Unity アカウントのメールアドレス
+#   UNITY_PASSWORD — Unity アカウントのパスワード
+#   UNITY_SERIAL   — 任意。永続ライセンス等でシリアルが要る契約のときだけ入れる
+#                    （アカウントに seat が割り当てられていれば無くても通る。実測）
+#
+# **Personal では動かない。** アカウントに Plus / Pro 以上の seat が要る。
+# Unity は Personal のオフライン有効化を Enterprise / Industry 限定にしており、
+# 手元の .ulf を持ち込む経路も Licensing Client が拒否する（どちらも実測）。
+# verify ジョブはライセンス不要なので、Personal のプロジェクトでもそちらは動く。
 name: unity-ci
 
 # paths / paths-ignore で絞らない。branch protection の必須チェックにしたとき、
@@ -96,27 +102,29 @@ jobs:
           restore-keys: |
             Library-
 
+      # **ライセンスだけ Unity CLI を使わない。**
+      # `unity license activate` はどの経路でもサインイン済みセッションを要求し、
+      # `unity auth login` は資格情報を OS のキーリングへ保存しようとする。
+      # コンテナにキーリングは無いので、CLI 経由ではライセンスを取れない（実測）。
+      # Editor バイナリへ直接渡す形（GameCI と同じ）ならその段が無い。
+      # test / verify は CLI のままでよい — Editor を起こすのはライセンス取得後だから。
       - name: ライセンス認証
         env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
           UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
-          UNITY_CLIENT_ID: ${{ secrets.UNITY_CLIENT_ID }}
-          UNITY_CLIENT_SECRET: ${{ secrets.UNITY_CLIENT_SECRET }}
         run: |
-          if [ -n "$UNITY_SERIAL" ]; then
-            # Plus / Pro。サービスアカウントでサインインしてからシリアルを認証する。
-            # --secret-from-stdin で secret を argv に載せない。
-            printf '%s' "$UNITY_CLIENT_SECRET" |
-              unity auth login --client-id "$UNITY_CLIENT_ID" --secret-from-stdin --non-interactive
-            unity license activate --serial "$UNITY_SERIAL" --non-interactive
-          elif [ -n "$UNITY_LICENSE" ]; then
-            # Personal。.ulf をそのまま食わせる。seat の概念が無いので返却も要らない。
-            printf '%s' "$UNITY_LICENSE" > "$RUNNER_TEMP/Unity_lic.ulf"
-            unity license activate --file "$RUNNER_TEMP/Unity_lic.ulf" --non-interactive
-          else
-            echo "::error::Unity ライセンスの secret が未設定です。Personal なら UNITY_LICENSE（.ulf の中身）、Plus/Pro なら UNITY_SERIAL + UNITY_CLIENT_ID + UNITY_CLIENT_SECRET をリポジトリの secrets に登録してください"
+          if [ -z "$UNITY_EMAIL" ] || [ -z "$UNITY_PASSWORD" ]; then
+            echo "::error::Unity ライセンスの secret が未設定です。UNITY_EMAIL / UNITY_PASSWORD をリポジトリの secrets に登録してください（シリアルが要る契約なら UNITY_SERIAL も）"
             exit 1
           fi
+          # 認証情報はコマンド行に載る。GitHub がログをマスクするが、
+          # `ps` からは見えるため、この runner を他人と共有しないこと。
+          xvfb-run --auto-servernum "$UNITY_EDITOR" \
+            -batchmode -nographics -logFile /dev/stdout -quit \
+            ${UNITY_SERIAL:+-serial "$UNITY_SERIAL"} \
+            -username "$UNITY_EMAIL" \
+            -password "$UNITY_PASSWORD"
 
       # **スクリプトのコンパイル成果物だけ捨てる。**
       # 温まった Library のまま走らせると Unity は再コンパイルせず、analyzer の警告が
@@ -134,11 +142,20 @@ jobs:
           # ローカルの /test-unity は差分から対象を導出するので、この値は CI 専用。
           TEST_FILTER: ""
         run: |
-          unity test --mode EditMode \
-            --editor-path "$UNITY_EDITOR" \
-            ${TEST_FILTER:+--filter "$TEST_FILTER"} \
-            --report-format both --junit-output test-results.junit.xml \
-            --non-interactive
+          # **仮想ディスプレイが要る。** Unity は batchmode でも X ディスプレイを開こうとし、
+          # 無いと Editor がテストを 1 件も走らせずに終了する
+          # （実測: "Error opening default X display." で exit 1）。
+          # `unity test` には -nographics を渡す口が無いので、xvfb で包む。
+          # 無い環境で黙って進まないよう、存在を確認して落とす。
+          if ! command -v xvfb-run > /dev/null; then
+            echo "::error::xvfb-run がありません。Unity が X ディスプレイを開けず Editor が起動しません"
+            exit 1
+          fi
+          xvfb-run --auto-servernum \
+            unity test --mode EditMode \
+              --editor-path "$UNITY_EDITOR" \
+              ${TEST_FILTER:+--filter "$TEST_FILTER"} \
+              --non-interactive
 
       # テストが落ちても規約違反は見たいので always()。テスト自体が走らなかったときだけ飛ばす。
       #
@@ -156,7 +173,7 @@ jobs:
             if [ -f "$candidate" ]; then log="$candidate"; break; fi
           done
           if [ -z "$log" ]; then
-            echo "::error::Editor のログが見つからず、規約違反を検査できませんでした"
+            echo "::error::Editor のログが見つからず、規約違反を検査できませんでした（Editor が起動しなかった可能性。前のステップの失敗を先に見る）"
             find "$HOME/.config" -name "*.log" 2>/dev/null | head -20
             exit 1
           fi
@@ -173,17 +190,14 @@ jobs:
           name: unity-test-results
           path: |
             test-results.xml
-            test-results.junit.xml
             ${{ env.EDITOR_LOG }}
           if-no-files-found: warn
 
-      # seat が有限なシリアル認証だけ返す。ジョブが落ちても返すので always()。
-      # Personal（.ulf）は返却の概念が無いので何もしない。
+      # seat は有限（Pro のシリアルは同時 2 台まで）。ジョブが落ちても返すので always()。
+      # 返せなかった枠は Unity のダッシュボードから手で取り消せる。
       - name: ライセンス返却
         if: always()
-        env:
-          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
         run: |
-          if [ -n "$UNITY_SERIAL" ]; then
-            unity license return --non-interactive || echo "::warning::ライセンスの返却に失敗しました（seat を消費したままの可能性があります）"
-          fi
+          xvfb-run --auto-servernum "$UNITY_EDITOR" \
+            -batchmode -nographics -logFile /dev/stdout -quit \
+            -returnlicense || echo "::warning::ライセンスの返却に失敗しました（seat を消費したままの可能性があります）"
