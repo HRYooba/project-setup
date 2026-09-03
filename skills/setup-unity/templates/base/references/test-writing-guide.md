@@ -15,7 +15,7 @@
 | テストメソッド名（unit） | `MethodName_Condition_ExpectedResult`（対象がメソッドなのでメソッド名を含む）|
 | パラメータ化の `Condition` | 個別引数の列挙でなく**同値区分名**を書く |
 
-> 自動テストは EditMode unit のみ（`test-designing-guide.md` §2）。統合 / 視覚検証の命名規約（メソッド名なし）は使わない。
+> 自動テストは EditMode unit のみ（`rules/testing.md`「テスト層」）。統合 / 視覚検証の命名規約（メソッド名なし）は使わない。
 
 ---
 
@@ -94,7 +94,7 @@ public UniTask<OperationResult<RoomErrorCode>> LeaveRoomAsync(CancellationToken 
 ```
 
 ```csharp
-// テスト側: 順序を実観測する（test-designing-guide §5 ゲート3）
+// テスト側: 順序を実観測する（rules/testing.md「追加前ゲート」3）
 var callLog = new List<string>();
 _voiceService.CallLog = callLog;
 _connectionService.CallLog = callLog;
@@ -168,7 +168,7 @@ namespace <Project>.Tests.<Context>
 ### 状態保持クラス（IDisposable を持つもの）
 `SetUp` で `new`、`TearDown` で `Dispose()`。破棄後ガードや初期値契約を検証する場合は購読側視点で。
 
-### MonoBehaviour（原則テスト対象外。designing-guide §1）
+### MonoBehaviour（原則テスト対象外。`rules/testing.md`「テスト層」）
 やむを得ず必要な場合のみ `new GameObject().AddComponent<T>()` → `TearDown` で `Object.DestroyImmediate`。
 純ロジックが MonoBehaviour に埋まっている場合は、テストをこじ開けるのでなく plain class への分離を先に検討する。
 
@@ -189,6 +189,6 @@ namespace <Project>.Tests.<Context>
 
 ## 7. プロジェクト固有の注意
 
-- **テスト実行は `/test-unity` 経由**（`unity test` の直叩き禁止。`rules/testing.md`）。
+- **テスト実行は差分のスコープに絞る**（全件は CI。`rules/testing.md`「テスト実行のスコープ」）。
 - green/red 判定は `--filter` で絞った差分のスコープ内で行う。全件の green/red は PR の `unity-ci` が出す（`rules/testing.md`「テスト実行のスコープ」）。
-- `R3` の `ReactiveProperty` は購読時に現在値を流す。初期値テストは「外部購読される状態の初期契約」に限り許容（`test-designing-guide.md` §8 例外）。
+- `R3` の `ReactiveProperty` は購読時に現在値を流す。初期値テストは「外部購読される状態の初期契約」に限り許容（`test-designing-guide.md`「初期値テストの例外」）。

@@ -256,8 +256,12 @@ test("setup-unity: このスキルが配らないファイルは再適用で取�
   const legacy = [
     ["rules", "unity-mcp.md"],
     ["rules", "unity-mcp-tools.md"],
+    ["skills", "test-unity", "SKILL.md"],
+    ["skills", "test-unity", "references", "test-designing-guide.md"],
+    ["skills", "test-unity", "references", "test-writing-guide.md"],
     ["skills", "test-unity", "references", "unity-mcp-tools.md"],
     ["skills", "lint-unity", "references", "unity-mcp-tools.md"],
+    ["agents", "unity-tester.md"],
   ];
   for (const parts of legacy) {
     const p = join(target, ".claude", ...parts);
@@ -274,6 +278,13 @@ test("setup-unity: このスキルが配らないファイルは再適用で取�
   // 旧 rules が「要マージ」へ回ると消えないまま残るので、そこに出ていないことも確かめる
   assert.ok(!out.includes("rules/unity-mcp.md: 要マージ"), "取り除く対象が要マージへ回っている");
   assert.ok(existsSync(join(target, ".claude", "rules", "unity-cli.md")), "rules/unity-cli.md が無い");
+  // 空の殻が残ると、配備先を見た人が「まだあるもの」と読む
+  assert.ok(!existsSync(join(target, ".claude", "skills", "test-unity")), "空になった test-unity が残っている");
+  // 判断基準の移転先と、技法・実装ガイドの新しい置き場
+  assert.ok(existsSync(join(target, ".claude", "rules", "testing.md")), "rules/testing.md が無い");
+  for (const f of ["test-designing-guide.md", "test-writing-guide.md"]) {
+    assert.ok(existsSync(join(target, ".claude", "references", f)), `references/${f} が無い`);
+  }
 });
 
 test("--no-pre-push 初回: pre-push を配らず core.hooksPath も登録しない", () => {

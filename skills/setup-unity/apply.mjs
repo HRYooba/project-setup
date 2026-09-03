@@ -40,14 +40,21 @@ function stageTemplate(name, content) {
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-// このスキルが配らないファイル。配備先に残っていると rules/unity-cli.md と並んで
-// 常時コンテキストに載り、Unity 操作の手順が二重になるので取り除く。
+// このスキルが配らないファイル。配備先に残っていると常時コンテキストへ載り、
+// 現行の rules と手順が二重になるので取り除く。
 // （プロジェクト固有の追記があった場合は配備先の git 履歴から復元できる）
+//
+// test-unity は skill をやめ、判断基準を rules/testing.md へ、技法と実装規約を
+// references/ へ移した。skill と agent が残っていると古い基準で動くため消す。
 const OBSOLETE_PATHS = [
   "rules/unity-mcp.md",
   "rules/unity-mcp-tools.md",
+  "skills/test-unity/SKILL.md",
+  "skills/test-unity/references/test-designing-guide.md",
+  "skills/test-unity/references/test-writing-guide.md",
   "skills/test-unity/references/unity-mcp-tools.md",
   "skills/lint-unity/references/unity-mcp-tools.md",
+  "agents/unity-tester.md",
 ];
 
 const rawArgs = process.argv.slice(2);
@@ -152,6 +159,20 @@ for (const rel of OBSOLETE_PATHS) {
   } catch (e) {
     // 他の IO と同じく、消せなくても適用全体は止めない（配置物は配り切る）
     console.log(`注意: 旧配備物を削除できませんでした（手で消してください）: .claude/${rel} — ${e.message}`);
+  }
+}
+
+// 空になったディレクトリを畳む。ファイルだけ消すと skills/test-unity/references/ のような
+// 空の殻が残り、配備先を見た人が「まだあるもの」と読む。
+for (const rel of OBSOLETE_PATHS) {
+  const parts = rel.split("/");
+  for (let depth = parts.length - 1; depth >= 1; depth--) {
+    const dir = join(claudeDir, ...parts.slice(0, depth));
+    try {
+      if (existsSync(dir) && readdirSync(dir).length === 0) rmSync(dir, { recursive: true });
+    } catch {
+      // 消せなくても害はない（空ディレクトリが残るだけ）
+    }
   }
 }
 

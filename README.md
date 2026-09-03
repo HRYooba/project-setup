@@ -5,7 +5,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 | skill | 内容 |
 |:------|:-----|
 | `setup-github` | GitHub 開発フロー一式を導入する。ブランチ保護（pre-push。既定 ON・質問で外せる）、PR 前レビュー運用（`/code-review` + `/security-review` のソフト指示）、git 運用規約（Git Flow / Conventional Commits）、create-issue skill。任意で Copilot PR 自動レビュー（自動アサイン / watch-pr / resolve-pr）と AGENTS.md 自動生成 |
-| `setup-unity` | Unity 開発規約一式を導入する。rules（Unity 操作 / フォルダ構成 / Hierarchy / アセット命名 / コーディング規約 / テスト）、skills（test-unity / lint-unity / unity-parallel）、agents（unity-tester / unity-linter / unity-worker）。Unity 操作は **Unity CLI** 固定。コーディング規約を機械で止める Roslyn analyzer と PR ゲートの GitHub Actions も配る。任意でレイヤードアーキテクチャ規約 |
+| `setup-unity` | Unity 開発規約一式を導入する。rules（Unity 操作 / フォルダ構成 / Hierarchy / アセット命名 / コーディング規約 / テスト）、skills（lint-unity / unity-parallel）、agents（unity-linter / unity-worker）、テスト設計・実装ガイド（references）。Unity 操作は **Unity CLI** 固定。コーディング規約を機械で止める Roslyn analyzer と PR ゲートの GitHub Actions も配る。任意でレイヤードアーキテクチャ規約 |
 | `sync-setup` | プラグインのテンプレート更新に、展開済みリポジトリを追随させる。保存フラグで apply.mjs を再適用し、同期 PR を作成する（merge はしない）。UserPromptSubmit hook が最初のプロンプトへ差し込む、または手動で `/sync-setup` を実行する |
 
 どちらも**冪等**（再実行安全）で、導入オプションは実行時に対話で確認する。配置物は対象リポジトリの `.claude/` などにコミットされるため、plugin を持たないチームメイトにもそのまま効く。

@@ -1,12 +1,12 @@
 ---
 name: setup-unity
 description: >
-  現在の Unity プロジェクトに開発規約一式（rules / test-unity / lint-unity / サブエージェント）を
+  現在の Unity プロジェクトに開発規約一式（rules / lint-unity / サブエージェント）を
   導入するセットアップコマンド。ユーザーが「Unityセットアップ」「setup-unity」「Unity規約を導入」
   「このプロジェクトにUnity開発ルールを入れて」などと依頼したときに使用する。
   カレントのリポジトリの .claude/ に rules（unity-cli / folder-structure / hierarchy /
-  asset-naming / coding-standards / testing）、skills（test-unity / lint-unity / unity-parallel）、
-  agents（unity-tester / unity-linter / unity-worker）を撒く。Unity 操作は Unity CLI に固定で、
+  asset-naming / coding-standards / testing）、skills（lint-unity / unity-parallel）、
+  agents（unity-linter / unity-worker）、テスト設計・実装ガイド（references）を撒く。Unity 操作は Unity CLI に固定で、
   Unity CLI 本体と com.unity.pipeline が未導入なら入れる。
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無だけを
   実行時に AskUserQuestion で確認する。コーディング規約を機械で止める Roslyn analyzer と、
@@ -21,7 +21,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 このコマンドは、対象 Unity プロジェクトに次を**冪等に**インストールする（再実行安全）:
 
 1. **rules** — `unity-cli.md`（Unity 操作の絶対ルール。方針・失敗判定・コマンドの発見手順・Safe Mode 復旧）/ `folder-structure.md` / `hierarchy.md` / `asset-naming.md` / `coding-standards.md` / `testing.md`
-2. **test-unity** — 変更差分のテスト責任判定・設計・実装・重複整理・実行（skill + `unity-tester` agent + 設計/実装ガイド）
+2. **references** — `test-designing-guide.md`（技法・依存エラー方針・合成クラス）と `test-writing-guide.md`（命名・NUnit/UniTask 規約・TestDoubles・asmdef）。テストの**判断基準は `rules/testing.md` が持つ**ので、こちらは技法と書き方だけ
 3. **lint-unity** — アセット・シーン・Prefab のルール準拠チェック（skill + `unity-linter` agent + チェックリスト）
 4. **unity-parallel** — git worktree で複数の `unity-worker` を並列に動かしつつ、1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す（skill + `lane.mjs`（貸し出し管理）+ `guard.mjs`（PreToolUse hook）+ `unity-worker` agent + `references/protocol.md`）。**この skill は自身の frontmatter で hook を登録する** — 呼び出したセッションでだけ有効になり、`settings.json` には触れない
 5. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
@@ -36,7 +36,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 - **live Editor 操作には `com.unity.pipeline` と Unity 6.0 LTS 以降が必要**。
   Pipeline は**このコマンドが入れる**（Step 2.7）。要るのは Unity アカウントへのサインインだけで、
   未サインインなら `unity auth login` の実行を頼む（ブラウザが開く対話フローなので代打しない）。
-  6.0 未満でも `unity test` / `unity build` / `unity projects verify` は動くので、test-unity は完走し、
+  6.0 未満でも `unity test` / `unity build` / `unity projects verify` は動くので、テスト実行は完走し、
   lint-unity は Editor 不要カテゴリだけ実行する縮退動作になる
 - `com.unity.ai.assistant` を入れているなら **2.13 以降**（それ未満は CLI と競合する）
 - Node.js が利用可能
@@ -57,12 +57,12 @@ cat <target>/ProjectSettings/ProjectVersion.txt   # Editor 版（6.0 LTS 以降�
 ```
 
   - **CLI 未導入**（`unity` が見つからない）→ 導入手順を案内し、**導入は必須ではない**旨も添える
-    （規約の配備自体は CLI 無しでもできる。CLI が無いと test-unity / lint-unity が動かないだけ）
+    （規約の配備自体は CLI 無しでもできる。CLI が無いとテスト実行 / lint-unity が動かないだけ）
   - **Pipeline 未導入 / 到達不可** → `unity auth login` → `unity pipeline install` を案内する。
     Safe Mode（`data.summary.instancesInSafeMode > 0`）なら、それはコンパイルエラーであって
     導入の問題ではない旨を伝える
   - **Editor 版が 6.0 未満** → live Editor 操作が使えないため、lint-unity が Editor 不要カテゴリだけの
-    縮退動作になることを伝える（test-unity は `unity test` で完走する）
+    縮退動作になることを伝える（テスト実行は `unity test` で完走する）
   - **再実行時の現在値**: `.claude/rules/architecture.md` の有無（architecture モード導入済みか）
   - `Assets/App/` の有無
 
@@ -85,15 +85,15 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/setup-unity/apply.mjs" {target} [--architectu
 
 apply.mjs が次を行う:
 - `templates/base/` を `{target}/.claude/`（`rules/` `skills/` `agents/`）へ再帰コピー
-- このスキルが配らないファイル（`rules/unity-mcp.md` / `rules/unity-mcp-tools.md` /
-  `skills/{test-unity,lint-unity}/references/unity-mcp-tools.md`）が配備先にあれば**取り除く**。
-  残すと `rules/unity-cli.md` と手順が二重になり、常時コンテキストに並ぶため
+- このスキルが配らないファイル（`OBSOLETE_PATHS`。旧 unity-mcp 一式と、skill をやめた
+  `skills/test-unity/` 一式・`agents/unity-tester.md`）が配備先にあれば**取り除く**。
+  空になったディレクトリも畳む。残すと現行の rules と手順が二重になり、常時コンテキストに並ぶため
   （プロジェクト固有の追記があった場合は配備先の git 履歴から復元できる）
 - 廃止したフラグ（`--mcp <値>` / `--analyzer` / `--analyzer-severity=...`）を渡されても
   **エラーにせず注意を出して無視**する
   （`sync-setup-state.json` に記録が残っている配備先があり、テンプレ同期がそのまま渡してくるため。次の適用で state から消える）
 - `--architecture` 時は `templates/architecture/` を上から上書きコピー
-  （architecture / class-catalog の追加 + folder-structure / coding-standards / testing / test-designing-guide のレイヤー版差し替え。lint checklist は base に統合済みなので差し替えない）
+  （architecture / class-catalog の追加 + folder-structure / coding-standards / testing / references/test-designing-guide のレイヤー版差し替え。lint checklist は base に統合済みなので差し替えない）
 - **architecture 導入済みの検知**: `.claude/rules/architecture.md` が既にあれば、`--architecture` 指定なしでも architecture モードを自動継承する（レイヤー版規約が base 版に巻き戻るのを防止）
 - `templates/project/` を `{target}/`（**`.claude/` ではなくプロジェクト直下**）へ**常時**コピーする。
   中身は `Assets/Analyzers/`（analyzer の DLL / `.meta` / README）と `.github/`（PR ゲートの
@@ -131,7 +131,7 @@ Step 1 で **CLI 未導入**（`unity --version` が失敗）と分かってい�
 Step 1 で **Pipeline 未導入**と分かっていて、Editor 版が **6.0 LTS 以降**で、
 かつ **CLI が Step 2.6 で入れたものでない**（＝このセッションで `unity` が使える）なら、ここで入れる。
 `unity command`（シーン・Prefab・コンポーネント操作、コンパイル確認）がこれを前提にしているため、
-入れないと test-unity / lint-unity が縮退動作のままになる。
+入れないとテスト実行 / lint-unity が縮退動作のままになる。
 
 ```bash
 unity pipeline install --project-path {target} --format json
@@ -202,7 +202,7 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
     analyzer と同じ理由で、通っている状態と見ていない状態は外から区別できない
   - 両ジョブを **branch protection の必須チェック**に登録するのはリポジトリ側の設定
     （このスキルは触らない）
-- 全件のテスト実行は CI（`unity-ci` の test ジョブ）が担う。`/test-unity` は差分に対応する
+- 全件のテスト実行は CI（`unity-ci` の test ジョブ）が担う。ローカルでは差分に対応する
   テストだけ回す。プロジェクト外の常時失敗テストを拾うプロジェクトでは、workflow の
   `TEST_FILTER` に自分のテスト名前空間を書いて絞る（**人が読む一覧ではなくコマンドへ渡る値**なので、
   記述と実行の乖離が起きない）
@@ -231,5 +231,5 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   ソース（`analyzers/src/`）を変えたら **`npm run build:analyzer` を流してコミットする**。
   流し忘れは `npm test` が `analyzers/dist.json` の sourceHash で検出する。
   規則そのものの正しさは `npm run test:analyzer`（CI の analyzer ジョブ）が見る
-- **テンプレート保守（スキル開発者向け）**: `templates/architecture/` の各ファイル（folder-structure / coding-standards / testing / test-designing-guide）は `templates/base/` の同名ファイルのレイヤー特化版で、architecture モード時に上書き差し替えされる。base 側の規約を変えたら architecture 側にも反映すること（テスト設計ガイドの「テスト責任」「禁止する低品質テスト」一覧やアセットのプレフィックスは、`rules/testing.md` / `rules/asset-naming.md` を単一ソースとして参照させ、重複記載を避ける）
+- **テンプレート保守（スキル開発者向け）**: `templates/architecture/` の各ファイル（folder-structure / coding-standards / testing / references/test-designing-guide）は `templates/base/` の同名ファイルのレイヤー特化版で、architecture モード時に上書き差し替えされる。base 側の規約を変えたら architecture 側にも反映すること（テスト設計ガイドの「テスト責任」「禁止する低品質テスト」一覧やアセットのプレフィックスは、`rules/testing.md` / `rules/asset-naming.md` を単一ソースとして参照させ、重複記載を避ける）
 - CLAUDE.md へ配る節は `templates/claude-md.md` にある（apply.mjs のコード内定数ではない）。文面を変えるとその節の行が配備先と一致しなくなり、次の適用で「要マージ」として検出される。文面の移行リストを保守する必要はない
