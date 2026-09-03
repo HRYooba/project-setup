@@ -25,7 +25,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 3. **unity-parallel** — git worktree で複数の `unity-worker` を並列に動かしつつ、1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す（skill + `lane.mjs`（貸し出し管理）+ `guard.mjs`（PreToolUse hook）+ `unity-worker` agent + `references/protocol.md`）。**この skill は自身の frontmatter で hook を登録する** — 呼び出したセッションでだけ有効になり、`settings.json` には触れない
 4. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
 5. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards への差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
-6. **Roslyn analyzer** — `coding-standards.md` の**型を見ないと判定できない規約**をコンパイル時に止める。`Assets/Analyzers/`（DLL + `.meta` + README）を**`.claude/` ではなく Unity プロジェクト本体へ**置く。既製の analyzer や `.editorconfig` の naming rules では書けない部分だけを担当する（`private _camelCase`・定数 `PascalCase`・`Async` サフィックスは既製ルールの領分なので持たない）。**設定ファイル（`.ruleset` / `.globalconfig`）は配らない** — 全規則 Warning 固定で、PR の gate は次の CI が担う
+6. **Roslyn analyzer** — `coding-standards.md` の**型を見ないと判定できない規約**をコンパイル時に止める。`Assets/Analyzers/`（DLL + `.meta` + README）を**`.claude/` ではなく Unity プロジェクト本体へ**置く（名前だけで判定できる規約は持たない）。**設定ファイル（`.ruleset` / `.globalconfig`）は配らない** — 全規則 Warning 固定で、PR の gate は次の CI が担う
 7. **PR ゲートの GitHub Actions** — `.github/workflows/unity-ci.yml` と `.github/actions/setup-unity-cli/`。`unity projects verify --strict`（Editor 不要）と `unity test`（EditMode / PlayMode を順に。GameCI の Editor イメージ上）を走らせ、Editor のコンパイルログに `warning UCS` があれば落とす。**Unity ライセンスの secret 登録と Plus / Pro 以上の seat が要る**（未登録なら test ジョブが赤くなる。verify ジョブは secret 不要で常に動く）
 
 ## 前提（満たされていないと skills が動かない）
@@ -178,8 +178,8 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
     最初の 1 回だけは陽性を確認する価値がある
   - **severity は Warning 固定で、Error には上げない**。Unity は C# のコンパイルエラーで Safe Mode に
     入るため、命名違反 1 件で Editor が作業不能になる。PR を止めるのは CI の役目
-  - 正当な例外は `#pragma warning disable UCS0006` のように範囲を絞って抑制し、理由をコメントに書く。
-    詳細は配置される `Assets/Analyzers/README.md`
+  - 正当な例外は `#pragma warning disable UCS0006` のように範囲を絞って抑制し、理由をコメントに書く
+    （配布する `rules/coding-standards.md`「規約の機械チェック」に同じことが書いてある）
 - **CI について**は、次を伝える:
   - **CI のテスト実行には Plus / Pro 以上のライセンスが要る**。Unity は Personal の
     非対話・オフライン有効化を Enterprise / Industry 限定にしており、手元の `.ulf` を

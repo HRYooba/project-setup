@@ -6,8 +6,10 @@
 ## 何を担当するか
 
 `skills/setup-unity/templates/*/rules/coding-standards.md` のうち、**型を見ないと判定できない規約**だけ。
-既製の analyzer や `.editorconfig` の naming rules で書けるもの（`private _camelCase`・
-定数 `PascalCase`・`Async` サフィックス・namespace とフォルダの一致）は持たない。
+`private _camelCase`・定数 `PascalCase`・`Async` サフィックス・namespace とフォルダの一致は
+**持っていない**。**Unity は `.editorconfig` を C# コンパイラへ渡さない**ので `dotnet_diagnostic` や
+naming rules の経路も無く、これらは**機械では担保されていない**（`coding-standards.md` を読んで
+守る前提）。名前だけで判定できるので、必要になれば規則として足せる。
 
 規則 ID の一覧は `src/UnityCodingStandards.Analyzers/AnalyzerReleases.Unshipped.md` が正本。
 新しい ID をそこへ書き忘れると `RS2008` でビルドが落ちる（一覧が腐らない）。
