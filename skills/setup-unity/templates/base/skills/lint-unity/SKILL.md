@@ -43,7 +43,12 @@ Unity 操作は Unity CLI 経由。コマンド・フラグ・exit code は `uni
 プロジェクト整合性（`unity projects verify`）はこの skill では見ない。
 `.github/workflows/unity-ci.yml` が担う（同じ検査を 2 箇所で走らせない）。
 
-**除外:** `Assets/ThirdParty/`（E1のみ例外）、`Assets/Plugins/`、`Library/`、`Packages/`
+**対象は `Assets/App/` 配下のホワイトリスト。** 外部アセットの置き場
+（`Assets/ThirdParty/` `Assets/Plugins/` `Packages/`）は数え上げられないので、除外リストは
+作らない。漏れると直せない指摘でレポートが埋まる。
+
+唯一の例外は **E1**（`Assets/ThirdParty/` へのプロジェクト固有ファイルの混入検査）で、
+これだけは `Assets/ThirdParty/` を見る。
 
 ## ターン実行計画
 
@@ -66,9 +71,9 @@ default branch は `git symbolic-ref --short refs/remotes/origin/HEAD` で検出
 以下を並列で呼び出す:
 ```
 Bash: unity pipeline list --format json
-Bash: git symbolic-ref --short refs/remotes/origin/HEAD && git diff --name-only origin/<default>...HEAD -- '*.unity' '*.prefab' '*.asset' '*.mat' '*.anim' '*.controller' '*.shadergraph' '*.shader' '*.hlsl' '*.vfx' '*.renderTexture' '*.playable' '*.asmdef' '*.png' '*.jpg' '*.tga' '*.exr' '*.wav' '*.mp3' '*.ogg'
-Bash: git diff --name-only HEAD -- (同上)
-Bash: git ls-files --others --exclude-standard -- (同上)
+Bash: git symbolic-ref --short refs/remotes/origin/HEAD && git diff --name-only origin/<default>...HEAD -- 'Assets/App' 'Assets/ThirdParty'
+Bash: git diff --name-only HEAD -- 'Assets/App' 'Assets/ThirdParty'
+Bash: git ls-files --others --exclude-standard -- 'Assets/App' 'Assets/ThirdParty'
 ```
 
 - `unity pipeline list` の `isReachable` で **Editor 到達性**を決める（exit code では決めない）。
@@ -77,7 +82,8 @@ Bash: git ls-files --others --exclude-standard -- (同上)
   Safe Mode（`data.summary.instancesInSafeMode > 0`）なら、**lint より先にコンパイルエラーの解消が要る**旨を
   レポート冒頭に書く
 
-git 3 件を合算・重複除去。引数なし時は拡張子でカテゴリ自動選択:
+git 3 件を合算・重複除去。**下の表に無い拡張子は無視する**（`.cs` / `.md` 等）。
+`Assets/ThirdParty/` 配下は **E1 だけ**に回す。引数なし時は拡張子でカテゴリ自動選択:
 
 | 拡張子 | カテゴリ |
 |---|---|

@@ -204,6 +204,13 @@ test("Unity 操作の方針は CLAUDE.md の 2 行だけ（CLI の写しを持�
   );
   assert.match(md, /Unity CLI 経由で行う/, "CLI 経由の方針が消えている");
   assert.match(md, /\.prefab.*手編集しない/, "手編集の禁止が消えている");
+
+  // テストと lint は **Assets/App/ のホワイトリスト**。外部アセットの置き場は数え上げ
+  // られないので、除外リストにすると漏れが直せない失敗・指摘になって返ってくる
+  // （analyzer と CI で同じ結論に至っている）。
+  for (const line of md.split(/\r?\n/).filter((l) => /^- \*\*(テスト|lint)\*\*/.test(l))) {
+    assert.match(line, /Assets\/App\//, `Assets/App/ に絞られていない: ${line}`);
+  }
   assert.ok(
     !existsSync(
       join(here, "..", "skills", "setup-unity", "templates", "base", "rules", "unity-cli.md")
