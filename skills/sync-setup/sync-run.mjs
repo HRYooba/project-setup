@@ -15,9 +15,10 @@
 // Assets/Analyzers + ルート直下）で展開する。
 // Unity リポジトリを全展開すると Windows の MAX_PATH（260 字）に当たり、数 GB と数分を払う。
 //
-// drift 判定（記録版 vs 現行版）と現行版の読み取りは sync-setup-check.mjs と同じロジックを
-// 持つ。hook は配備先へ単体コピーされる制約上 import できず共有 lib 化できないため、ここは
-// 意図的な重複。挙動を変えるときは両方を揃える（cmpVer / installed_plugins.json の読み方）。
+// drift 判定（記録された skill 版 vs 現行の skill 版）の規則は skill-version.mjs が正本。
+// hook（lib/sync-setup-drift.mjs）は配備先へ単体コピーされる制約上 import できず共有 lib 化
+// できないため、あちらは同じ規則を自前で持つ。挙動を変えるときは両方を揃える
+//（decideDrift / SKILL.md の version の読み方 / installed_plugins.json の読み方）。
 //
 // 実行は 2 フェーズに分かれる。間に「Claude が .md をマージする」工程が挟まるため。
 // apply.mjs は rules/*.md と CLAUDE.md を書かず「要マージ」として報告するだけなので、
@@ -49,12 +50,11 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { decideDrift, readSkillVersion, SKILL_KEYS } from "./skill-version.mjs";
 import { readSyncState, stateFiles } from "./state.mjs";
 /* global process, console */
 
 const here = dirname(fileURLToPath(import.meta.url));
-
-const SKILL_KEYS = ["setup-github", "setup-unity"];
 
 function fail(msg) {
   console.error(msg);
@@ -69,18 +69,6 @@ function readJson(path) {
   } catch {
     return null;
   }
-}
-
-// "1.2.0" 同士を数値比較。a > b で正（sync-setup-check.mjs と同一仕様）。
-function cmpVer(a, b) {
-  const pa = String(a).split(".").map((n) => parseInt(n, 10));
-  const pb = String(b).split(".").map((n) => parseInt(n, 10));
-  for (let i = 0; i < 3; i++) {
-    const x = Number.isFinite(pa[i]) ? pa[i] : 0;
-    const y = Number.isFinite(pb[i]) ? pb[i] : 0;
-    if (x !== y) return x - y;
-  }
-  return 0;
 }
 
 // git をシェル非経由で実行。失敗時は null。
@@ -240,16 +228,17 @@ if (phase === "publish") {
     console.log(`旧名の状態ファイルを読みました（${legacy.map((f) => f.name).join(" / ")}）。同期時に正名へ畳みます。`);
   }
 
+  // 判定は skill ごとの版（`skills/<skill>/SKILL.md` の frontmatter）で行う。プラグイン版で
+  // 判定すると、setup-unity のテンプレだけ変わった更新で setup-github だけの配備先まで
+  // drift 扱いになり、状態ファイルの版を進めるだけの PR が出る。規則の正本は skill-version.mjs。
   drifted = [];
   for (const k of SKILL_KEYS) {
-    const rec = state[k];
-    if (!rec || typeof rec !== "object" || !rec.version) continue;
-    if (cmpVer(currentVersion, rec.version) > 0) {
-      drifted.push({ skill: k, from: rec.version, flags: Array.isArray(rec.flags) ? rec.flags : [] });
-    }
+    const d = decideDrift(state[k], readSkillVersion(installPath, k), currentVersion);
+    if (!d) continue;
+    drifted.push({ skill: k, ...d, flags: Array.isArray(state[k].flags) ? state[k].flags : [] });
   }
   if (drifted.length === 0) {
-    console.log(`同期不要: 記録版と現行版（v${currentVersion}）に差がありません。`);
+    console.log(`同期不要: 記録版と現行の skill 版に差がありません（プラグイン v${currentVersion}）。`);
     process.exit(0);
   }
 }
@@ -257,11 +246,11 @@ if (phase === "publish") {
 function describePlan() {
   console.log(`同期計画:`);
   console.log(`  対象リポジトリ: ${target}`);
-  console.log(`  現行版: v${currentVersion}`);
+  console.log(`  プラグイン版: v${currentVersion}（判定には使わない。ブランチ名と試行上限の鍵）`);
   console.log(`  ブランチ: ${branch}`);
   console.log(`  試行回数: ${attemptCount}/${maxAttempts}`);
   for (const d of drifted) {
-    console.log(`  - ${d.skill}: v${d.from} → v${currentVersion}（flags: ${d.flags.join(" ") || "なし"}）`);
+    console.log(`  - ${d.skill}: v${d.from} → v${d.to}（flags: ${d.flags.join(" ") || "なし"}）`);
   }
 }
 
@@ -443,7 +432,7 @@ if (!staged) {
   rmSync(planPath, { force: true });
   process.exit(0);
 }
-const summary = drifted.map((d) => `${d.skill} v${d.from}→v${currentVersion}`).join(" / ");
+const summary = drifted.map((d) => `${d.skill} v${d.from}→v${d.to}`).join(" / ");
 // .md 統合でテンプレと現物が矛盾し、その場で決め切らなかったとき Claude が sync-notes.md に
 // 書き残す（md-merge-contract.md 参照）。判断の材料を PR 本文へ持ち上げてレビューの場に出す。
 // 読んだら消す（次回の PR に古いメモを持ち越さない）。
@@ -454,7 +443,7 @@ if (existsSync(notesPath)) {
 }
 const body =
   `project-setup テンプレートの更新に自動追随する PR です（\`/sync-setup\`）。\n\n` +
-  `## 同期内容\n\n${drifted.map((d) => `- ${d.skill}: v${d.from} → v${currentVersion}（flags: ${d.flags.join(" ") || "なし"}）`).join("\n")}\n\n` +
+  `## 同期内容\n\n${drifted.map((d) => `- ${d.skill}: v${d.from} → v${d.to}${d.basis === "plugin" ? "（skill 版が未記録のためプラグイン版で比較）" : ""}（flags: ${d.flags.join(" ") || "なし"}）`).join("\n")}\n\n` +
   (carriedNotes ? `## 要確認（テンプレと現物が矛盾）\n\n${carriedNotes}\n\n` : "") +
   (carriedWarnings.length ? `## apply.mjs の警告\n\n${carriedWarnings.join("\n\n")}\n` : "警告はありません。\n");
 const commitMsg = `chore: テンプレ同期 v${currentVersion}\n\n${summary}`;

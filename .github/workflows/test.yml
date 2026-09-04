@@ -31,6 +31,21 @@ jobs:
       - run: npm run test
       - run: npm run validate
 
+  # 配布物を変えた PR で skill 版の bump 忘れを止める。テンプレ自動追随の drift 判定は
+  # skill 版どうしの比較で行うため、上げ忘れると更新がどの配備先にも黙って届かない
+  # （エラーも出ない）。base との比較が要るので fetch-depth: 0、PR のときだけ走らせる。
+  skill-version:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-skill-version-bump.mjs "origin/${{ github.base_ref }}"
+
   analyzer:
     runs-on: ubuntu-latest
     steps:

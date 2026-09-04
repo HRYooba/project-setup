@@ -14,7 +14,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SYNC_RUN, tempDir } from "./helpers.mjs";
+import { fakePluginRoot, SYNC_RUN, tempDir } from "./helpers.mjs";
 import { dirname } from "node:path";
 /* global process */
 
@@ -298,4 +298,40 @@ ${stderr}`);
   );
   // 廃止フラグを渡されても止まらず、警告が出力に載る
   assert.match(stdout, /廃止したオプションを無視しました/);
+});
+// ---- skill ごとの判定 ----
+// 判定は `skills/<skill>/SKILL.md` の version で行う。hook（lib/sync-setup-drift.mjs）と
+// 同じ規則を持つため、両者が食い違うと「知らせたのに同期不要と言われる」空振りになる。
+
+test("dry-run: 相手のスキルだけ版が上がった更新では同期不要になる", () => {
+  const target = tempDir("syncrun-skillver-other-");
+  writeState(target, { "setup-github": { skillVersion: "1.26.0", flags: [] } });
+  const installPath = fakePluginRoot({ "setup-github": "1.26.0", "setup-unity": "3.3.0" });
+  const { status, stdout } = runSyncRun(target, "9.9.9", { dryRun: true, installPath });
+  assert.equal(status, 0);
+  assert.match(stdout, /同期不要/);
+});
+
+test("dry-run: 版が上がったスキルだけを計画に載せる", () => {
+  const target = tempDir("syncrun-skillver-both-");
+  writeState(target, {
+    "setup-github": { skillVersion: "1.26.0", flags: [] },
+    "setup-unity": { skillVersion: "3.2.0", flags: ["--architecture"] },
+  });
+  const installPath = fakePluginRoot({ "setup-github": "1.26.0", "setup-unity": "3.3.0" });
+  const { status, stdout } = runSyncRun(target, "9.9.9", { dryRun: true, installPath });
+  assert.equal(status, 0);
+  assert.match(stdout, /setup-unity: v3\.2\.0 → v3\.3\.0/);
+  assert.doesNotMatch(stdout, /setup-github: v/);
+  // ブランチ名と試行上限はプラグイン版のまま（同期 1 回を識別する鍵）。
+  assert.match(stdout, /chore\/sync-setup-v9\.9\.9/);
+});
+
+test("dry-run: skillVersion 未記録の旧配備先はプラグイン版の旧規則で拾う", () => {
+  const target = tempDir("syncrun-skillver-legacy-");
+  writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
+  const installPath = fakePluginRoot({ "setup-github": "1.27.0" });
+  const { status, stdout } = runSyncRun(target, "1.3.0", { dryRun: true, installPath });
+  assert.equal(status, 0);
+  assert.match(stdout, /setup-github: v1\.0\.0 → v1\.3\.0/);
 });

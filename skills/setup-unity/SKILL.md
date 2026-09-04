@@ -10,7 +10,7 @@ description: >
   Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れ、CLI の詳細は
   公式 unity-cli skill を `--local` で入れて任せる。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無だけを実行時に AskUserQuestion で確認する。
-version: 3.2.0
+version: 3.3.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -107,7 +107,7 @@ apply.mjs が次を行う:
   どれもビルド成果物・配布物なので上書きする（**設定ファイルは配らない**ので、配備先が育てる
   ファイルがここに無い ＝ マージ判定が要らない）
 - `.claude/rules/*.md` と `.claude/CLAUDE.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。CLAUDE.md は節を配るので全文一致では判定できず、**節の非空行がすべて配備先にあれば反映済み**とみなす（判定基準がテンプレ本体から導出されるので、別途マーカーを維持しなくてよい）
-- `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時のプラグイン版と有効フラグ = `--architecture`）をマージ記録する（setup-github のキーは温存）。**このスキルは settings.json に触れず hook も配らない**（従来どおり）。ドリフト検知の hook（SessionStart の `sync-setup-check.mjs` と UserPromptSubmit の `sync-setup-prompt.mjs`）は setup-github が配り、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
+- `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時の skill 版 = この SKILL.md の `version:`、と有効フラグ = `--architecture`）をマージ記録する（setup-github のキーは温存）。**このスキルは settings.json に触れず hook も配らない**（従来どおり）。ドリフト検知の hook（SessionStart の `sync-setup-check.mjs` と UserPromptSubmit の `sync-setup-prompt.mjs`）は setup-github が配り、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
 
 ### Step 2.5: 要マージのファイルを統合する
 

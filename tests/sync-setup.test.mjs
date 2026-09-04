@@ -15,7 +15,16 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { APPLY, APPLY_UNITY, HOOKS_DIR, SYNC_HOOK, SYNC_PROMPT_HOOK, tempDir } from "./helpers.mjs";
+import {
+  APPLY,
+  APPLY_UNITY,
+  fakePluginRoot,
+  HOOKS_DIR,
+  skillVersion,
+  SYNC_HOOK,
+  SYNC_PROMPT_HOOK,
+  tempDir,
+} from "./helpers.mjs";
 /* global process */
 
 function runApply(applyPath, target, args = []) {
@@ -64,11 +73,11 @@ function writeState(projectDir, obj) {
   writeFileSync(join(projectDir, ".claude", "sync-setup-state.json"), JSON.stringify(obj, null, 2) + "\n", "utf8");
 }
 
-test("setup-github apply が状態ファイルへ版と pr-copilot フラグを記録する", () => {
+test("setup-github apply が状態ファイルへ skill 版と pr-copilot フラグを記録する", () => {
   const target = tempDir("sync-gh-");
   runApply(APPLY, target, ["--pr-copilot", "--review-targets=src,shared"]);
   const state = JSON.parse(readFileSync(join(target, ".claude", "sync-setup-state.json"), "utf8"));
-  assert.equal(state["setup-github"].version, PLUGIN_VERSION);
+  assert.equal(state["setup-github"].skillVersion, skillVersion("setup-github"));
   assert.ok(state["setup-github"].flags.includes("--pr-copilot"));
   assert.ok(state["setup-github"].flags.includes("--review-targets=src,shared"));
 });
@@ -80,7 +89,7 @@ test("setup-github と setup-unity が状態ファイルへ各自のキーをマ
   writeFileSync(join(target, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 2022.3.0f1\n", "utf8");
   runApply(APPLY_UNITY, target, ["--architecture"]);
   let state = JSON.parse(readFileSync(join(target, ".claude", "sync-setup-state.json"), "utf8"));
-  assert.equal(state["setup-unity"].version, PLUGIN_VERSION);
+  assert.equal(state["setup-unity"].skillVersion, skillVersion("setup-unity"));
   assert.ok(state["setup-unity"].flags.includes("--architecture"));
   assert.ok(!state["setup-unity"].flags.includes("--mcp"), "廃止された --mcp が保存されている");
 
@@ -120,7 +129,7 @@ test("旧名の状態ファイルは apply で新名へ移行される（追随�
 
   assert.ok(!existsSync(join(target, ".claude", "setup-sync-state.json")), "旧名が残っている");
   const state = JSON.parse(readFileSync(join(target, ".claude", "sync-setup-state.json"), "utf8"));
-  assert.equal(state["setup-github"].version, PLUGIN_VERSION, "新名へ移った後に版が更新されていない");
+  assert.equal(state["setup-github"].skillVersion, skillVersion("setup-github"), "新名へ移った後に版が更新されていない");
   assert.match(out, /setup-sync-state\.json → sync-setup-state\.json/);
 });
 
@@ -146,7 +155,7 @@ test("最初期の旧名 .setup-sync.json のキーも正名へ引き継がれ�
   const state = JSON.parse(readFileSync(join(target, ".claude", "sync-setup-state.json"), "utf8"));
   assert.ok(state["setup-unity"], "旧名にしか無かった setup-unity のキーが失われた");
   assert.equal(state["setup-unity"].version, "1.3.0", "引き継いだキーの版が書き換わっている");
-  assert.equal(state["setup-github"].version, PLUGIN_VERSION);
+  assert.equal(state["setup-github"].skillVersion, skillVersion("setup-github"));
 });
 
 // hook 側も同じ規則で旧名を読む。読まないと、旧名にしか記録の無いスキルの更新を誰も知らせない。
@@ -371,4 +380,59 @@ test("apply: 両 hook を settings.json へ登録する", () => {
     (settings.hooks[event] ?? []).flatMap((g) => (g.hooks ?? []).map((h) => h.command));
   assert.ok(cmds("SessionStart").some((c) => c.includes("sync-setup-check.mjs")));
   assert.ok(cmds("UserPromptSubmit").some((c) => c.includes("sync-setup-prompt.mjs")));
+});
+// ---- skill ごとの判定 ----
+// 判定はプラグイン全体の版ではなく `skills/<skill>/SKILL.md` の version で行う。プラグイン版で
+// 判定していた頃は、setup-unity のテンプレだけ変えた更新でも setup-github だけの配備先が
+// drift 扱いになり、状態ファイルの版を進めるだけの PR が出ていた。
+
+test("hook: 相手のスキルだけ版が上がっても、自分のスキルしか無い配備先は黙る", () => {
+  const target = tempDir("sync-skillver-other-");
+  writeState(target, { "setup-github": { skillVersion: "1.26.0", flags: [] } });
+  // プラグイン版は大きく進んでいる（unity のテンプレが変わった更新）。setup-github は据え置き。
+  const installPath = fakePluginRoot({ "setup-github": "1.26.0", "setup-unity": "3.3.0" });
+  assert.equal(runSyncHook(target, "9.9.9", { installPath }), "");
+});
+
+test("hook: 自分のスキルの版が上がっていれば知らせる（プラグイン版とは無関係に）", () => {
+  const target = tempDir("sync-skillver-self-");
+  writeState(target, { "setup-github": { skillVersion: "1.26.0", flags: [] } });
+  const installPath = fakePluginRoot({ "setup-github": "1.27.0" });
+  const out = JSON.parse(runSyncHook(target, "1.0.0", { installPath }));
+  assert.match(out.systemMessage, /setup-github v1\.26\.0→v1\.27\.0/);
+});
+
+test("hook: 両方入っている配備先では、版が上がったスキルだけを対象にする", () => {
+  const target = tempDir("sync-skillver-both-");
+  writeState(target, {
+    "setup-github": { skillVersion: "1.26.0", flags: [] },
+    "setup-unity": { skillVersion: "3.2.0", flags: ["--architecture"] },
+  });
+  const installPath = fakePluginRoot({ "setup-github": "1.26.0", "setup-unity": "3.3.0" });
+  const out = JSON.parse(runSyncHook(target, "9.9.9", { installPath }));
+  assert.match(out.systemMessage, /setup-unity v3\.2\.0→v3\.3\.0/);
+  assert.doesNotMatch(out.systemMessage, /setup-github v/);
+});
+
+test("hook: skill 版がダウングレード方向なら黙る（版がずれたマシンで巻き戻さない）", () => {
+  const target = tempDir("sync-skillver-down-");
+  writeState(target, { "setup-github": { skillVersion: "1.27.0", flags: [] } });
+  const installPath = fakePluginRoot({ "setup-github": "1.26.0" });
+  assert.equal(runSyncHook(target, "9.9.9", { installPath }), "");
+});
+
+test("hook: skillVersion 未記録の旧配備先はプラグイン版の旧規則で拾う（黙って止めない）", () => {
+  // 旧形式の記録を「対象外」にすると、その配備先は永久に追随が止まる（エラーも出ないので
+  // 誰も気づけない）。次の apply が skillVersion を書くので、この経路は各配備先で 1 度だけ通る。
+  const target = tempDir("sync-skillver-legacy-");
+  writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
+  const installPath = fakePluginRoot({ "setup-github": "1.27.0" });
+  const out = JSON.parse(runSyncHook(target, "1.3.0", { installPath }));
+  assert.match(out.systemMessage, /setup-github v1\.0\.0→v1\.3\.0/);
+});
+
+test("hook: installPath から SKILL.md が読めなければ黙る（プラグインが居ない）", () => {
+  const target = tempDir("sync-skillver-noplugin-");
+  writeState(target, { "setup-github": { skillVersion: "1.26.0", flags: [] } });
+  assert.equal(runSyncHook(target, "9.9.9", { installPath: fakePluginRoot() }), "");
 });
