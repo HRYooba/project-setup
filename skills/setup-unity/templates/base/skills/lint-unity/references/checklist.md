@@ -83,14 +83,13 @@ asset-naming.md を編集し、必要ならこの対応表と上の A 項目を�
 
 ## [E] Folder Structure (フォルダ構成) — Editor: 不要
 
-- E1: **ERROR** — `Assets/ThirdParty/` 配下にプロジェクト固有のファイルが混入していないか
-- E2: **WARNING** — アセットが適切なフォルダに配置されているか
+- E1: **WARNING** — アセットが適切なフォルダに配置されているか
   - Scenes → `Assets/App/Scenes/`
   - Prefabs → `Assets/App/Prefabs/`
   - Materials → `Assets/App/Materials/`
   - Animations → `Assets/App/Animations/`
-- E3: **WARNING** — Scripts フォルダ内にスクリプト以外のファイルが混入していないか
-- E4: **INFO** — 空フォルダが残っていないか
+- E2: **WARNING** — Scripts フォルダ内にスクリプト以外のファイルが混入していないか
+- E3: **INFO** — 空フォルダが残っていないか
 
 ## [F] Prefab Integrity (Prefab 整合性) — Editor: 必須
 
