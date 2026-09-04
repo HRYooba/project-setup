@@ -11,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -156,3 +156,52 @@ test("CI の secret 確認は導入を止めない（gh が使えなくても完
     "確認の失敗で配置が中断している"
   );
 });
+
+test("配布 Markdown が指す rules の節は実在する（消した節への参照を残さない）", () => {
+  // 節を消しても参照が残ると、読んだ側は「どこかに書いてある」と信じて探し、見つからない。
+  // 書いた時点では正しかった記述が、周りが変わって黙って嘘になる典型。
+  const templates = join(here, "..", "skills", "setup-unity", "templates");
+  const dangling = [];
+
+  for (const layer of ["base", "architecture"]) {
+    const layerRoot = join(templates, layer);
+    if (!existsSync(layerRoot)) continue;
+
+    // 同じレイヤーの rules/*.md の見出しを集める。architecture は base のファイルを
+    // 差し替える形なので、architecture に無いものは base 側を見る。
+    const headings = (dir) => {
+      const map = new Map();
+      const rulesDir = join(dir, "rules");
+      if (!existsSync(rulesDir)) return map;
+      for (const name of readdirSync(rulesDir).filter((n) => n.endsWith(".md"))) {
+        const text = readFileSync(join(rulesDir, name), "utf8");
+        map.set(name, [...text.matchAll(/^#{2,3} (.+)$/gm)].map((m) => m[1]));
+      }
+      return map;
+    };
+    const own = headings(layerRoot);
+    const base = layer === "base" ? own : headings(join(templates, "base"));
+
+    for (const file of walk(layerRoot).filter((f) => f.endsWith(".md"))) {
+      const text = readFileSync(file, "utf8");
+      for (const [, target, section] of text.matchAll(/rules\/([a-z-]+\.md)`?「([^」]+)」/g)) {
+        const list = own.get(target) ?? base.get(target);
+        // 見出しは「Safe Mode（…）」のように補足が付く。前方一致で足りる。
+        if (list?.some((h) => h.startsWith(section))) continue;
+        dangling.push(`${file.slice(templates.length + 1)}: rules/${target}「${section}」`);
+      }
+    }
+  }
+
+  assert.deepEqual(dangling, [], `存在しない節を参照している:\n  ${dangling.join("\n  ")}`);
+});
+
+function walk(dir) {
+  const out = [];
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) out.push(...walk(p));
+    else out.push(p);
+  }
+  return out;
+}
