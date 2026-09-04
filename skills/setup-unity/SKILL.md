@@ -4,7 +4,7 @@ description: >
   現在の Unity プロジェクトに開発規約一式（rules / lint-unity / サブエージェント）を
   導入するセットアップコマンド。ユーザーが「Unityセットアップ」「setup-unity」「Unity規約を導入」
   「このプロジェクトにUnity開発ルールを入れて」などと依頼したときに使用する。
-  カレントのリポジトリの .claude/ に rules（unity-cli / folder-structure / hierarchy /
+  カレントのリポジトリの .claude/ に rules（folder-structure / hierarchy /
   asset-naming / coding-standards）、skills（lint-unity / unity-parallel）、
   agents（unity-linter / unity-worker）を撒く。Unity 操作は Unity CLI に固定で、
   Unity CLI 本体と com.unity.pipeline が未導入なら入れる。
@@ -20,7 +20,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 
 このコマンドは、対象 Unity プロジェクトに次を**冪等に**インストールする（再実行安全）:
 
-1. **rules** — `unity-cli.md`（Unity 操作の絶対ルール。方針・失敗判定・コマンドの発見手順・Safe Mode 復旧）/ `folder-structure.md` / `hierarchy.md` / `asset-naming.md` / `coding-standards.md`（命名・非同期・DI・**テストの層とランタイム動作確認と完了報告**）
+1. **rules** — `folder-structure.md` / `hierarchy.md` / `asset-naming.md` / `coding-standards.md`（命名・非同期・DI・**テストの層とランタイム動作確認と完了報告**）
 2. **lint-unity** — アセット・シーン・Prefab のルール準拠チェック（skill + `unity-linter` agent + チェックリスト）
 3. **unity-parallel** — git worktree で複数の `unity-worker` を並列に動かしつつ、1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す（skill + `lane.mjs`（貸し出し管理）+ `guard.mjs`（PreToolUse hook）+ `unity-worker` agent + `references/protocol.md`）。**この skill は自身の frontmatter で hook を登録する** — 呼び出したセッションでだけ有効になり、`settings.json` には触れない
 4. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
@@ -138,7 +138,7 @@ unity pipeline install --project-path {target} --format json
 ```
 
 - **冪等**。導入済みなら「変更なし」を返すので、条件を取り違えても壊れない
-- 終了コードで分岐する（`rules/unity-cli.md`「判定」）:
+- 終了コードで分岐する:
   - **exit 3（認証失敗）** → `unity auth login` はブラウザを開く対話フローなので**代わりに打たない**。
     ユーザーに `! unity auth login` を実行してもらい、済んだら上のコマンドを再実行する
   - **exit 0 以外のその他** → `errors[0].code` を添えて報告し、手順を案内して止める（配備物はそのまま）
@@ -163,11 +163,12 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   - **CLI を入れられなかった** → 出力を添えて手順を案内する
   - **Pipeline を Step 2.7 で入れた** → **Editor 側の再コンパイルを待つ**よう伝える（待たずに `unity command` を叩いても繋がらない）
   - **Pipeline が入れられなかった** → 止まった理由（認証・CLI 未導入・6.0 未満・Safe Mode）と、解消後に `/setup-unity` を再実行すれば入る旨を伝える
-  - **Safe Mode** → 導入の問題ではない。`rules/unity-cli.md`「Safe Mode」の手順でコンパイルエラーを解消する
+  - **Safe Mode** → 導入の問題ではない。コンパイルエラーを解消する（手順は `unity-cli` skill）
   - **Editor 版が 6.0 未満** → live Editor 操作は使えない。lint-unity は Editor 不要カテゴリのみの縮退動作になる
 - **公式の `unity-cli` skill は apply.mjs が `--local` で配備先へ入れる**
   （`.claude/skills/unity-cli/`）。CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所・
-  Safe Mode の復旧手順）はこれが正本で、`rules/unity-cli.md` はそこに無いものだけを持つ。
+  Safe Mode の復旧手順）はこれが正本。**このスキルは Unity CLI の rules を配らない** —
+  方針の 2 行（CLI 経由・シリアライズファイルを手編集しない）だけ CLAUDE.md にある。
   - **グローバル（`~/.claude/skills/`）には入れない。** 配備先ごとに CLI の版が違いうるので、
     プロジェクトローカルに置く。CLI バイナリに埋め込まれた版が入るため、配備先の CLI と必ず一致する
   - **git に入れる**（無視しない）。配備先メンバーの CLI 版が揃っていないと差分が出るが、
@@ -193,7 +194,7 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
     CI で赤くなる。**CI 側が正しい**
   - **必須チェックに入れてよい**。常に走り skip されないので、パスフィルタ由来の
     「永久に未完了」が起きない（登録するのはリポジトリ側の設定で、このスキルは触らない）
-- **テストはローカルで回す。** 回し方は `rules/unity-cli.md`「テストの実行」、回す順序は
+- **テストはローカルで回す。** 回す順序は
   `CLAUDE.md`（レビューの指摘を反映した後）。到達できる Editor があればそれに走らせ、
   無ければ `unity test` が自分で Editor を起こす
 - coding-standards / architecture / class-catalog の先頭にある `<!-- agents-md: include -->` は、
@@ -207,10 +208,8 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   base に戻す場合は `.claude/rules/architecture.md` / `class-catalog.md` を手動削除してから再実行する
 - 不明な `--` オプションはエラー終了する（typo で意図しないモードのまま成功しない）。例外は廃止フラグ（`--mcp <値>` / `--analyzer` / `--analyzer-severity=...`。注意を出して無視。上記）
 - **Unity 操作のコマンド表を持たない。** Editor が公開するコマンドは Editor 側（`com.unity.pipeline` と
-  プロジェクトの `[CliCommand]`）が定義するため、一覧を書くと必ず腐る。`rules/unity-cli.md` は
-  「`unity command --format json` で発見する」という手順と、失敗判定・禁止事項・Safe Mode 復旧だけを持つ。
-  CLI 自身のコマンド（`unity test` / `unity projects verify` / `unity doctor --ci`）はフラグまで書いてよいが、
-  正本は `unity <command> --help` である旨を併記する
+  プロジェクトの `[CliCommand]`）が定義するため、一覧を書くと必ず腐る。CLI 自身の詳細も持たない
+  （公式 `unity-cli` skill が正本で、そちらは CLI の版に追随する）
 - このスキルは `.claude/settings.json` に触れない。テンプレート自動追随の状態ファイル `.claude/sync-setup-state.json` へは自分のキー（`setup-unity`）だけをマージ記録する（データファイルの更新であり hook 登録ではない）。同期チェック hook 本体（SessionStart / UserPromptSubmit）と settings.json 登録は setup-github が単独で担う（hook の二重管理を作らないため）
 - **hook 契約の範囲**: 「settings.json へ恒久登録する hook は配らない」が契約であって、「hook を一切配らない」ではない。`unity-parallel` は自身の SKILL.md frontmatter に PreToolUse hook を持つ。これは **その skill を呼び出したセッションでだけ登録され**、settings.json には現れない。並列作業をしていないセッションの挙動は変わらない
 - **`templates/project/` は `.claude/` の外へ出る配置物**（analyzer の DLL と PR ゲートの workflow）。

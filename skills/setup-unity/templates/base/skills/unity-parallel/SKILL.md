@@ -55,7 +55,6 @@ flowchart LR
 
 ## 前提
 
-- `rules/unity-cli.md` が配備済み（借り手が失敗判定・禁止事項をここから読む）
 - Unity CLI が使える（`unity --version`）。レーンのプロジェクトに `com.unity.pipeline` が入っている（`unity pipeline list`）
 - レーンのフォルダで Unity Editor が起動している
 - Node.js が利用可能
@@ -107,7 +106,7 @@ node .claude/skills/unity-parallel/lane.mjs grant
 - `unity pipeline list --format json` で Editor に到達できること（**Safe Mode でないこと**。
   Safe Mode ならコンパイルエラーが残っているので、貸し出しても借り手は何もできない）
 - Play Mode でないこと、インポート・コンパイルが走っていないこと
-- 発見済みの再コンパイルコマンドで refresh し、完了を待つ（`rules/unity-cli.md`「操作」）
+- 発見済みの再コンパイルコマンドで refresh し、完了を待つ
 - 「コンソールエラー取得」で切り替え前のエラーが残っていないこと
 
 確認できたら:

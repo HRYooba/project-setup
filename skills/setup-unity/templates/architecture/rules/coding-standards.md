@@ -5,8 +5,7 @@
 ## 規約の機械チェック
 
 この規約の一部は Roslyn analyzer（`Assets/Analyzers/`）が機械で見る。違反は Editor の
-コンパイル時に `warning UCS####` として出る。**コンソールを読んで直す**（読み方は
-`rules/unity-cli.md`「コンソールエラー取得」）。
+コンパイル時に `warning UCS####` として出る。**コンソールを読んで直す。**
 
 - **CI は見ない。** 配布する workflow は Editor を起こさないので、警告を無視したまま
   PR は通る。止めるのは自分

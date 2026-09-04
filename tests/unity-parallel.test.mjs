@@ -120,13 +120,19 @@ test("apply: 再実行しても unity-parallel の配布物が壊れない", () 
   assert.equal(readFileSync(join(repo, SKILL_DIR, "lane.mjs"), "utf8"), before);
 });
 
-test("rules/unity-cli.md が配られ、並列時の制約と unity-parallel への導線を持つ", () => {
+test("Unity 操作の方針は CLAUDE.md にあり、旧 rules は残らない", () => {
+  // Unity CLI の使い方は公式 unity-cli skill が持つので rules は配らない。
+  // 配備先に旧 rules が残ると、公式と食い違う手順が常時コンテキストに載る。
   const repo = unityRepo("up-rule-");
-  const rule = readFileSync(join(repo, ".claude", "rules", "unity-cli.md"), "utf8");
-  assert.match(rule, /1\s*プロジェクトに\s*1\s*つ/);
-  assert.match(rule, /unity-parallel/);
-  // 配らないファイルが残っていると rules/unity-cli.md と手順が二重になる
-  assert.ok(!existsSync(join(repo, ".claude", "rules", "unity-mcp.md")), "取り除く対象が残っている");
+  const md = readFileSync(join(repo, ".claude", "CLAUDE.md"), "utf8");
+  assert.match(md, /Unity CLI 経由/, "CLI 経由の方針が無い");
+  assert.match(md, /シリアライズファイル/, "手編集禁止が無い");
+  for (const stale of ["unity-cli.md", "unity-mcp.md"]) {
+    assert.ok(
+      !existsSync(join(repo, ".claude", "rules", stale)),
+      `取り除く対象が残っている: rules/${stale}`
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -398,10 +404,10 @@ test("門番: rules が全員に実行させるコマンドは借り手以外で
     holder: { worktree: "wt-a", agentId: "h1", phase: "ACTIVE", loadedCommit: head, commit: head, delegate: null },
   });
   const passed = [
-    "unity --version",                    // rules/unity-cli.md「前提の確認」
-    "unity command --help",               // rules/unity-cli.md「フラグの正本は --help」
+    "unity --version",
+    "unity command --help",
     "unity test --help",
-    "unity command --format json",        // rules/unity-cli.md「コマンドは表で覚えず発見する」
+    "unity command --format json",
     "unity command --query recompile --detail compact",
     "unity pipeline list --format json",  // 到達性の正本
     "unity doctor --ci --format json",    // 前提の正本

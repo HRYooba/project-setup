@@ -280,7 +280,10 @@ ${stderr}`);
   const worktrees = join(dataDir, "worktrees");
   const wt = join(worktrees, readdirSync(worktrees)[0]);
   assert.ok(existsSync(join(wt, "ProjectSettings", "ProjectVersion.txt")), "ProjectSettings が展開されていない");
-  assert.ok(existsSync(join(wt, ".claude", "rules", "unity-cli.md")), "rules/unity-cli.md が配置されていない");
+  assert.ok(
+    existsSync(join(wt, ".claude", "rules", "coding-standards.md")),
+    "rules/coding-standards.md が配置されていない"
+  );
   // analyzer は .claude ではなく Assets 配下へ書く。sparse-checkout がそこを展開して
   // いなければ、同期 PR から analyzer の更新だけが静かに落ちる。
   assert.ok(

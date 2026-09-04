@@ -26,7 +26,7 @@ Unity プロジェクトのアセット・シーン・Prefab が `.claude/rules/
 
 - 出力・メッセージは日本語、思考・推論は英語
 - `Assets/ThirdParty/`・`Assets/Plugins/` の変更禁止
-- Unity 操作は Unity CLI（`unity ...`）経由。方針・失敗判定は `.claude/rules/unity-cli.md` が正
+- Unity 操作は Unity CLI（`unity ...`）経由。使い方は `unity-cli` skill が正
 - **Editor が公開するコマンド名を推測しない。** `unity command --format json` でカタログを 1 回引き、その名前とパラメータ schema のとおりに呼ぶ
 - **Editor に到達できなくても Editor 不要カテゴリだけで完走する。** 「lint できません」で終わらせない
 - 実行できなかったカテゴリは**未検査として明示**する。「検出 0 件」と書かない

@@ -394,7 +394,7 @@ export function unitySubcommands(command, depth = 0) {
 }
 
 // `--help` / `-h` / `--version` / `-V` はどのサブコマンドでも出力するだけ。
-// rules/unity-cli.md が「フラグの正本は `unity <command> --help`」「前提確認は
+// 「フラグの正本は `unity <command> --help`」「前提確認は
 // `unity --version`」と全員に指示しているので、常に通す。
 function isInfoOnly(command) {
   return /(^|\s)(--help|-h|--version|-V)(\s|$)/.test(String(command || ""));

@@ -278,7 +278,7 @@ test("setup-unity: カスタマイズされた rules/*.md は cpSync に上書�
 });
 
 test("setup-unity: このスキルが配らないファイルは再適用で取り除かれる", () => {
-  // 残ると rules/unity-cli.md と並んで常時コンテキストに載り、Unity 操作の手順が
+  // 残ると公式 unity-cli skill と並んで常時コンテキストに載り、Unity 操作の手順が
   // 二重になる。カスタマイズ扱いで温存してはいけない。
   const target = tempDir("apply-test-");
   mkdirSync(join(target, "ProjectSettings"), { recursive: true });
@@ -313,7 +313,10 @@ test("setup-unity: このスキルが配らないファイルは再適用で取�
   assert.match(out, /取り除いたファイル/);
   // 旧 rules が「要マージ」へ回ると消えないまま残るので、そこに出ていないことも確かめる
   assert.ok(!out.includes("rules/unity-mcp.md: 要マージ"), "取り除く対象が要マージへ回っている");
-  assert.ok(existsSync(join(target, ".claude", "rules", "unity-cli.md")), "rules/unity-cli.md が無い");
+  assert.ok(
+    !existsSync(join(target, ".claude", "rules", "unity-cli.md")),
+    "旧 rules/unity-cli.md が残っている（公式 skill と手順が二重になる）"
+  );
   // 空の殻が残ると、配備先を見た人が「まだあるもの」と読む
   assert.ok(!existsSync(join(target, ".claude", "skills", "test-unity")), "空になった test-unity が残っている");
   // テスト専用の rules / skill / references は撒かない。空の殻も残らない

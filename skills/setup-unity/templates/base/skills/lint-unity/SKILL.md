@@ -16,7 +16,7 @@ agent: unity-linter
 
 チェック項目の定義は `references/checklist.md` が正。このファイルは実行フローのみを定義する。
 
-Unity 操作の方針・失敗判定・コマンドの発見手順は `.claude/rules/unity-cli.md` が正。
+Unity 操作は Unity CLI 経由。コマンド・フラグ・exit code は `unity-cli` skill が正。
 
 ## Editor が要るチェックと要らないチェック
 
@@ -71,11 +71,11 @@ Bash: git diff --name-only HEAD -- (同上)
 Bash: git ls-files --others --exclude-standard -- (同上)
 ```
 
-- `unity pipeline list` の結果で **Editor 到達性**を決める（`rules/unity-cli.md`「判定」）。
+- `unity pipeline list` の `isReachable` で **Editor 到達性**を決める（exit code では決めない）。
   **exit code で判断しない** — 到達不可でも exit 0 / `success: true` を返す。
   `data.instances[].pipelineServer.isReachable` を見る。到達不可なら Editor 依存カテゴリを未検査に落とす。
   Safe Mode（`data.summary.instancesInSafeMode > 0`）なら、**lint より先にコンパイルエラーの解消が要る**旨を
-  レポート冒頭に書く（`rules/unity-cli.md`「Safe Mode」）
+  レポート冒頭に書く
 
 git 3 件を合算・重複除去。引数なし時は拡張子でカテゴリ自動選択:
 
@@ -95,7 +95,7 @@ git 3 件を合算・重複除去。引数なし時は拡張子でカテゴリ�
 
 Editor に到達できない場合はこの Step を飛ばす。
 
-**必要なコマンドは推測せず発見する**（`rules/unity-cli.md`「操作」）。
+**必要なコマンドは推測せず発見する。**
 発見は**カタログ 1 本**で足りる。カテゴリごとに `--query` を撃ち分けない（同じカタログを何度も引くだけ）:
 
 ```

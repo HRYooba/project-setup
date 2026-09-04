@@ -46,9 +46,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 // 現行の rules と手順が二重になるので取り除く。
 // （プロジェクト固有の追記があった場合は配備先の git 履歴から復元できる）
 //
-// テスト専用の skill / agent / references / rules は持たない。回し方は rules/unity-cli.md、
-// 回す順序は CLAUDE.md に書く。残っていると古い基準で動き、常時コンテキストにも二重に載る。
+// Unity CLI の使い方は公式 unity-cli skill が持つので、こちらは rules を持たない
+// （方針の 2 行だけ CLAUDE.md にある）。残っていると古い基準で動き、常時コンテキストにも二重に載る。
 const OBSOLETE_PATHS = [
+  "rules/unity-cli.md",
   "rules/unity-mcp.md",
   "rules/unity-mcp-tools.md",
   "rules/testing.md",
@@ -330,7 +331,7 @@ console.log(`モード: ${useArchitecture ? "architecture（レイヤードア�
 if (architectureInherited) {
   console.log("注意: 導入済みの architecture 規約を検出したため、--architecture 指定なしでも architecture モードで適用しました（巻き戻り防止）。");
 }
-console.log("Unity 操作: Unity CLI（rules/unity-cli.md）");
+console.log("Unity 操作: Unity CLI（方針は CLAUDE.md、使い方は unity-cli skill）");
 console.log(`公式 unity-cli skill: ${unityCliSkillState}`);
 if (droppedFlags.length) {
   console.log(`注意: 廃止したオプションを無視しました: ${droppedFlags.join(" / ")}`);
@@ -340,7 +341,7 @@ if (droppedFlags.length) {
   );
 }
 if (removedLegacy.length) {
-  console.log("取り除いたファイル（rules/unity-cli.md と手順が二重になるため）:");
+  console.log("取り除いたファイル（現行の手順と二重になるため）:");
   for (const rel of removedLegacy) console.log(`  - .claude/${rel}`);
   console.log(
     "注意: これらは要マージにせず削除しました。プロジェクト固有の追記があった場合は失われています" +
