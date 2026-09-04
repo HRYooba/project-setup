@@ -218,6 +218,22 @@ test("Unity 操作の方針は CLAUDE.md の 2 行だけ（CLI の写しを持�
     "rules/unity-cli.md が復活している（公式 skill と写しになる）"
   );
 });
+test("lint-unity の description は自分で起動する条件を書いている", () => {
+  // description は skill の発火条件そのもの。ユーザーの依頼語だけを書くと、
+  // 誰も頼まない skill になって PR 前の検査が抜ける（実際にそうなっていた）。
+  const skill = readFileSync(
+    join(
+      here, "..", "skills", "setup-unity", "templates", "base",
+      "skills", "lint-unity", "SKILL.md"
+    ),
+    "utf8"
+  );
+  const front = skill.slice(0, skill.indexOf("\n---", 4));
+  assert.match(front, /PR を作る前に/, "PR 前に回す条件が description に無い");
+  assert.match(front, /依頼を待たずに/, "自分で起動する指示が description に無い");
+  assert.match(front, /Assets\/App\//, "対象が Assets/App/ に絞られていない");
+});
+
 test("配布 Markdown が指す rules の節は実在する（消した節への参照を残さない）", () => {
   // 節を消しても参照が残ると、読んだ側は「どこかに書いてある」と信じて探し、見つからない。
   // 書いた時点では正しかった記述が、周りが変わって黙って嘘になる典型。
