@@ -175,6 +175,19 @@ test("workflow は run: のシェルを宣言する（container の既定 sh に
   );
 });
 
+test("workflow はライセンス認証より前に Editor の書き込み先を作る", () => {
+  // container の $HOME には `.local/share` も `.cache` も無く、Unity はライセンス情報の
+  // 置き場をそこへ作れない。認証は success で終わるのに token がディスクに残らず、
+  // 次に起動した Editor が `Access token is unavailable` で落ちる。
+  // **順序が本質**なので、mkdir の存在ではなく認証より前にあることを見る。
+  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
+  const mkdir = workflow.indexOf('mkdir -p "$HOME/.local/share/unity3d"');
+  const license = workflow.indexOf("- name: ライセンス認証");
+  assert.notEqual(mkdir, -1, "Editor の書き込み先を作る step が無い");
+  assert.notEqual(license, -1, "ライセンス認証 step が無い");
+  assert.ok(mkdir < license, "書き込み先を作る step がライセンス認証より後にある");
+});
+
 test("workflow は Editor 版を直書きせず ProjectVersion.txt から読む", () => {
   const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
   assert.match(workflow, /ProjectSettings\/ProjectVersion\.txt/, "Editor 版の出所が workflow に無い");

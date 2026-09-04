@@ -190,6 +190,19 @@ jobs:
           restore-keys: |
             Library-
 
+      # **Editor が書く先を先に作る。** container の $HOME は runner が空のディレクトリを
+      # bind mount するので、`.local/share` も `.cache` も存在しない。Unity は
+      # ライセンス情報の置き場をここに作ろうとするが、この経路は親を再帰的に作らないため
+      # 失敗する（実測）:
+      #   Editor preferences folder (…/.local/share/unity3d) does not exist and could not be created.
+      #   CreateDirectory '…/.cache/unity3d' failed
+      # 認証ステップ自体は success で終わるのに access token がディスクに残らず、
+      # 次に起動した Editor が `Access token is unavailable` で落ちる
+      # （$HOME が書けないわけではない。Editor のログは同じ $HOME 配下に書けている）。
+      # 権限が原因ならここで mkdir が落ちて理由が出る。黙って先へ進ませない。
+      - name: Editor の書き込み先を用意する
+        run: mkdir -p "$HOME/.local/share/unity3d" "$HOME/.cache/unity3d" "$HOME/.config/unity3d"
+
       # **ライセンスだけ Unity CLI を使わない。**
       # `unity license activate` はどの経路でもサインイン済みセッションを要求し、
       # `unity auth login` は資格情報を OS のキーリングへ保存しようとする。
