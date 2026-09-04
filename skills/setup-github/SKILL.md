@@ -9,7 +9,7 @@ description: >
   （setup-unity のドリフトもこれが見るので、Unity プロジェクトでも導入が要る）を撒く。
   ブランチ保護の有無と、PR 自動レビュー（Copilot 自動アサイン / watch-pr / resolve-pr /
   AGENTS.md 自動生成）の導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.27.0
+version: 1.28.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 

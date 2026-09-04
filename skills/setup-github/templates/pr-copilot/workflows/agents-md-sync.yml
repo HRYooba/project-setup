@@ -32,7 +32,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: AGENTS.md が .claude/rules と同期しているか検証
         # generator は LF 固定出力・冪等（同一入力なら unchanged を返す）なので、
         # 再生成して diff が出る＝コミット内容が rules と乖離している。
