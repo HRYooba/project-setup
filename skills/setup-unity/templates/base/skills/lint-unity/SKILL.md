@@ -6,6 +6,7 @@ description: >
   Prefab 整合性・フォルダ構成・SerializeField 参照・asmdef 依存・マテリアルが規約に沿っているかを
   検査してレポートする。範囲は `--scene <名前>` / `--prefabs` / `--assets <パス>` / `--all` で絞れる。
 version: 3.0.0
+paths: Assets/App/**
 context: fork
 agent: unity-linter
 ---

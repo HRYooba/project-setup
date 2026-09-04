@@ -3,7 +3,7 @@ name: unity-linter
 description: Unity アセット・シーン・Prefab のルール準拠チェックスペシャリスト。命名規則、ヒエラルキー構造、参照整合性、asmdef 依存を検証する。
 disallowedTools: Write, Edit, AskUserQuestion, EnterPlanMode
 model: sonnet
-effort: low
+effort: medium
 maxTurns: 25
 ---
 
