@@ -194,6 +194,43 @@ test("公式 unity-cli skill は配備先へ入れ、unity が無くても導入
   );
 });
 
+test("公式 unity-cli skill は出所の CLI 版を記録し、一致していれば触らない", () => {
+  // skill の中身は撃ったマシンの CLI に従う。記録が無いと、古い CLI のマシンがテンプレ同期を
+  // 走らせたときに skill が黙って古い版へ戻る。記録が git に乗れば同期 PR の差分として見える。
+  const target = unityProject();
+  const first = runApply(target);
+  const statePath = join(target, ".claude", "sync-setup-state.json");
+  const recorded = JSON.parse(readFileSync(statePath, "utf8"))["setup-unity"].unityCli;
+
+  // この環境に unity が無ければ記録もされない。そのときは「見送り」だけを確かめる。
+  if (!recorded) {
+    assert.match(first, /公式 unity-cli skill: 見送りました/);
+    return;
+  }
+  assert.match(first, /公式 unity-cli skill: 導入しました/);
+
+  // 版が一致していれば入れ直さない（同期のたびに配布物が揺れないこと）。
+  assert.match(runApply(target), /公式 unity-cli skill: 導入済み（CLI .+ と一致）/);
+
+  // 記録を古い版に書き換えると入れ直す。
+  const state = JSON.parse(readFileSync(statePath, "utf8"));
+  state["setup-unity"].unityCli = "0.0.0-stale";
+  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n", "utf8");
+  assert.match(runApply(target), /公式 unity-cli skill: 入れ直しました（記録 0\.0\.0-stale →/);
+
+  // unity が無い環境でも記録を消さない（消すと次の適用が食い違いを検出できない）。
+  const res = spawnSync(process.execPath, [APPLY_UNITY, target], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: "", Path: "" },
+  });
+  assert.equal(res.status, 0, `unity が無いだけで落ちた: ${res.stderr}`);
+  assert.equal(
+    JSON.parse(readFileSync(statePath, "utf8"))["setup-unity"].unityCli,
+    recorded,
+    "unity が無い実行で CLI 版の記録が消えた"
+  );
+});
+
 test("Unity 操作の方針は CLAUDE.md の 2 行だけ（CLI の写しを持たない）", () => {
   // CLI の詳細（コマンド・フラグ・exit code・ログの場所・復旧手順）は公式 unity-cli skill が
   // 持つ。写しを持つと CLI を上げたときに黙って古くなるので、rules は配らない。

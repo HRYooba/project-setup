@@ -234,11 +234,29 @@ if (!existsSync(claudeMdPath)) {
 // ---- 公式 unity-cli skill の導入（CLI 自身が配るリファレンス） ----
 // CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所・Safe Mode の復旧）は
 // **我々が写さない**。CLI バイナリに埋め込まれた版を `--local` で配備先へ入れる。
-// 写しを持つと CLI を上げるたびにズレるが、これは配備先の CLI と同じ版が入る。
 // **グローバル（~/.claude/skills/）には入れない** — 配備先ごとに CLI の版が違いうる。
 //
+// **版を状態ファイルへ記録し、CLI と食い違ったときだけ入れ直す。** skill の中身は
+// 「撃ったマシンの CLI」に従うので、記録が無いと、古い CLI のマシンがテンプレ同期を
+// 走らせたときに skill が古い版へ**黙って**戻る。記録を git に乗せると、その巻き戻りが
+// 同期 PR の差分として見えるので、人のレビューで止められる。
+//
+// CLI 本体はここで入れない（マシン単位の話で、SKILL.md の Step 2.6 が担う）。
 // 失敗しても導入は止めない（CLI 未導入の環境でも配置は決定的に完了させる）。
-function installUnityCliSkill() {
+function unityCliVersion() {
+  const res = spawnSync("unity", ["--version"], { encoding: "utf8", timeout: 30000 });
+  if (res.error || res.status !== 0) return null;
+  return (res.stdout ?? "").trim().split(/\r?\n/)[0] || null;
+}
+
+function installUnityCliSkill(cliVersion, recordedCli) {
+  const skillMd = join(claudeDir, "skills", "unity-cli", "SKILL.md");
+  if (existsSync(skillMd) && cliVersion && recordedCli === cliVersion) {
+    return `導入済み（CLI ${cliVersion} と一致）`;
+  }
+  if (existsSync(skillMd) && !cliVersion) {
+    return "導入済み（unity コマンドが無いため版を照合できません）";
+  }
   const res = spawnSync("unity", ["skill", "install", "claude-code", "--local", "--yes"], {
     cwd: target,
     encoding: "utf8",
@@ -254,11 +272,27 @@ function installUnityCliSkill() {
     const msg = (res.stderr || res.stdout || "").trim().split(/\r?\n/).pop() ?? "";
     return `見送りました（exit ${res.status}${msg ? `: ${msg}` : ""}）`;
   }
-  return existsSync(join(claudeDir, "skills", "unity-cli", "SKILL.md"))
-    ? "導入しました（.claude/skills/unity-cli/）"
-    : "コマンドは成功しましたが SKILL.md が見つかりません";
+  if (!existsSync(skillMd)) return "コマンドは成功しましたが SKILL.md が見つかりません";
+  return recordedCli && recordedCli !== cliVersion
+    ? `入れ直しました（記録 ${recordedCli} → CLI ${cliVersion}）`
+    : `導入しました（CLI ${cliVersion}）`;
 }
-const unityCliSkillState = installUnityCliSkill();
+
+// 記録済みの CLI 版を先に読む（下の writeSyncState が上書きする前に）。
+function readRecordedCli() {
+  const p = join(claudeDir, "sync-setup-state.json");
+  if (!existsSync(p)) return null;
+  try {
+    const obj = JSON.parse(readFileSync(p, "utf8").replace(/^\uFEFF/, ""));
+    const v = obj?.["setup-unity"]?.unityCli;
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+const cliVersion = unityCliVersion();
+const unityCliSkillState = installUnityCliSkill(cliVersion, readRecordedCli());
 
 // ---- Unity プロジェクト本体へ配るもの（.claude/ の外）----
 // Roslyn analyzer は Assets 配下にあり RoslynAnalyzer ラベルの付いた DLL だけが csc へ渡るため、
@@ -288,7 +322,7 @@ const pluginVersion = readPluginVersion();
 if (pluginVersion) {
   const syncFlags = [];
   if (useArchitecture) syncFlags.push("--architecture");
-  writeSyncState("setup-unity", pluginVersion, syncFlags);
+  writeSyncState("setup-unity", pluginVersion, syncFlags, cliVersion);
   syncState = `setup-unity v${pluginVersion}（flags: ${syncFlags.join(" ") || "なし"}）`;
 } else {
   console.log(
@@ -311,7 +345,7 @@ function readPluginVersion() {
 
 // 状態ファイル `.claude/sync-setup-state.json` へ自分のキー（skillKey）をマージ更新する。相手のキーや
 // 未知フィールドは消さない（読み → 該当キーだけ差し替え → 書き戻し）。
-function writeSyncState(skillKey, version, flags) {
+function writeSyncState(skillKey, version, flags, unityCli) {
   const p = join(claudeDir, "sync-setup-state.json");
   let obj = {};
   if (existsSync(p)) {
@@ -322,7 +356,11 @@ function writeSyncState(skillKey, version, flags) {
       console.log("注意: sync-setup-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）。");
     }
   }
-  obj[skillKey] = { version, flags };
+  // unityCli は「配布した unity-cli skill がどの CLI 版から出たか」。unity が無い環境では
+  // 既存の記録を消さない（消すと次の適用が版の食い違いを検出できなくなる）。
+  const prevCli = obj[skillKey]?.unityCli;
+  const cli = unityCli ?? (typeof prevCli === "string" ? prevCli : undefined);
+  obj[skillKey] = cli ? { version, flags, unityCli: cli } : { version, flags };
   writeFileSync(p, JSON.stringify(obj, null, 2) + "\n", "utf8");
 }
 

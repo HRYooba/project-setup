@@ -10,7 +10,7 @@ description: >
   Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れ、CLI の詳細は
   公式 unity-cli skill を `--local` で入れて任せる。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無だけを実行時に AskUserQuestion で確認する。
-version: 3.1.0
+version: 3.2.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -25,7 +25,13 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 5. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
 6. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards への差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
 7. **Roslyn analyzer** — `coding-standards.md` のうち**機械で判定できる規約**をコンパイル時に止める。`Assets/Analyzers/`（DLL + `.meta` + README）を**`.claude/` ではなく Unity プロジェクト本体へ**置く（判断が要る規約と、プロジェクト名を知らないと当てられない名前空間の規約は持たない）。**設定ファイル（`.ruleset` / `.globalconfig`）は配らない** — 全規則 Warning 固定（Error にすると Unity が Safe Mode へ落ちる）。**CI は診断を見ない**ので、違反は Editor のコンソールで読んで直す
-8. **公式の `unity-cli` skill** — `unity skill install claude-code --local --yes` を配備先で実行する（`.claude/skills/unity-cli/`）。CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所・Safe Mode の復旧手順）はこれが正本で、こちらは写しを持たない。**グローバルには入れない**（配備先ごとに CLI の版が違いうる）。**git に入れる**（追跡しないと各自が手で撃つことになり、揃っている保証が消える）。unity コマンドが無い環境では見送って続行する
+8. **公式の `unity-cli` skill** — `.claude/skills/unity-cli/` へ入れる。CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所・Safe Mode の復旧手順）はこれが正本で、こちらは写しを持たない。**グローバルには入れない**（配備先ごとに CLI の版が違いうる）。**git に入れる**（追跡しないと各自が手で撃つことになり、揃っている保証が消える）
+   - **どの CLI 版から出たかを `sync-setup-state.json` の `unityCli` に記録する。** skill の中身は撃ったマシンの CLI に従うので、記録が無いと、古い CLI のマシンがテンプレ同期を走らせたときに skill が**黙って**古い版へ戻る。記録が git に乗れば、その巻き戻りは同期 PR の差分として見えてレビューで止まる
+   - 入れ直すのは **skill が無いか、記録と `unity --version` が食い違うとき**だけ。一致していれば触らない
+   - `unity` が無い環境では見送って続行し、**既存の記録は消さない**（消すと次の適用が食い違いを検出できない）
+   - **CLI 本体はここで入れない。** マシン単位の話なので Step 2.6 が担う（テンプレ同期が開発者のマシンを書き換えないため）
+   - **既にあるなら触らない。** 上書きすると、テンプレ同期を走らせたマシンの CLI 版がそのまま配布物になる（その CLI が古ければ skill が古い版へ戻る。自動で・気づかずに）
+   - **CLI を上げたときは `/setup-unity` を回さず、その一行だけ撃つ**（`cd <project> && unity skill install claude-code --local --yes`）。CLI の版は `sync-setup-state.json` に記録していないので、テンプレ同期はここでは発火しない
 9. **プロジェクト整合性の GitHub Actions** — `.github/workflows/unity-ci.yml` と `.github/actions/setup-unity-cli/`。`unity projects verify --strict` だけを走らせる（Editor もライセンスも secret も要らず 10 秒で返る）。**テストとコンパイル確認は CI でやらない** — Editor を起こすジョブは 1 回 10 分以上かかり PR ゲートに使えないため、ローカルへ移した。CI に残す理由は git の checkout 側にあり、追跡外の実体を持つ `.meta` のような「clone した人の手元で初めて壊れる」欠陥はここでしか出ない
 
 ## 前提（満たされていないと skills が動かない）
@@ -166,9 +172,9 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   - **Pipeline が入れられなかった** → 止まった理由（認証・CLI 未導入・6.0 未満・Safe Mode）と、解消後に `/setup-unity` を再実行すれば入る旨を伝える
   - **Safe Mode** → 導入の問題ではない。コンパイルエラーを解消する（手順は `unity-cli` skill）
   - **Editor 版が 6.0 未満** → live Editor 操作は使えない。lint-unity は Editor 不要カテゴリのみの縮退動作になる
-- **公式の `unity-cli` skill が `.claude/skills/unity-cli/` に入ったこと**を伝える（CLI の詳細は
-  そちらが正本。git に入れる。unity コマンドが無い環境では見送られ、出力の
-  `公式 unity-cli skill:` 行にその旨が出る）
+- **公式の `unity-cli` skill の状態**を伝える（出力の `公式 unity-cli skill:` 行に「導入しました（CLI x.y.z）」「導入済み（CLI x.y.z と一致）」「入れ直しました（記録 → CLI）」「見送りました」のいずれかが出る）。CLI を上げた後は次の `/setup-unity` か `/sync-setup` で自動的に入れ直る（記録との食い違いで検出する）。先に更新したいなら対象ディレクトリで`unity skill install claude-code --local --yes` を撃つ
+  既にあれば触らない。**CLI を上げたら `unity skill install claude-code --local --yes` を
+  対象ディレクトリで撃つ**（`/setup-unity` の再実行は要らない）
 - アーキテクチャ規約の後付けは、再実行してセットアップ質問で選び直せばよい
 - **analyzer について**は、次を伝える:
   - 反映には **Unity Editor 側の再コンパイル**が要る（Editor を開いているならフォーカスを戻す）
