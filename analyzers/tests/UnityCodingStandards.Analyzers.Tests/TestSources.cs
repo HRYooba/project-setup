@@ -62,7 +62,14 @@ namespace Cysharp.Threading.Tasks
 namespace UnityEngine
 {
     /// <summary>stub</summary>
-    public class MonoBehaviour
+    public class Object
+    {
+        /// <summary>stub</summary>
+        public static T FindFirstObjectByType<T>() where T : Object => null;
+    }
+
+    /// <summary>stub</summary>
+    public class MonoBehaviour : Object
     {
         /// <summary>stub</summary>
         public object StartCoroutine(System.Collections.IEnumerator routine) => routine;
@@ -85,9 +92,6 @@ namespace VContainer.Unity
     {
         /// <summary>stub</summary>
         public static LifetimeScope Find(System.Type type) => null;
-
-        /// <summary>stub</summary>
-        public static T FindFirstObjectByType<T>() where T : LifetimeScope => null;
 
         /// <summary>stub</summary>
         public object Container => null;

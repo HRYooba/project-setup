@@ -80,6 +80,23 @@ public class Target
         }
 
         [Test]
+        public async Task async_修飾子だけの非同期メソッドも_Async_サフィックスの対象()
+        {
+            var ids = await RunAsync("    public async void Save() { await System.Threading.Tasks.Task.CompletedTask; }");
+            Assert.That(
+                ids,
+                Is.EqualTo(new[] { "UCS0011" }),
+                "戻り値型がホワイトリスト外でも「非同期メソッド」であることは変わらない");
+        }
+
+        [Test]
+        public async Task async_修飾子だけなら_CancellationToken_は要求しない()
+        {
+            var ids = await RunAsync("    public async void SaveAsync() { await System.Threading.Tasks.Task.CompletedTask; }");
+            Assert.That(ids, Is.Empty, "署名の検査は戻り値型を見る規則なので広げない");
+        }
+
+        [Test]
         public async Task Async_サフィックスがあれば報告しない()
         {
             var ids = await RunAsync("    public UniTask RunAsync(CancellationToken cancellationToken) => default;");

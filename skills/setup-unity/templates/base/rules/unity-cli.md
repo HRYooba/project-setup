@@ -120,8 +120,9 @@ unity command --format json    # 再コンパイル・完了確認・ログ取�
    **sleep を挟んだ手書きループにしない** — 長引くなら 1 の呼び出しを `--detach` + `unity job wait` に置き換える
 3. コンソールのエラーを読む（次節）
 
-Editor に到達できない場合、`unity test` が実行前にコンパイルを通すため、テスト実行が
-コンパイル確認を兼ねる（コンパイルエラーなら exit 8 ではなく 6 で落ちる）。
+Editor に到達できない場合、コンパイルの確認は PR の CI（`.github/workflows/unity-ci.yml`）に任せる。
+**テストをローカルで走らせてコンパイル確認の代わりにしない** — テストの実行は CI の役目
+（`rules/coding-standards.md`「テスト」）。
 
 ## コンソールエラー取得
 
@@ -167,7 +168,6 @@ C# のコンパイルエラーがあると Editor は Safe Mode で起動し、`
 |:--|:--|
 | 前提の事前判定（ライセンス・Editor 有無・空き容量） | `unity doctor --ci --format json` |
 | プロジェクト整合性（meta 欠落・孤児・GUID 重複・conflict marker・manifest 破損） | `unity projects verify --format json` |
-| テスト実行 | `unity test --format json`（方針は `rules/coding-standards.md`「テスト」） |
 
 `unity projects verify` は**検出のみで修復しない**（meta / GUID の修復は Editor のアセット
 データベースが必要）。検出コードの一覧は `unity projects verify --help` の `--check` が正本。

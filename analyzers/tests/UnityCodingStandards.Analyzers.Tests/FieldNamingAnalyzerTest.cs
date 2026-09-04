@@ -87,6 +87,16 @@ public enum Kind
         }
 
         [Test]
+        public async Task Subject_は除外しない_UCS0004_の対象ではないため()
+        {
+            var ids = await RunAsync("    private Subject<int> clickSubject;");
+            Assert.That(
+                ids,
+                Is.EqualTo(new[] { "UCS0012" }),
+                "UCS0002/UCS0003 はサフィックスと可視性しか見ず、名前の形は誰も見ていない");
+        }
+
+        [Test]
         public async Task SerializeField_が_public_なら報告する()
         {
             var ids = await RunAsync("    [SerializeField] public int Speed;");

@@ -67,8 +67,15 @@ function ask(prompt) {
 
 // 対話できない環境（stdin がパイプ・リダイレクト）で起動されると、readline が即 EOF を返して
 // 全項目が空になる。それを「ユーザーが中断した」と報告すると、起動方法の誤りが中断に化ける。
-if (!process.stdin.isTTY) {
-  finish("error", "対話入力ができません（stdin が TTY ではない）。独立したコンソールで起動してください");
+//
+// stdout も見る。入力はマスクしない設計なので、stdout がファイルやパイプに向いていると
+// 打った値がそのまま書き出される（`node set-secrets.mjs > transcript.log` で平文が残る）。
+// 画面にしか出さない前提が崩れる起動は、始める前に断る。
+if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  finish(
+    "error",
+    "対話入力ができません（stdin / stdout が端末ではない）。リダイレクトせず独立したコンソールで起動してください"
+  );
 }
 
 console.log("Unity ライセンスの secret を登録します（GitHub Actions の test ジョブが使います）");

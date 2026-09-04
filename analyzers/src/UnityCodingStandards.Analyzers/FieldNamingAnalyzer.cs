@@ -59,8 +59,11 @@ namespace UnityCodingStandards.Analyzers
 
             if (field.DeclaredAccessibility != Accessibility.Private) return;
 
-            // ReactiveProperty は UCS0004 が名前と可視性をまとめて見る。二重に報告しない。
-            if (TypeClassification.ClassifyReactive(field.Type) != ReactiveKind.None) return;
+            // ReactiveProperty **だけ** UCS0004 が名前と可視性をまとめて見るので、そこは譲る。
+            // Subject / Observable は UCS0002 / UCS0003 がサフィックスと可視性しか見ておらず、
+            // 名前の形（_camelCase）は誰も見ていない。全 Reactive 系を除外すると
+            // private Subject<T> clickSubject; のような違反が素通りする。
+            if (TypeClassification.ClassifyReactive(field.Type) == ReactiveKind.ReactiveProperty) return;
 
             if (NameConventions.IsUnderscoreCamelCase(field.Name)) return;
 

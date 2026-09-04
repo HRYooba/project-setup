@@ -34,22 +34,25 @@ namespace UnityCodingStandards.Analyzers
             if (method.MethodKind != MethodKind.Ordinary) return;
             if (!AnalysisScope.IsAnalyzableSymbol(method)) return;
             if (AnalysisScope.SignatureIsFixedByBase(method)) return;
-            if (!TypeClassification.IsAsyncReturnType(method.ReturnType)) return;
-
             var location = method.Locations.FirstOrDefault(l => l.IsInSource);
             if (location == null) return;
+
+            // Async サフィックス（UCS0011）は「非同期メソッド」全体に当たる規約。
+            // 非同期の戻り値型を持つ形と、戻り値型がホワイトリストに載らない形（async void 等）の
+            // 両方を対象にする。呼び出し側が await 忘れに気付けなくなるのはどちらも同じ。
+            // 署名の検査（CancellationToken / Task 禁止）は戻り値型を見る規則なので広げない。
+            var isAsyncMethod = method.IsAsync || TypeClassification.IsAsyncReturnType(method.ReturnType);
+            if (isAsyncMethod && !NameConventions.HasSuffix(method.Name, "Async"))
+            {
+                context.ReportDiagnostic(Diagnostic.Create(Rules.AsyncMethodSuffix, location, method.Name));
+            }
+
+            if (!TypeClassification.IsAsyncReturnType(method.ReturnType)) return;
 
             if (TypeClassification.IsTaskReturnType(method.ReturnType))
             {
                 context.ReportDiagnostic(
                     Diagnostic.Create(Rules.TaskReturnForbidden, location, method.Name));
-            }
-
-            // 非同期の戻り値型を持つのに Async で終わらない。呼び出し側が await 忘れに気付けなくなる。
-            if (!NameConventions.HasSuffix(method.Name, "Async"))
-            {
-                context.ReportDiagnostic(
-                    Diagnostic.Create(Rules.AsyncMethodSuffix, location, method.Name));
             }
 
             var cancellationTokens = method.Parameters

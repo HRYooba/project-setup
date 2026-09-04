@@ -170,12 +170,20 @@ jobs:
             echo "filter=$TEST_FILTER" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # テストアセンブリの見分け方は 1 つではない。どれか 1 つでも当たれば対象。
+          #   precompiledReferences に nunit.framework.dll  — 現行の形
+          #   optionalUnityReferences に TestAssemblies      — Unity が今も受ける旧形式
+          #   references に UnityEngine/UnityEditor.TestRunner — 明示参照する書き方
+          # 1 つだけを見ると、実在するテストを 0 件と誤判定して緑で通してしまう。
           asmdefs=""
           if [ -d Assets/App ]; then
-            asmdefs=$(grep -rl 'nunit\.framework\.dll' Assets/App --include='*.asmdef' 2>/dev/null || true)
+            asmdefs=$(grep -rlE 'nunit\.framework\.dll|TestAssemblies|Unity(Engine|Editor)\.TestRunner' \
+              Assets/App --include='*.asmdef' 2>/dev/null || true)
           fi
           prefixes=""
-          for f in $asmdefs; do
+          # パスに空白を含む asmdef があるので 1 行ずつ読む（$asmdefs の単語分割に頼らない）。
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
             echo "  テストアセンブリ: $f"
             ns=$(sed -n 's/.*"rootNamespace"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)
             if [ -z "$ns" ]; then
@@ -183,9 +191,12 @@ jobs:
               ns=${ns%.EditMode}
               ns=${ns%.PlayMode}
             fi
-            [ -n "$ns" ] && prefixes="$prefixes $ns"
-          done
-          uniq=$(echo $prefixes | tr ' ' '\n' | sed '/^$/d' | sort -u)
+            [ -n "$ns" ] && prefixes="$prefixes
+$ns"
+          done <<EOF
+$asmdefs
+EOF
+          uniq=$(printf '%s\n' "$prefixes" | sed '/^$/d' | sort -u)
           if [ -z "$uniq" ]; then
             # 何にもマッチしない値。Editor は起動するがテストは 0 件になる。
             echo "Assets/App/ 配下にテストアセンブリがありません（テストの成否は判定しません）"

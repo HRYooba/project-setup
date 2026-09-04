@@ -36,13 +36,56 @@ public class Target : MonoBehaviour
         }
 
         [Test]
-        public async Task 型引数側に_LifetimeScope_が現れる形も報告する()
+        public async Task Unity_の探索_API_に_LifetimeScope_を渡す形も報告する()
         {
             var ids = await RunAsync(@"
     /// <summary>test</summary>
-    public void Wire() { var scope = LifetimeScope.FindFirstObjectByType<AppLifetimeScope>(); }
+    public void Wire() { var scope = Object.FindFirstObjectByType<AppLifetimeScope>(); }
 ");
             Assert.That(ids, Is.EqualTo(new[] { "UCS0015" }));
+        }
+
+        [Test]
+        public async Task 修飾なしの探索も報告する_MemberAccess_にならない形()
+        {
+            var ids = await RunAsync(@"
+    /// <summary>test</summary>
+    public void Wire() { var scope = FindFirstObjectByType<AppLifetimeScope>(); }
+");
+            Assert.That(
+                ids,
+                Is.EqualTo(new[] { "UCS0015" }),
+                "MonoBehaviour 内から修飾なしで撃つと GenericNameSyntax になる");
+        }
+
+        [Test]
+        public async Task 無関係な汎用_Find_に_LifetimeScope_を渡しても報告しない()
+        {
+            var source = @"
+using UnityEngine;
+using VContainer.Unity;
+
+/// <summary>test</summary>
+public class AppLifetimeScope : LifetimeScope { }
+
+/// <summary>test</summary>
+public class Repository
+{
+    /// <summary>test</summary>
+    public T Find<T>() where T : class => null;
+}
+
+/// <summary>test</summary>
+public class Target
+{
+    private readonly Repository _repository = new Repository();
+
+    /// <summary>test</summary>
+    public void Wire() { var scope = _repository.Find<AppLifetimeScope>(); }
+}
+";
+            var ids = await AnalyzerRun.IdsAsync(new DiContainerAnalyzer(), source);
+            Assert.That(ids, Is.Empty, "型引数だけを見ると無関係な Find<T> を巻き込む");
         }
 
         [Test]
