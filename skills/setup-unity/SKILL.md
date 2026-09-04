@@ -138,7 +138,7 @@ unity pipeline install --project-path {target} --format json
 ```
 
 - **冪等**。導入済みなら「変更なし」を返すので、条件を取り違えても壊れない
-- 終了コードで分岐する（`rules/unity-cli.md`「失敗判定」）:
+- 終了コードで分岐する（`rules/unity-cli.md`「判定」）:
   - **exit 3（認証失敗）** → `unity auth login` はブラウザを開く対話フローなので**代わりに打たない**。
     ユーザーに `! unity auth login` を実行してもらい、済んだら上のコマンドを再実行する
   - **exit 0 以外のその他** → `errors[0].code` を添えて報告し、手順を案内して止める（配備物はそのまま）

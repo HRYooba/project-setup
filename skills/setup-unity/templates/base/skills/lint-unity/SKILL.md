@@ -71,7 +71,7 @@ Bash: git diff --name-only HEAD -- (同上)
 Bash: git ls-files --others --exclude-standard -- (同上)
 ```
 
-- `unity pipeline list` の結果で **Editor 到達性**を決める（`rules/unity-cli.md`「到達性と前提を混同しない」の表）。
+- `unity pipeline list` の結果で **Editor 到達性**を決める（`rules/unity-cli.md`「判定」）。
   **exit code で判断しない** — 到達不可でも exit 0 / `success: true` を返す。
   `data.instances[].pipelineServer.isReachable` を見る。到達不可なら Editor 依存カテゴリを未検査に落とす。
   Safe Mode（`data.summary.instancesInSafeMode > 0`）なら、**lint より先にコンパイルエラーの解消が要る**旨を
@@ -95,7 +95,7 @@ git 3 件を合算・重複除去。引数なし時は拡張子でカテゴリ�
 
 Editor に到達できない場合はこの Step を飛ばす。
 
-**必要なコマンドは推測せず発見する**（`rules/unity-cli.md`「Unity 操作は全て Unity CLI 経由」）。
+**必要なコマンドは推測せず発見する**（`rules/unity-cli.md`「操作」）。
 発見は**カタログ 1 本**で足りる。カテゴリごとに `--query` を撃ち分けない（同じカタログを何度も引くだけ）:
 
 ```

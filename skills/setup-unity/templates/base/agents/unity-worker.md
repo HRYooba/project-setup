@@ -54,7 +54,7 @@ node .claude/skills/unity-parallel/lane.mjs request --worktree <worktree名>
 
 ### 4. Editor 作業（ACTIVE のときだけ）
 
-Unity 操作は Unity CLI 経由。方針・失敗判定・コンパイル確認・コンソールエラー取得は
+Unity 操作は Unity CLI 経由。方針・判定・コンソールエラー取得は
 `.claude/rules/unity-cli.md` が正。**コマンド名は推測せず `unity command --format json` で発見する。**
 
 時間のかかる Editor コマンドは投げっぱなしにできる。順番待ちを短くしたいときに使う:

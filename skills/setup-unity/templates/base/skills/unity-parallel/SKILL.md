@@ -107,7 +107,7 @@ node .claude/skills/unity-parallel/lane.mjs grant
 - `unity pipeline list --format json` で Editor に到達できること（**Safe Mode でないこと**。
   Safe Mode ならコンパイルエラーが残っているので、貸し出しても借り手は何もできない）
 - Play Mode でないこと、インポート・コンパイルが走っていないこと
-- `rules/unity-cli.md` の「コンパイル確認」で refresh し、完了を待つ
+- 発見済みの再コンパイルコマンドで refresh し、完了を待つ（`rules/unity-cli.md`「操作」）
 - 「コンソールエラー取得」で切り替え前のエラーが残っていないこと
 
 確認できたら:
