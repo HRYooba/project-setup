@@ -11,7 +11,7 @@ description: >
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無だけを
   実行時に AskUserQuestion で確認する。コーディング規約を機械で止める Roslyn analyzer と、
   PR ゲートの GitHub Actions は常時配布する。
-version: 2.5.1
+version: 2.6.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---

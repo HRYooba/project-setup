@@ -59,9 +59,11 @@ test("フラグ無しで analyzer と workflow が配置される", () => {
   runApply(target);
 
   for (const f of [
+    join("Assets", "Analyzers.meta"),
     join("Assets", "Analyzers", dist.assembly),
     join("Assets", "Analyzers", `${dist.assembly}.meta`),
     join("Assets", "Analyzers", "README.md"),
+    join("Assets", "Analyzers", "README.md.meta"),
     WORKFLOW,
     CLI_ACTION,
   ]) {
@@ -88,13 +90,37 @@ test("設定ファイルは配らない（Assets 直下を汚さない）", () =
   runApply(target);
 
   assert.ok(!existsSync(join(target, "Assets", "Default.ruleset")), "ruleset を配ってしまっている");
+  // Assets 直下に置いてよいのは Analyzers フォルダの .meta だけ（Unity がフォルダにも
+  // .meta を要求する。無いと `unity projects verify --strict` が META_MISSING で落ちる）。
   assert.deepEqual(
     readdirSync(join(target, "Assets"), { withFileTypes: true })
       .filter((e) => e.isFile())
       .map((e) => e.name),
-    [],
+    ["Analyzers.meta"],
     "Assets 直下にファイルが増えている"
   );
+});
+
+test("配布する Assets の全エントリに .meta がある（verify --strict が落ちない）", () => {
+  // Unity はファイルにもフォルダにも .meta を要求する。配り忘れると配備先の
+  // `unity projects verify --strict` が META_MISSING で赤くなり、しかも
+  // 原因は同期 PR の差分（この 3 ファイル）にしか無いので配備先では直せない。
+  const target = unityProject();
+  runApply(target);
+
+  const missing = [];
+  const scan = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name.endsWith(".meta")) continue;
+      if (!existsSync(join(dir, `${e.name}.meta`))) {
+        missing.push(join(dir, e.name).slice(target.length + 1));
+      }
+      if (e.isDirectory()) scan(join(dir, e.name));
+    }
+  };
+  scan(join(target, "Assets"));
+
+  assert.deepEqual(missing, [], `.meta が無い:\n  ${missing.join("\n  ")}`);
 });
 
 test("廃止フラグ（--analyzer / --analyzer-severity）を渡されても止まらない", () => {
@@ -135,6 +161,18 @@ test("workflow は YAML として壊れていない（生 CR や欠けた行継�
       `${WORKFLOW}:${i + 1} が列 0 にある（run: | ブロックを終わらせてしまう）: ${line}`
     );
   }
+});
+
+test("workflow は run: のシェルを宣言する（container の既定 sh に落ちない）", () => {
+  // container 上のジョブは既定シェルが sh になる。bash 前提の構文（here-string 等）は
+  // 実行時に構文エラーで落ち、ステップの中身を 1 行も走らせない。runner の既定に
+  // 任せると、同じ workflow が runs-on では通り container では落ちる。
+  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
+  assert.match(
+    workflow,
+    /^defaults:\n {2}run:\n {4}shell: bash$/m,
+    "workflow に defaults.run.shell: bash が無い"
+  );
 });
 
 test("workflow は Editor 版を直書きせず ProjectVersion.txt から読む", () => {
