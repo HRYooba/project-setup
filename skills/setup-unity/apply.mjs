@@ -4,7 +4,7 @@
 // --architecture 指定時はレイヤードアーキテクチャ規約のオーバーレイを上書き配置する。
 // templates/project/ は .claude/ ではなく Unity プロジェクト本体へ配る（常時）:
 // Roslyn analyzer（Assets/Analyzers/。Unity は Assets 配下の RoslynAnalyzer ラベル付き DLL だけを
-// csc へ渡すので置き場所が動作条件そのもの）と、PR ゲートの GitHub Actions（.github/）。
+// csc へ渡すので置き場所が動作条件そのもの）と、プロジェクト整合性を見る GitHub Actions（.github/）。
 // Unity 操作の手段は Unity CLI に固定。配備先に OBSOLETE_PATHS のファイルがあれば取り除く。
 // 冪等（再実行安全）。
 //
@@ -12,7 +12,7 @@
 //         (target-dir 省略時は cwd)
 //
 // 依存なし（Node 標準のみ / Node 16.7+ の fs.cpSync を使用）。
-// 例外は gh の呼び出し 1 箇所（CI の secret が登録済みかを見るだけ。失敗しても続行する）。
+// 例外は unity の呼び出し 1 箇所（公式 unity-cli skill を配備先へ入れる。失敗しても続行する）。
 
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { consolidateSyncState } from "../sync-setup/state.mjs";
 /* global process, console */
 
-// 反映を LLM 判断へ委ねる Markdown（rules/*.md）。apply.mjs は書かず、
+// 反映を LLM 判断へ委ねる Markdown（rules/*.md と CLAUDE.md）。apply.mjs は書かず、
 // ここへ積んで報告するだけ。実際の統合は SKILL 手順で Claude が現物とテンプレを読んで行う。
 // 機械的な上書きはプロジェクト側で育った記述を消し、機械的なスキップはテンプレ更新を
 // 永久に届かなくする。どちらも避けるための委譲（テンプレが扱う話題はテンプレ側を正とし、
@@ -46,9 +46,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 // 現行の rules と手順が二重になるので取り除く。
 // （プロジェクト固有の追記があった場合は配備先の git 履歴から復元できる）
 //
-// テストの規約は rules/coding-standards.md の「テスト」節へ畳んだ。専用の skill / agent /
-// references / rules を持たない。残っていると古い基準で動き、常時コンテキストにも二重に載る。
+// Unity CLI の使い方は公式 unity-cli skill が持つので、こちらは rules を持たない
+// （方針の 2 行だけ CLAUDE.md にある）。残っていると古い基準で動き、常時コンテキストにも二重に載る。
 const OBSOLETE_PATHS = [
+  "rules/unity-cli.md",
   "rules/unity-mcp.md",
   "rules/unity-mcp-tools.md",
   "rules/testing.md",
@@ -201,6 +202,98 @@ for (const f of readdirSync(rulesDir).filter((n) => n.endsWith(".md"))) {
   }
 }
 
+// ---- CLAUDE.md への反映（apply.mjs は書かない） ----
+// 配る内容は templates/claude-md.md（節そのもの）。配る文面を定数で持ち、移行を完全一致の
+// 置換で追いかける書き方はしない（文面を変えるたびに移行コードが増える＝腐る）。
+const claudeMdPath = join(claudeDir, "CLAUDE.md");
+const claudeMdSrc = join(here, "templates", "claude-md.md");
+const claudeMdSection = readFileSync(claudeMdSrc, "utf8");
+
+// テンプレは「節」を配るので全文一致では判定できない。節の非空行がすべて配備先にあれば
+// 反映済みとみなす。判定基準がテンプレ本体から導出されるので、別途マーカー文字列を維持
+// する必要がない（文面を変えれば行が一致しなくなり、その時だけ要マージになる）。
+function sectionApplied(dstText, sectionText) {
+  return sectionText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .every((l) => dstText.includes(l));
+}
+
+let claudeMdState;
+if (!existsSync(claudeMdPath)) {
+  writeFileSync(claudeMdPath, claudeMdSection, "utf8");
+  claudeMdState = "新規作成";
+} else if (sectionApplied(readFileSync(claudeMdPath, "utf8"), claudeMdSection)) {
+  claudeMdState = "変更なし";
+} else {
+  needsMerge.push({ label: ".claude/CLAUDE.md", dst: claudeMdPath, src: claudeMdSrc });
+  claudeMdState = "要マージ";
+}
+
+// ---- 公式 unity-cli skill の導入（CLI 自身が配るリファレンス） ----
+// CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所・Safe Mode の復旧）は
+// **我々が写さない**。CLI バイナリに埋め込まれた版を `--local` で配備先へ入れる。
+// **グローバル（~/.claude/skills/）には入れない** — 配備先ごとに CLI の版が違いうる。
+//
+// **版を状態ファイルへ記録し、CLI と食い違ったときだけ入れ直す。** skill の中身は
+// 「撃ったマシンの CLI」に従うので、記録が無いと、古い CLI のマシンがテンプレ同期を
+// 走らせたときに skill が古い版へ**黙って**戻る。記録を git に乗せると、その巻き戻りが
+// 同期 PR の差分として見えるので、人のレビューで止められる。
+//
+// CLI 本体はここで入れない（マシン単位の話で、SKILL.md の Step 2.6 が担う）。
+// 失敗しても導入は止めない（CLI 未導入の環境でも配置は決定的に完了させる）。
+function unityCliVersion() {
+  const res = spawnSync("unity", ["--version"], { encoding: "utf8", timeout: 30000 });
+  if (res.error || res.status !== 0) return null;
+  return (res.stdout ?? "").trim().split(/\r?\n/)[0] || null;
+}
+
+function installUnityCliSkill(cliVersion, recordedCli) {
+  const skillMd = join(claudeDir, "skills", "unity-cli", "SKILL.md");
+  if (existsSync(skillMd) && cliVersion && recordedCli === cliVersion) {
+    return `導入済み（CLI ${cliVersion} と一致）`;
+  }
+  if (existsSync(skillMd) && !cliVersion) {
+    return "導入済み（unity コマンドが無いため版を照合できません）";
+  }
+  const res = spawnSync("unity", ["skill", "install", "claude-code", "--local", "--yes"], {
+    cwd: target,
+    encoding: "utf8",
+    timeout: 120000,
+  });
+  if (res.error) {
+    return res.error.code === "ENOENT"
+      ? "見送りました（unity コマンドがありません。CLI 導入後に再実行すると入ります）"
+      : `見送りました（${res.error.message}）`;
+  }
+  if (res.status !== 0) {
+    // 既に別物が置かれている場合は --force が要る。奪うかはユーザーの判断なので勧めない。
+    const msg = (res.stderr || res.stdout || "").trim().split(/\r?\n/).pop() ?? "";
+    return `見送りました（exit ${res.status}${msg ? `: ${msg}` : ""}）`;
+  }
+  if (!existsSync(skillMd)) return "コマンドは成功しましたが SKILL.md が見つかりません";
+  return recordedCli && recordedCli !== cliVersion
+    ? `入れ直しました（記録 ${recordedCli} → CLI ${cliVersion}）`
+    : `導入しました（CLI ${cliVersion}）`;
+}
+
+// 記録済みの CLI 版を先に読む（下の writeSyncState が上書きする前に）。
+function readRecordedCli() {
+  const p = join(claudeDir, "sync-setup-state.json");
+  if (!existsSync(p)) return null;
+  try {
+    const obj = JSON.parse(readFileSync(p, "utf8").replace(/^\uFEFF/, ""));
+    const v = obj?.["setup-unity"]?.unityCli;
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+const cliVersion = unityCliVersion();
+const unityCliSkillState = installUnityCliSkill(cliVersion, readRecordedCli());
+
 // ---- Unity プロジェクト本体へ配るもの（.claude/ の外）----
 // Roslyn analyzer は Assets 配下にあり RoslynAnalyzer ラベルの付いた DLL だけが csc へ渡るため、
 // 置き場所と .meta が動作条件そのものになる。PR ゲートの workflow は .github/ へ。
@@ -229,7 +322,7 @@ const pluginVersion = readPluginVersion();
 if (pluginVersion) {
   const syncFlags = [];
   if (useArchitecture) syncFlags.push("--architecture");
-  writeSyncState("setup-unity", pluginVersion, syncFlags);
+  writeSyncState("setup-unity", pluginVersion, syncFlags, cliVersion);
   syncState = `setup-unity v${pluginVersion}（flags: ${syncFlags.join(" ") || "なし"}）`;
 } else {
   console.log(
@@ -252,7 +345,7 @@ function readPluginVersion() {
 
 // 状態ファイル `.claude/sync-setup-state.json` へ自分のキー（skillKey）をマージ更新する。相手のキーや
 // 未知フィールドは消さない（読み → 該当キーだけ差し替え → 書き戻し）。
-function writeSyncState(skillKey, version, flags) {
+function writeSyncState(skillKey, version, flags, unityCli) {
   const p = join(claudeDir, "sync-setup-state.json");
   let obj = {};
   if (existsSync(p)) {
@@ -263,7 +356,11 @@ function writeSyncState(skillKey, version, flags) {
       console.log("注意: sync-setup-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）。");
     }
   }
-  obj[skillKey] = { version, flags };
+  // unityCli は「配布した unity-cli skill がどの CLI 版から出たか」。unity が無い環境では
+  // 既存の記録を消さない（消すと次の適用が版の食い違いを検出できなくなる）。
+  const prevCli = obj[skillKey]?.unityCli;
+  const cli = unityCli ?? (typeof prevCli === "string" ? prevCli : undefined);
+  obj[skillKey] = cli ? { version, flags, unityCli: cli } : { version, flags };
   writeFileSync(p, JSON.stringify(obj, null, 2) + "\n", "utf8");
 }
 
@@ -272,7 +369,8 @@ console.log(`モード: ${useArchitecture ? "architecture（レイヤードア�
 if (architectureInherited) {
   console.log("注意: 導入済みの architecture 規約を検出したため、--architecture 指定なしでも architecture モードで適用しました（巻き戻り防止）。");
 }
-console.log("Unity 操作: Unity CLI（rules/unity-cli.md）");
+console.log("Unity 操作: Unity CLI（方針は CLAUDE.md、使い方は unity-cli skill）");
+console.log(`公式 unity-cli skill: ${unityCliSkillState}`);
 if (droppedFlags.length) {
   console.log(`注意: 廃止したオプションを無視しました: ${droppedFlags.join(" / ")}`);
   console.log(
@@ -281,7 +379,7 @@ if (droppedFlags.length) {
   );
 }
 if (removedLegacy.length) {
-  console.log("取り除いたファイル（rules/unity-cli.md と手順が二重になるため）:");
+  console.log("取り除いたファイル（現行の手順と二重になるため）:");
   for (const rel of removedLegacy) console.log(`  - .claude/${rel}`);
   console.log(
     "注意: これらは要マージにせず削除しました。プロジェクト固有の追記があった場合は失われています" +
@@ -294,8 +392,9 @@ for (const [f, layer] of [...copied.entries()].sort()) {
 }
 console.log("Unity プロジェクト本体（.claude/ の外）:");
 for (const state of projectStates) console.log(`  - ${state}`);
-console.log("Markdown（rules）:");
+console.log("Markdown（rules / CLAUDE.md）:");
 for (const s of mdStates) console.log(`  - .claude/${s}`);
+console.log(`  - .claude/CLAUDE.md: ${claudeMdState}`);
 // 要マージは「apply.mjs が意図的に書かなかったファイル」。SKILL 手順がこの一覧を読んで
 // Claude にマージさせる。ここで止めずに続行するのは、他の配置物は決定的に配り切るため。
 if (needsMerge.length) {
@@ -307,29 +406,8 @@ if (needsMerge.length) {
   }
 }
 if (syncState) console.log(`状態ファイル(sync-setup-state.json): ${syncState}`);
-console.log(`CI の Unity ライセンス secret: ${unitySecretState()}`);
 if (!existsSync(join(target, "Assets", "App"))) {
   console.log("注意: Assets/App/ が存在しません。規約はアプリ本体を Assets/App/ 配下に置く前提です。");
-}
-
-// CI の test ジョブは UNITY_EMAIL / UNITY_PASSWORD を要る。未登録なら赤くなるので、
-// 導入直後の 1 回だけ実状を出す（常時出る注意文は読まれない）。
-// gh が無い・未認証・権限不足でも導入は止めない — ここは報告だけの段。
-//
-// **org レベルの secret は見えない。** gh secret list はリポジトリ分しか返さないため、
-// org に登録済みでも「未登録」と出る。文面でその可能性を明示する。
-function unitySecretState() {
-  const run = (argv) => {
-    const res = spawnSync("gh", argv, { cwd: target, encoding: "utf8", timeout: 15000 });
-    if (res.error || res.status !== 0) return null;
-    return res.stdout ?? "";
-  };
-  if (run(["auth", "status"]) === null) return "確認できません（gh が未導入か未認証。導入は完了しています）";
-  const list = run(["secret", "list", "--app", "actions"]);
-  if (list === null) return "確認できません（リポジトリを特定できないか、secret を読む権限がありません）";
-  const missing = ["UNITY_EMAIL", "UNITY_PASSWORD"].filter((n) => !list.includes(n));
-  if (missing.length === 0) return "登録済み";
-  return `リポジトリに ${missing.join(" / ")} がありません（org 側にあるなら無視してよい）。未登録なら CI の test ジョブは赤くなります`;
 }
 
 function walk(dir) {

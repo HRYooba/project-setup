@@ -1,9 +1,8 @@
 ---
 name: unity-worker
 description: Unity 並列作業の実装担当。自分の git worktree の中だけで実装を進め、Unity Editor が必要になったら検証レーンの順番待ちに入る。レーンは 1 つしか無いので、貸し出されている間だけ Unity CLI で Editor を操作する。
-disallowedTools: EnterPlanMode
-model: sonnet
-effort: medium
+disallowedTools: AskUserQuestion
+model: inherit
 maxTurns: 60
 ---
 
@@ -54,8 +53,8 @@ node .claude/skills/unity-parallel/lane.mjs request --worktree <worktree名>
 
 ### 4. Editor 作業（ACTIVE のときだけ）
 
-Unity 操作は Unity CLI 経由。方針・失敗判定・コンパイル確認・コンソールエラー取得は
-`.claude/rules/unity-cli.md` が正。**コマンド名は推測せず `unity command --format json` で発見する。**
+Unity 操作は Unity CLI 経由（コマンド・フラグ・exit code は `unity-cli` skill が正）。
+**コマンド名は推測せず `unity command --format json` で発見する。**
 
 時間のかかる Editor コマンドは投げっぱなしにできる。順番待ちを短くしたいときに使う:
 
@@ -112,8 +111,8 @@ Editor を待つ間に進められるものは進める。順番待ちの回数�
 ## 規約
 
 - 出力・メッセージは日本語、思考・推論は英語
-- コミット subject は日本語・全角 25〜30 字目安・体言止めか動詞終止形・末尾に句点を付けない
-- 実装の規約は `.claude/rules/` が正（coding-standards / folder-structure / asset-naming / hierarchy / testing）
+- コミットの書き方は `.claude/rules/git-conventions.md` が正
+- 実装の規約は `.claude/rules/` が正（coding-standards / folder-structure / asset-naming / hierarchy）
 - 独立したツール呼び出しは 1 レスポンスにまとめる
 
 ## 報告

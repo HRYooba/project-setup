@@ -1,12 +1,10 @@
 ---
 name: unity-parallel
 description: >
-  このスキルは、ユーザーが「Unity で並列に作業して」「worktree で並列作業」「複数タスクを同時に進めて」
-  「/unity-parallel」と依頼した場合に使用される。git worktree で複数のサブエージェントを並列に動かしつつ、
-  1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す。Editor が必要に
-  なったエージェントだけがキューに並び、メインセッションが排他を管理する。レーンの取り合いによる
-  「別のスナップショットを検証して green を返す」事故を hook で機械的に止める。
-version: 2.0.0
+  ユーザーが Unity の並列作業（複数タスクを同時に進める / worktree で分ける）を求めたときに使う。
+  git worktree でサブエージェントを並列に動かしつつ、1 つしかない検証レーン
+  （Unity Editor が開いているフォルダ）をメインセッションが順番待ちで貸し出す。
+version: 2.1.0
 argument-hint: "[並列で進めたいタスクの説明]"
 hooks:
   PreToolUse:
@@ -35,30 +33,10 @@ Unity Editor は開いているフォルダ 1 つしか見ない。そのフォ�
 
 だから レーンは「順番に 1 人だけへ貸す排他資源」として扱う。作業自体は並列のままでよい。
 
-> `unity test` は Editor 常駐を要さないので原理的には各 worktree で回せるが、worktree は
-> `Library/` を共有しないため初回がフルインポートになり、バッチ Editor がライセンスシートを掴む。
-> 3 本並列で回すより、レーンを順番に貸すほうが速い。
-
-```mermaid
-flowchart LR
-    A[worker A<br/>実装] -->|Editor 要る| Q[キュー]
-    B[worker B<br/>実装] --> Done[Editor 不要のまま完了]
-    C[worker C<br/>実装] -->|Editor 要る| Q
-    Q -->|1 人ずつ貸す| L[レーン<br/>Unity Editor]
-```
-
 ## 用語
 
 - **レーン** — Unity Editor が開いたままになっているフォルダ。既定はリポジトリのルート。貸し出すときだけ `checkout --detach` で借り手の commit を指す
 - **worker** — `wt-<name>/` に住むサブエージェント（`unity-worker`）。並列に何本でも
-- **トークン** — レーンの貸し出し権。`lane.mjs` が 1 つだけ発行する
-
-## 前提
-
-- `rules/unity-cli.md` が配備済み（借り手が失敗判定・禁止事項をここから読む）
-- Unity CLI が使える（`unity --version`）。レーンのプロジェクトに `com.unity.pipeline` が入っている（`unity pipeline list`）
-- レーンのフォルダで Unity Editor が起動している
-- Node.js が利用可能
 
 ## 手順
 
@@ -107,7 +85,7 @@ node .claude/skills/unity-parallel/lane.mjs grant
 - `unity pipeline list --format json` で Editor に到達できること（**Safe Mode でないこと**。
   Safe Mode ならコンパイルエラーが残っているので、貸し出しても借り手は何もできない）
 - Play Mode でないこと、インポート・コンパイルが走っていないこと
-- `rules/unity-cli.md` の「コンパイル確認」で refresh し、完了を待つ
+- 発見済みの再コンパイルコマンドで refresh し、完了を待つ
 - 「コンソールエラー取得」で切り替え前のエラーが残っていないこと
 
 確認できたら:
@@ -165,7 +143,6 @@ node .claude/skills/unity-parallel/lane.mjs return                 # worktree �
 
 ## 守ること
 
-- **自分でコードを書かない。** 実装は worker の仕事
 - **1 サイクルを通してから次を grant する。** 並行して 2 人に貸さない（lane.mjs が拒否するが、そもそも試みない）
 - **`--force` を付けて checkout しない。** レーンが dirty なら中身を確認する。Editor 側の未保存作業かもしれない
 - **worker を勝手に殺さない。** 待機中の worker はコンテキストを保っている。`SendMessage` で再開する

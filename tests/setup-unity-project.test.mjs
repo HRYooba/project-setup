@@ -1,4 +1,4 @@
-// setup-unity が .claude/ の外へ配るもの（Roslyn analyzer と PR ゲートの workflow）の検証。
+// setup-unity が .claude/ の外へ配るもの（Roslyn analyzer と整合性検査の workflow）の検証。
 //
 // 観点:
 //   1. 配布 DLL がソースから作り直されている（build.mjs の流し忘れを検知する）
@@ -6,8 +6,8 @@
 //   3. Unity が analyzer を読み込む条件（配置場所と .meta）が崩れていない
 //   4. 設定ファイル（.ruleset / .globalconfig）を配らない ＝ Assets 直下を汚さない
 //   5. 廃止フラグを渡されても止まらない（配備先の状態ファイルに記録が残っているため）
-//   6. workflow が Editor 版を直書きしていない
-//   7. CI の secret 確認が導入を止めない（gh が使えない環境でも完走して状態を報告する）
+//   6. workflow が Editor を起こさない（ライセンスも secret も要らない形を保つ）
+//   7. 配る Markdown が実在しない節を参照していない
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -144,9 +144,7 @@ test("workflow は YAML として壊れていない（生 CR や欠けた行継�
     assert.doesNotMatch(text, /  {4,}--[a-z-]+ +--[a-z-]+/, `${f} で行継続が落ちている疑い`);
   }
   const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  for (const job of ["  changes:", "  resolve:", "  verify:", "  test:", "  gate:"]) {
-    assert.ok(workflow.includes(job), `${job} が無い`);
-  }
+  assert.ok(workflow.includes("  verify:"), "verify ジョブが無い");
 
   // **列 0 の行は `run: |` ブロックを終わらせる。** シェルを書いているつもりで
   // ヒアドキュメントの終端や継続行を左端へ置くと、そこから先が YAML の別トークンとして
@@ -163,81 +161,114 @@ test("workflow は YAML として壊れていない（生 CR や欠けた行継�
   }
 });
 
-test("workflow は run: のシェルを宣言する（container の既定 sh に落ちない）", () => {
-  // container 上のジョブは既定シェルが sh になる。bash 前提の構文（here-string 等）は
-  // 実行時に構文エラーで落ち、ステップの中身を 1 行も走らせない。runner の既定に
-  // 任せると、同じ workflow が runs-on では通り container では落ちる。
+test("workflow は Editor を起こさない（ライセンスも secret も要らない形を保つ）", () => {
+  // Editor を起こすジョブは 1 回 10 分以上かかり、PR ゲートとして使えない。そこから
+  // ライセンス secret・seat・private パッケージのトークンという運用の面倒も全部来ていた。
+  // テストとコンパイル確認はローカルへ移した。ここへ戻すなら意図的な決定として戻す。
   const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
+  assert.doesNotMatch(workflow, /^\s*container:/m, "container を使うジョブが増えている");
+  assert.doesNotMatch(workflow, /secrets\./, "secret を読んでいる");
+  assert.doesNotMatch(workflow, /unity test\b/, "CI でテストを走らせている");
   assert.match(
     workflow,
-    /^defaults:\n {2}run:\n {4}shell: bash$/m,
-    "workflow に defaults.run.shell: bash が無い"
+    /unity projects verify --strict/,
+    "プロジェクト整合性の検査が無い（この workflow の唯一の仕事）"
   );
 });
 
-test("workflow はライセンス認証より前に Editor の書き込み先を作る", () => {
-  // container の $HOME には `.local/share` も `.cache` も無く、Unity はそこへ
-  // preferences とキャッシュを作れずエラー 2 行を出す（ライセンス自体は解決できる。
-  // これはノイズ潰しで、本物の失敗を追うときに紛れ込ませないための段）。
-  // **順序が本質**なので、mkdir の存在ではなく認証より前にあることを見る。
-  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  const mkdir = workflow.indexOf('mkdir -p "$HOME/.local/share/unity3d"');
-  const license = workflow.indexOf("- name: ライセンス認証");
-  assert.notEqual(mkdir, -1, "Editor の書き込み先を作る step が無い");
-  assert.notEqual(license, -1, "ライセンス認証 step が無い");
-  assert.ok(mkdir < license, "書き込み先を作る step がライセンス認証より後にある");
-});
+test("公式 unity-cli skill は配備先へ入れ、unity が無くても導入は止まらない", () => {
+  // CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所）は我々が写さず、CLI 自身が
+  // 配る版を `--local` で入れる。写しを持つと CLI を上げるたびに黙ってズレる。
+  // ただし CLI 未導入の配備先でも配置は決定的に完了させる（ここで落ちると導入が止まる）。
+  const target = unityProject();
+  const res = spawnSync(process.execPath, [APPLY_UNITY, target], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: "", Path: "" }, // unity を見つけられない環境を作る
+  });
 
-test("workflow は private git パッケージの認証をテストより前に通す", () => {
-  // manifest.json が private repo を git URL で参照するプロジェクトは、認証が無いと
-  // Package Manager がそこで止まり Unity がテストを 1 件も走らせず exit 1 する。
-  // **順序が本質**なので、設定の存在ではなくテスト実行より前にあることを見る。
-  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  const auth = workflow.indexOf("secrets.UNITY_PACKAGES_TOKEN");
-  const runStep = workflow.indexOf("- name: EditMode / PlayMode テスト");
-  assert.notEqual(auth, -1, "UNITY_PACKAGES_TOKEN を読む step が無い");
-  assert.notEqual(runStep, -1, "テスト実行 step が無い");
-  assert.ok(auth < runStep, "認証の設定がテスト実行より後にある");
-  assert.match(workflow, /insteadOf = https:\/\/github\.com\//, "git の URL 差し替えが無い");
-});
-
-test("workflow は Editor ログの所在を 1 箇所でしか決めない", () => {
-  // 同じ候補パスを複数の step に書くと、片方だけ直したときに黙ってズレる。
-  // 所在を決める step が 1 つで、読む側はその出力を使う形を保つ。
-  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  const occurrences = workflow.split('"$HOME/.config/unity3d/Editor.log"').length - 1;
-  assert.equal(occurrences, 1, `Editor ログの候補パスが ${occurrences} 箇所にある`);
-  assert.match(workflow, /steps\.editorlog\.outputs\.log/, "所在を決める step の出力を使っていない");
-});
-
-test("workflow はテストが落ちたとき Editor ログの中身を出す", () => {
-  // `unity test` は Editor ログから拾った数行しか出さない。実測では無関係な license の
-  // 警告 1 行だけが出て、本当の原因（パッケージ解決の失敗）はログ本体にしか無かった。
-  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  const dump = workflow.indexOf("- name: 失敗したら Editor ログのエラーを出す");
-  assert.notEqual(dump, -1, "失敗時に Editor ログを出す step が無い");
-  // 既知のパターンに一致しない失敗を「静かに何も出ない」にしない担保。
-  assert.match(workflow.slice(dump), /tail -\d+ "\$LOG"/, "末尾を出していない");
-});
-
-test("workflow は Editor 版を直書きせず ProjectVersion.txt から読む", () => {
-  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  assert.match(workflow, /ProjectSettings\/ProjectVersion\.txt/, "Editor 版の出所が workflow に無い");
-  // 版を直書きすると Editor を上げたときに黙ってズレる。コメント中の例示も含めて禁止する。
-  assert.doesNotMatch(workflow, /\b\d{4}\.\d+\.\d+[abf]\d+\b/, "Editor 版が直書きされている");
-});
-
-test("CI の secret 確認は導入を止めない（gh が使えなくても完走して状態を報告する）", () => {
-  // 状態確認は報告だけの段。gh が無い / 未認証 / git リポジトリでない配備先でも、
-  // 配置そのものは決定的に完了させる（ここで exit 1 にすると導入が止まる）。
-  const target = unityProject(); // git リポジトリではないので gh はリポジトリを特定できない
-  const out = runApply(target);
-
-  assert.match(out, /CI の Unity ライセンス secret:/, "secret の状態が報告されていない");
+  assert.equal(res.status, 0, `unity が無いだけで落ちた: ${res.stderr}\n${res.stdout}`);
+  assert.match(res.stdout, /公式 unity-cli skill: 見送りました/, "見送りが報告されていない");
   assert.ok(
-    existsSync(join(target, ".github", "workflows", "unity-ci.yml")),
-    "確認の失敗で配置が中断している"
+    existsSync(join(target, ".claude", "rules", "coding-standards.md")),
+    "見送りの後に配置が中断している"
   );
+});
+
+test("公式 unity-cli skill は出所の CLI 版を記録し、一致していれば触らない", () => {
+  // skill の中身は撃ったマシンの CLI に従う。記録が無いと、古い CLI のマシンがテンプレ同期を
+  // 走らせたときに skill が黙って古い版へ戻る。記録が git に乗れば同期 PR の差分として見える。
+  const target = unityProject();
+  const first = runApply(target);
+  const statePath = join(target, ".claude", "sync-setup-state.json");
+  const recorded = JSON.parse(readFileSync(statePath, "utf8"))["setup-unity"].unityCli;
+
+  // この環境に unity が無ければ記録もされない。そのときは「見送り」だけを確かめる。
+  if (!recorded) {
+    assert.match(first, /公式 unity-cli skill: 見送りました/);
+    return;
+  }
+  assert.match(first, /公式 unity-cli skill: 導入しました/);
+
+  // 版が一致していれば入れ直さない（同期のたびに配布物が揺れないこと）。
+  assert.match(runApply(target), /公式 unity-cli skill: 導入済み（CLI .+ と一致）/);
+
+  // 記録を古い版に書き換えると入れ直す。
+  const state = JSON.parse(readFileSync(statePath, "utf8"));
+  state["setup-unity"].unityCli = "0.0.0-stale";
+  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n", "utf8");
+  assert.match(runApply(target), /公式 unity-cli skill: 入れ直しました（記録 0\.0\.0-stale →/);
+
+  // unity が無い環境でも記録を消さない（消すと次の適用が食い違いを検出できない）。
+  const res = spawnSync(process.execPath, [APPLY_UNITY, target], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: "", Path: "" },
+  });
+  assert.equal(res.status, 0, `unity が無いだけで落ちた: ${res.stderr}`);
+  assert.equal(
+    JSON.parse(readFileSync(statePath, "utf8"))["setup-unity"].unityCli,
+    recorded,
+    "unity が無い実行で CLI 版の記録が消えた"
+  );
+});
+
+test("Unity 操作の方針は CLAUDE.md の 2 行だけ（CLI の写しを持たない）", () => {
+  // CLI の詳細（コマンド・フラグ・exit code・ログの場所・復旧手順）は公式 unity-cli skill が
+  // 持つ。写しを持つと CLI を上げたときに黙って古くなるので、rules は配らない。
+  // 残すのは公式が課さない方針だけ。
+  const md = readFileSync(
+    join(here, "..", "skills", "setup-unity", "templates", "claude-md.md"),
+    "utf8"
+  );
+  assert.match(md, /Unity CLI 経由で行う/, "CLI 経由の方針が消えている");
+  assert.match(md, /\.prefab.*手編集しない/, "手編集の禁止が消えている");
+
+  // テストと lint は **Assets/App/ のホワイトリスト**。外部アセットの置き場は数え上げ
+  // られないので、除外リストにすると漏れが直せない失敗・指摘になって返ってくる
+  // （analyzer と CI で同じ結論に至っている）。
+  for (const line of md.split(/\r?\n/).filter((l) => /^- \*\*(テスト|lint)\*\*/.test(l))) {
+    assert.match(line, /Assets\/App\//, `Assets/App/ に絞られていない: ${line}`);
+  }
+  assert.ok(
+    !existsSync(
+      join(here, "..", "skills", "setup-unity", "templates", "base", "rules", "unity-cli.md")
+    ),
+    "rules/unity-cli.md が復活している（公式 skill と写しになる）"
+  );
+});
+test("lint-unity の description は自分で起動する条件を書いている", () => {
+  // description は skill の発火条件そのもの。ユーザーの依頼語だけを書くと、
+  // 誰も頼まない skill になって PR 前の検査が抜ける（実際にそうなっていた）。
+  const skill = readFileSync(
+    join(
+      here, "..", "skills", "setup-unity", "templates", "base",
+      "skills", "lint-unity", "SKILL.md"
+    ),
+    "utf8"
+  );
+  const front = skill.slice(0, skill.indexOf("\n---", 4));
+  assert.match(front, /PR を作る前に/, "PR 前に回す条件が description に無い");
+  assert.match(front, /依頼を待たずに/, "自分で起動する指示が description に無い");
+  assert.match(front, /Assets\/App\//, "対象が Assets/App/ に絞られていない");
 });
 
 test("配布 Markdown が指す rules の節は実在する（消した節への参照を残さない）", () => {
@@ -265,7 +296,19 @@ test("配布 Markdown が指す rules の節は実在する（消した節への
     const own = headings(layerRoot);
     const base = layer === "base" ? own : headings(join(templates, "base"));
 
-    for (const file of walk(layerRoot).filter((f) => f.endsWith(".md"))) {
+    // templates 直下の .md（CLAUDE.md へ配る節）と SKILL.md も同じ規則で見る。
+    // 参照先は base の rules。SKILL.md は配布物ではないが、配る規約の節を指す記述を持つ。
+    const rootMds =
+      layer === "base"
+        ? [
+            ...readdirSync(templates)
+              .filter((n) => n.endsWith(".md"))
+              .map((n) => join(templates, n)),
+            join(templates, "..", "SKILL.md"),
+          ]
+        : [];
+
+    for (const file of [...walk(layerRoot), ...rootMds].filter((f) => f.endsWith(".md"))) {
       const text = readFileSync(file, "utf8");
       for (const [, target, section] of text.matchAll(/rules\/([a-z-]+\.md)`?「([^」]+)」/g)) {
         const list = own.get(target) ?? base.get(target);

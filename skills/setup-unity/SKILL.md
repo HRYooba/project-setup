@@ -1,18 +1,16 @@
 ---
 name: setup-unity
 description: >
-  現在の Unity プロジェクトに開発規約一式（rules / lint-unity / サブエージェント）を
-  導入するセットアップコマンド。ユーザーが「Unityセットアップ」「setup-unity」「Unity規約を導入」
-  「このプロジェクトにUnity開発ルールを入れて」などと依頼したときに使用する。
-  カレントのリポジトリの .claude/ に rules（unity-cli / folder-structure / hierarchy /
-  asset-naming / coding-standards）、skills（lint-unity / unity-parallel）、
-  agents（unity-linter / unity-worker）を撒く。Unity 操作は Unity CLI に固定で、
-  Unity CLI 本体と com.unity.pipeline が未導入なら入れる。
-  レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無だけを
-  実行時に AskUserQuestion で確認する。コーディング規約を機械で止める Roslyn analyzer と、
-  PR ゲートの GitHub Actions は常時配布する。
-version: 2.8.0
-user-invocable: true
+  現在の Unity プロジェクトに開発規約一式を導入するセットアップコマンド。ユーザーが
+  「Unityセットアップ」「setup-unity」「Unity規約を導入」「このプロジェクトにUnity開発ルールを入れて」
+  などと依頼したときに使用する。`.claude/` へ rules（folder-structure / hierarchy /
+  asset-naming / coding-standards）、CLAUDE.md（Unity 操作の方針と、テスト / lint を PR 前に
+  回すタイミング）、skills（lint-unity / unity-parallel）、agents（unity-linter / unity-worker）を
+  撒き、プロジェクト本体へ Roslyn analyzer と整合性検査の GitHub Actions を置く。
+  Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れ、CLI の詳細は
+  公式 unity-cli skill を `--local` で入れて任せる。レイヤードアーキテクチャ規約
+  （architecture / class-catalog）の導入有無だけを実行時に AskUserQuestion で確認する。
+version: 3.2.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -20,13 +18,21 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 
 このコマンドは、対象 Unity プロジェクトに次を**冪等に**インストールする（再実行安全）:
 
-1. **rules** — `unity-cli.md`（Unity 操作の絶対ルール。方針・失敗判定・コマンドの発見手順・Safe Mode 復旧）/ `folder-structure.md` / `hierarchy.md` / `asset-naming.md` / `coding-standards.md`（命名・非同期・DI・**テストの層とランタイム動作確認と完了報告**）
-2. **lint-unity** — アセット・シーン・Prefab のルール準拠チェック（skill + `unity-linter` agent + チェックリスト）
-3. **unity-parallel** — git worktree で複数の `unity-worker` を並列に動かしつつ、1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す（skill + `lane.mjs`（貸し出し管理）+ `guard.mjs`（PreToolUse hook）+ `unity-worker` agent + `references/protocol.md`）。**この skill は自身の frontmatter で hook を登録する** — 呼び出したセッションでだけ有効になり、`settings.json` には触れない
-4. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
-5. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards への差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
-6. **Roslyn analyzer** — `coding-standards.md` のうち**機械で判定できる規約**をコンパイル時に止める。`Assets/Analyzers/`（DLL + `.meta` + README）を**`.claude/` ではなく Unity プロジェクト本体へ**置く（判断が要る規約と、プロジェクト名を知らないと当てられない名前空間の規約は持たない）。**設定ファイル（`.ruleset` / `.globalconfig`）は配らない** — 全規則 Warning 固定で、PR の gate は次の CI が担う
-7. **PR ゲートの GitHub Actions** — `.github/workflows/unity-ci.yml` と `.github/actions/setup-unity-cli/`。`unity projects verify --strict`（Editor 不要）と `unity test`（EditMode / PlayMode を順に。GameCI の Editor イメージ上）を走らせ、Editor のコンパイルログに `warning UCS` があれば落とす。**Unity ライセンスの secret 登録と Plus / Pro 以上の seat が要る**（未登録なら test ジョブが赤くなる。verify ジョブは secret 不要で常に動く）
+1. **rules** — `folder-structure.md` / `hierarchy.md` / `asset-naming.md` / `coding-standards.md`（**規約の機械チェック**・命名・非同期・Reactive・DI・ドキュメントコメント・エラーハンドリング）
+2. **CLAUDE.md** — Unity 操作の方針 2 行（CLI 経由 / シリアライズファイルを手編集しない）と、テスト・lint を PR 前に回すタイミング。**Unity CLI の rules は配らない**（下記 8）
+3. **lint-unity** — アセット・シーン・Prefab のルール準拠チェック（skill + `unity-linter` agent + チェックリスト）
+4. **unity-parallel** — git worktree で複数の `unity-worker` を並列に動かしつつ、1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す（skill + `lane.mjs`（貸し出し管理）+ `guard.mjs`（PreToolUse hook）+ `unity-worker` agent + `references/protocol.md`）。**この skill は自身の frontmatter で hook を登録する** — 呼び出したセッションでだけ有効になり、`settings.json` には触れない
+5. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
+6. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards への差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
+7. **Roslyn analyzer** — `coding-standards.md` のうち**機械で判定できる規約**をコンパイル時に止める。`Assets/Analyzers/`（DLL + `.meta` + README）を**`.claude/` ではなく Unity プロジェクト本体へ**置く（判断が要る規約と、プロジェクト名を知らないと当てられない名前空間の規約は持たない）。**設定ファイル（`.ruleset` / `.globalconfig`）は配らない** — 全規則 Warning 固定（Error にすると Unity が Safe Mode へ落ちる）。**CI は診断を見ない**ので、違反は Editor のコンソールで読んで直す
+8. **公式の `unity-cli` skill** — `.claude/skills/unity-cli/` へ入れる。CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所・Safe Mode の復旧手順）はこれが正本で、こちらは写しを持たない。**グローバルには入れない**（配備先ごとに CLI の版が違いうる）。**git に入れる**（追跡しないと各自が手で撃つことになり、揃っている保証が消える）
+   - **どの CLI 版から出たかを `sync-setup-state.json` の `unityCli` に記録する。** skill の中身は撃ったマシンの CLI に従うので、記録が無いと、古い CLI のマシンがテンプレ同期を走らせたときに skill が**黙って**古い版へ戻る。記録が git に乗れば、その巻き戻りは同期 PR の差分として見えてレビューで止まる
+   - 入れ直すのは **skill が無いか、記録と `unity --version` が食い違うとき**だけ。一致していれば触らない
+   - `unity` が無い環境では見送って続行し、**既存の記録は消さない**（消すと次の適用が食い違いを検出できない）
+   - **CLI 本体はここで入れない。** マシン単位の話なので Step 2.6 が担う（テンプレ同期が開発者のマシンを書き換えないため）
+   - **既にあるなら触らない。** 上書きすると、テンプレ同期を走らせたマシンの CLI 版がそのまま配布物になる（その CLI が古ければ skill が古い版へ戻る。自動で・気づかずに）
+   - **CLI を上げたときは `/setup-unity` を回さず、その一行だけ撃つ**（`cd <project> && unity skill install claude-code --local --yes`）。CLI の版は `sync-setup-state.json` に記録していないので、テンプレ同期はここでは発火しない
+9. **プロジェクト整合性の GitHub Actions** — `.github/workflows/unity-ci.yml` と `.github/actions/setup-unity-cli/`。`unity projects verify --strict` だけを走らせる（Editor もライセンスも secret も要らず 10 秒で返る）。**テストとコンパイル確認は CI でやらない** — Editor を起こすジョブは 1 回 10 分以上かかり PR ゲートに使えないため、ローカルへ移した。CI に残す理由は git の checkout 側にあり、追跡外の実体を持つ `.meta` のような「clone した人の手元で初めて壊れる」欠陥はここでしか出ない
 
 ## 前提（満たされていないと skills が動かない）
 
@@ -86,7 +92,6 @@ apply.mjs が次を行う:
 - `templates/base/` を `{target}/.claude/`（`rules/` `skills/` `agents/`）へ再帰コピー
 - このスキルが配らないファイル（`OBSOLETE_PATHS`。旧 unity-mcp 一式と、skill をやめた
   `skills/test-unity/` 一式・`agents/unity-tester.md`・旧 `references/test-*-guide.md`・旧 `rules/testing.md` / `rules/dev-flow.md`）が配備先にあれば**取り除く**。
-  `.claude/CLAUDE.md` に旧テンプレの `## 開発ワークフロー` 節（`rules/testing.md` / `rules/dev-flow.md` を指す行）が残っていたら、その節を消す — ファイル単位では消せないので手で見る。
   空になったディレクトリも畳む。残すと現行の rules と手順が二重になり、常時コンテキストに並ぶため
   （プロジェクト固有の追記があった場合は配備先の git 履歴から復元できる）
 - 廃止したフラグ（`--mcp <値>` / `--analyzer` / `--analyzer-severity=...`）を渡されても
@@ -96,12 +101,12 @@ apply.mjs が次を行う:
   （architecture / class-catalog の追加 + folder-structure / coding-standards のレイヤー版差し替え。lint checklist は base に統合済みなので差し替えない）
 - **architecture 導入済みの検知**: `.claude/rules/architecture.md` が既にあれば、`--architecture` 指定なしでも architecture モードを自動継承する（レイヤー版規約が base 版に巻き戻るのを防止）
 - `templates/project/` を `{target}/`（**`.claude/` ではなくプロジェクト直下**）へ**常時**コピーする。
-  中身は `Assets/Analyzers/`（analyzer の DLL / `.meta` / README）と `.github/`（PR ゲートの
+  中身は `Assets/Analyzers/`（analyzer の DLL / `.meta` / README）と `.github/`（整合性検査の
   workflow と Unity CLI 導入の composite action）。Unity は `Assets/` 配下にあり `RoslynAnalyzer`
   ラベルの付いた DLL だけを C# コンパイラへ渡すので、置き場所と `.meta` が動作条件そのものになる。
   どれもビルド成果物・配布物なので上書きする（**設定ファイルは配らない**ので、配備先が育てる
   ファイルがここに無い ＝ マージ判定が要らない）
-- `.claude/rules/*.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。**CLAUDE.md へは何も配らない** — 規約は `.claude/rules/` に置けば読まれるので、ポインタを二重に持たない
+- `.claude/rules/*.md` と `.claude/CLAUDE.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。CLAUDE.md は節を配るので全文一致では判定できず、**節の非空行がすべて配備先にあれば反映済み**とみなす（判定基準がテンプレ本体から導出されるので、別途マーカーを維持しなくてよい）
 - `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時のプラグイン版と有効フラグ = `--architecture`）をマージ記録する（setup-github のキーは温存）。**このスキルは settings.json に触れず hook も配らない**（従来どおり）。ドリフト検知の hook（SessionStart の `sync-setup-check.mjs` と UserPromptSubmit の `sync-setup-prompt.mjs`）は setup-github が配り、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
 
 ### Step 2.5: 要マージのファイルを統合する
@@ -131,14 +136,16 @@ Step 1 で **CLI 未導入**（`unity --version` が失敗）と分かってい�
 Step 1 で **Pipeline 未導入**と分かっていて、Editor 版が **6.0 LTS 以降**で、
 かつ **CLI が Step 2.6 で入れたものでない**（＝このセッションで `unity` が使える）なら、ここで入れる。
 `unity command`（シーン・Prefab・コンポーネント操作、コンパイル確認）がこれを前提にしているため、
-入れないとテスト実行 / lint-unity が縮退動作のままになる。
+入れないと lint-unity が Editor 不要カテゴリだけの縮退動作になり、テストは live Editor へ
+走らせられず `unity test` が自分で Editor を起こす形だけになる（Editor を開いていると
+exit 6 で断られるので閉じる必要がある）。
 
 ```bash
 unity pipeline install --project-path {target} --format json
 ```
 
 - **冪等**。導入済みなら「変更なし」を返すので、条件を取り違えても壊れない
-- 終了コードで分岐する（`rules/unity-cli.md`「失敗判定」）:
+- 終了コードで分岐する:
   - **exit 3（認証失敗）** → `unity auth login` はブラウザを開く対話フローなので**代わりに打たない**。
     ユーザーに `! unity auth login` を実行してもらい、済んだら上のコマンドを再実行する
   - **exit 0 以外のその他** → `errors[0].code` を添えて報告し、手順を案内して止める（配備物はそのまま）
@@ -163,12 +170,11 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   - **CLI を入れられなかった** → 出力を添えて手順を案内する
   - **Pipeline を Step 2.7 で入れた** → **Editor 側の再コンパイルを待つ**よう伝える（待たずに `unity command` を叩いても繋がらない）
   - **Pipeline が入れられなかった** → 止まった理由（認証・CLI 未導入・6.0 未満・Safe Mode）と、解消後に `/setup-unity` を再実行すれば入る旨を伝える
-  - **Safe Mode** → 導入の問題ではない。`rules/unity-cli.md`「Safe Mode」の手順でコンパイルエラーを解消する
+  - **Safe Mode** → 導入の問題ではない。コンパイルエラーを解消する（手順は `unity-cli` skill）
   - **Editor 版が 6.0 未満** → live Editor 操作は使えない。lint-unity は Editor 不要カテゴリのみの縮退動作になる
-- 公式の `unity-cli` skill（`unity skill install claude-code`。`--local` でプロジェクトへも入る）は
-  CLI の詳細リファレンス。**任意**。setup-unity はこれに依存しない — CLI バイナリに埋め込まれた
-  スナップショットなので、配備先ごとに CLI の版が違えば内容も違い、`rules/unity-cli.md` の
-  「発見してから呼ぶ」方針とも役割が重ならないため
+- **公式の `unity-cli` skill の状態**を伝える（出力の `公式 unity-cli skill:` 行に「導入しました（CLI x.y.z）」「導入済み（CLI x.y.z と一致）」「入れ直しました（記録 → CLI）」「見送りました」のいずれかが出る）。CLI を上げた後は次の `/setup-unity` か `/sync-setup` で自動的に入れ直る（記録との食い違いで検出する）。先に更新したいなら対象ディレクトリで`unity skill install claude-code --local --yes` を撃つ
+  既にあれば触らない。**CLI を上げたら `unity skill install claude-code --local --yes` を
+  対象ディレクトリで撃つ**（`/setup-unity` の再実行は要らない）
 - アーキテクチャ規約の後付けは、再実行してセットアップ質問で選び直せばよい
 - **analyzer について**は、次を伝える:
   - 反映には **Unity Editor 側の再コンパイル**が要る（Editor を開いているならフォーカスを戻す）
@@ -177,72 +183,23 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
     ラベルや配置が崩れていると **診断が 1 件も出ない**＝「違反ゼロ」と見分けが付かないため、
     最初の 1 回だけは陽性を確認する価値がある
   - **severity は Warning 固定で、Error には上げない**。Unity は C# のコンパイルエラーで Safe Mode に
-    入るため、命名違反 1 件で Editor が作業不能になる。PR を止めるのは CI の役目
+    入るため、命名違反 1 件で Editor が作業不能になる。違反は Editor のコンソールで見て直す
   - 正当な例外は `#pragma warning disable UCS0006` のように範囲を絞って抑制し、理由をコメントに書く
     （配布する `rules/coding-standards.md`「規約の機械チェック」に同じことが書いてある）
 - **CI について**は、次を伝える:
-  - **CI のテスト実行には Plus / Pro 以上のライセンスが要る**。Unity は Personal の
-    非対話・オフライン有効化を Enterprise / Industry 限定にしており、手元の `.ulf` を
-    持ち込む経路も Licensing Client が拒否する。Personal のプロジェクトでは test ジョブが
-    赤いままになる（**verify ジョブはライセンス不要なので動く**）
-  - **Personal のプロジェクトでは test を branch protection の必須チェックに入れない**。
-    永久に赤いままなので、必須にすると PR がマージできなくなる（verify は必須にしてよい）
-  - ライセンス認証だけ Unity CLI を使わず Editor バイナリへ直接渡している。
-    `unity license activate` はどの経路でもサインイン済みセッションを要求し、
-    `unity auth login` は資格情報を OS のキーリングへ保存しようとするため、
-    コンテナでは通らない。`unity test` / `unity projects verify` は CLI のまま
-  - **secret の登録は Step 3.5 で行う**。値をこのセッションへ入力させない
-
-  - **gate も一度は陽性を確かめる**。規約違反を 1 つ含む PR を出して `unity-ci` が赤くなるのを見る。
-    analyzer と同じ理由で、通っている状態と見ていない状態は外から区別できない
-  - 両ジョブを **branch protection の必須チェック**に登録するのはリポジトリ側の設定
-    （このスキルは触らない）
-- 全件のテスト実行は CI（`unity-ci` の test ジョブ）が担う。ローカルでは差分に対応する
-  テストだけ回す。プロジェクト外の常時失敗テストを拾うプロジェクトでは、workflow の
-  `TEST_FILTER` に自分のテスト名前空間を書いて絞る（**人が読む一覧ではなくコマンドへ渡る値**なので、
-  記述と実行の乖離が起きない）
+  - 見るのは `unity projects verify --strict` だけ。**Editor を起こさないのでライセンスも
+    secret も要らない**（Personal のプロジェクトでも動く）
+  - **ローカルで撃つ verify と結果が変わる**。ローカルは作業ツリー、CI は追跡されている
+    ものだけを見る。空ディレクトリの `.meta` や `.gitignore` された実体はローカルで緑になり
+    CI で赤くなる。**CI 側が正しい**
+  - **必須チェックに入れてよい**。常に走り skip されないので、パスフィルタ由来の
+    「永久に未完了」が起きない（登録するのはリポジトリ側の設定で、このスキルは触らない）
+- **テストはローカルで回す。** 回す順序は
+  `CLAUDE.md`（レビューの指摘を反映した後）。到達できる Editor があればそれに走らせ、
+  無ければ `unity test` が自分で Editor を起こす
 - coding-standards / architecture / class-catalog の先頭にある `<!-- agents-md: include -->` は、
   setup-github（--pr-copilot）の AGENTS.md 自動生成が「Copilot code review に教える規約」として
   取り込むための目印。setup-github 未導入なら不活性なだけで無害（導入後の次のコミットで自動反映される）
-
-### Step 3.5: CI の secret を登録する
-
-`apply.mjs` の出力の最終行 `CI の Unity ライセンス secret:` を読む。**「登録済み」なら何もしない。**
-それ以外（未登録 / 確認できません）のときだけ、下記を実行する。
-
-必要な secret は 3 つ。`UNITY_EMAIL`（アカウントのメールアドレス）、`UNITY_PASSWORD`、
-`UNITY_SERIAL`（任意。シリアルが要る契約のときだけ。seat が割り当たっていれば無くてよい）。
-
-**`Packages/manifest.json` が private repo を git URL で参照しているなら `UNITY_PACKAGES_TOKEN`
-（その repo を読める PAT / App トークン）も要る。** 無いと Package Manager がそこで止まり、
-Unity はテストを 1 件も走らせず exit 1 する。参照が無ければ登録しなくてよい。
-manifest を見て `https://github.com/` を含む依存があるかで判断する。
-
-**値をこのセッションへ入力させない。** `!` 実行も使わない — `!` の出力は会話へ入るので、
-入力した値がそのまま会話に残る。別ウィンドウで受け取る。
-
-1. 別コンソールを立ち上げ、`run_in_background: true` で投げる（ウィンドウが閉じたら完了通知が来る。
-   `sleep` で待たない）。Windows:
-
-   ```powershell
-   Start-Process -Wait powershell -ArgumentList '-NoProfile','-NoLogo','-Command',
-     'node "<plugin>/skills/setup-unity/set-secrets.mjs" "<repo>" --result "<tmp>/unity-secrets-result.json"'
-   ```
-
-   macOS / Linux は `open -a Terminal` / `x-terminal-emulator -e` など、環境にあるものを使う。
-
-2. ユーザーは**その別ウィンドウにだけ**値を入力する（入力は伏せない。打ち間違いは CI の
-   ライセンス認証まで露見せず追跡が遠いので、目視できるほうがよい）。スクリプトは値を stdin で
-   `gh secret set` へ渡す（`--body` は argv に載るので使わない）。
-
-3. 完了通知が来たら `--result` のファイルを読む。**値は入っていない**（status と登録した secret 名だけ）。
-
-   | status | 対応 |
-   |:--|:--|
-   | `ok` | `gh secret list --app actions` で裏取りして完了を伝える（値は返らない） |
-   | `cancelled` | 中断された。再実行するか聞く |
-   | `error` | `detail` をそのまま出す。原因が分かれば直す |
-   | ファイルが無い | ウィンドウを閉じられた。再実行するか聞く |
 
 ## 注意
 
@@ -251,13 +208,11 @@ manifest を見て `https://github.com/` を含む依存があるかで判断す
   base に戻す場合は `.claude/rules/architecture.md` / `class-catalog.md` を手動削除してから再実行する
 - 不明な `--` オプションはエラー終了する（typo で意図しないモードのまま成功しない）。例外は廃止フラグ（`--mcp <値>` / `--analyzer` / `--analyzer-severity=...`。注意を出して無視。上記）
 - **Unity 操作のコマンド表を持たない。** Editor が公開するコマンドは Editor 側（`com.unity.pipeline` と
-  プロジェクトの `[CliCommand]`）が定義するため、一覧を書くと必ず腐る。`rules/unity-cli.md` は
-  「`unity command --format json` で発見する」という手順と、失敗判定・禁止事項・Safe Mode 復旧だけを持つ。
-  CLI 自身のコマンド（`unity test` / `unity projects verify` / `unity doctor --ci`）はフラグまで書いてよいが、
-  正本は `unity <command> --help` である旨を併記する
+  プロジェクトの `[CliCommand]`）が定義するため、一覧を書くと必ず腐る。CLI 自身の詳細も持たない
+  （公式 `unity-cli` skill が正本で、そちらは CLI の版に追随する）
 - このスキルは `.claude/settings.json` に触れない。テンプレート自動追随の状態ファイル `.claude/sync-setup-state.json` へは自分のキー（`setup-unity`）だけをマージ記録する（データファイルの更新であり hook 登録ではない）。同期チェック hook 本体（SessionStart / UserPromptSubmit）と settings.json 登録は setup-github が単独で担う（hook の二重管理を作らないため）
 - **hook 契約の範囲**: 「settings.json へ恒久登録する hook は配らない」が契約であって、「hook を一切配らない」ではない。`unity-parallel` は自身の SKILL.md frontmatter に PreToolUse hook を持つ。これは **その skill を呼び出したセッションでだけ登録され**、settings.json には現れない。並列作業をしていないセッションの挙動は変わらない
-- **`templates/project/` は `.claude/` の外へ出る配置物**（analyzer の DLL と PR ゲートの workflow）。
+- **`templates/project/` は `.claude/` の外へ出る配置物**（analyzer の DLL と整合性検査の workflow）。
   テンプレ同期の sparse-checkout が `Assets/Analyzers` と `.github` を展開している必要がある
   （`skills/sync-setup/sync-run.mjs`）。配置先を変えるならそちらも合わせる —
   片方だけ変えると同期 PR からその更新だけが静かに落ちる

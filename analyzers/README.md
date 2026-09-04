@@ -23,9 +23,12 @@
 規則 ID の一覧は `src/UnityCodingStandards.Analyzers/AnalyzerReleases.Unshipped.md` が正本。
 新しい ID をそこへ書き忘れると `RS2008` でビルドが落ちる（一覧が腐らない）。
 
-**設定ファイル（`.ruleset` / `.globalconfig`）は配らない。** 既定 severity は Warning 固定で、
-PR の gate は CI がコンパイルログの `warning UCS` を拾って落とす。Error にすると Unity が
-Safe Mode へ落ち、命名違反だけで Editor が作業不能になるため、配布物としては持たない。
+**設定ファイル（`.ruleset` / `.globalconfig`）は配らない。** 既定 severity は Warning 固定。
+Error にすると Unity が Safe Mode へ落ち、命名違反だけで Editor が作業不能になるため、
+配布物としては持たない。
+
+**CI は診断を見ない。** 配る workflow は Editor を起こさないので、警告は Editor の
+コンソールで読んで直す（配る `rules/coding-standards.md`「規約の機械チェック」が正本）。
 
 ## Unity 同梱 Roslyn への追従（壊れ方が静かなので注意）
 

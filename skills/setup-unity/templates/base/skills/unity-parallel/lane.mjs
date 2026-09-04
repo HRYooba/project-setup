@@ -330,7 +330,7 @@ function cmdGrant() {
   ok("");
   ok("次にメインセッションが行うこと:");
   ok("  1. Editor が Play Mode でなく、インポート・コンパイルが終わっていることを確認する");
-  ok("  2. rules/unity-cli.md の「コンパイル確認」で refresh し、完了を待つ");
+  ok("  2. 発見済みの再コンパイルコマンドで refresh し、完了を待つ");
   ok("  3. node lane.mjs activate  ← ここで初めて借り手が Editor を操作できるようになる");
 }
 
@@ -563,11 +563,6 @@ function cmdDoctor() {
       const hb = heartbeatAge();
       if (hb !== null && hb > 15 * 60 * 1000) problems.push(`借り手の応答が ${Math.round(hb / 60000)} 分ありません`);
     }
-  }
-
-  // Unity 操作の常時ルールが配備されているか（借り手が失敗判定・禁止事項を読む先）
-  if (!existsSync(join(repoRoot(), ".claude", "rules", "unity-cli.md"))) {
-    problems.push(`.claude/rules/unity-cli.md がありません（setup-unity を実行してください）`);
   }
 
   // Unity CLI 本体。無いと借り手が Editor を操作できない。

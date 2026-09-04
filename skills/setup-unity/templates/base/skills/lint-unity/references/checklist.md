@@ -3,7 +3,7 @@
 `.claude/rules/` の各ルールを凝縮したチェックリスト。Unity のスクリプト以外のアセット・シーン・設定の lint 用。
 
 プロジェクト整合性（`.meta` 欠落・GUID 重複・衝突マーカー等）はこのチェックリストの範囲外。
-`.github/workflows/unity-ci.yml` の verify ジョブが `unity projects verify --strict` で見る。
+`.github/workflows/unity-ci.yml` が `unity projects verify --strict` で見る。
 
 ## Editor 依存の区分
 
@@ -83,14 +83,13 @@ asset-naming.md を編集し、必要ならこの対応表と上の A 項目を�
 
 ## [E] Folder Structure (フォルダ構成) — Editor: 不要
 
-- E1: **ERROR** — `Assets/ThirdParty/` 配下にプロジェクト固有のファイルが混入していないか
-- E2: **WARNING** — アセットが適切なフォルダに配置されているか
+- E1: **WARNING** — アセットが適切なフォルダに配置されているか
   - Scenes → `Assets/App/Scenes/`
   - Prefabs → `Assets/App/Prefabs/`
   - Materials → `Assets/App/Materials/`
   - Animations → `Assets/App/Animations/`
-- E3: **WARNING** — Scripts フォルダ内にスクリプト以外のファイルが混入していないか
-- E4: **INFO** — 空フォルダが残っていないか
+- E2: **WARNING** — Scripts フォルダ内にスクリプト以外のファイルが混入していないか
+- E3: **INFO** — 空フォルダが残っていないか
 
 ## [F] Prefab Integrity (Prefab 整合性) — Editor: 必須
 

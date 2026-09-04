@@ -1,12 +1,11 @@
 ---
 name: create-issue
 description: >
-  このスキルは、ユーザーが「Issue作成」「Issue起票」「バグ報告」「機能要望」「タスク化」
-  「Issueにして」「/create-issue」と依頼した場合に使用される。
-  会話やプランの内容からGitHub Issueを作成する。
-  引数なしで直前の会話コンテキストから自動生成、または `/create-issue タイトル` で明示指定も可。
-version: 0.3.0
-model: opus
+  ユーザーが Issue 化を求めたとき（「Issue作成」「Issue起票」「バグ報告」「機能要望」
+  「タスク化」「Issueにして」）に使う。会話やプランの内容から GitHub Issue を作成する。
+  引数なしなら直前の会話から起こし、`/create-issue タイトル` で明示指定もできる。
+  外向きの成果物を作るので、依頼されていないのに起票しない。
+version: 0.5.0
 allowed-tools: Bash(gh *), AskUserQuestion
 references:
   - references/templates.md
