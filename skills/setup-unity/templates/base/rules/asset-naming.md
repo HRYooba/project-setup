@@ -31,7 +31,7 @@ Material、Shader、Prefab、Texture、Animation、Audio 等の命名に適用�
 | UXML | 対応する View クラス名と一致 | `LoginView.uxml` |
 | USS | 対応する View と同名。複数 View で共有するスタイルは用途名 | `LoginView.uss`, `Common.uss`, `Dialog.uss` |
 | ScriptableObject アセット (`.asset`) | 型名ベース（環境別等の区分はサフィックス） | `BackendApiSettings_Development` |
-| asmdef | `<プロジェクト名>.<区分>`（レイヤー・モジュール単位） | `<Project>.Application`, `<Project>.Tests.EditMode` |
+| asmdef | `<プロジェクト名>.<区分>`（レイヤー・モジュール単位） | `<Project>.Application`, `<Project>.Tests.EditMode`, `<Project>.Tests.PlayMode` |
 
 上記いずれの表にもない種別は **プレフィックスなし PascalCase** を既定とし、
 繰り返し作る種別になったら本表へ行を追加する。

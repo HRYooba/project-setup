@@ -253,7 +253,12 @@ test("apply: Unity プロジェクトの worktree で setup-unity の apply.mjs 
   git(["config", "user.name", "t"], repo);
   mkdirSync(join(repo, "ProjectSettings"), { recursive: true });
   writeFileSync(join(repo, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 6000.3.9f1\n", "utf8");
-  writeState(repo, { "setup-unity": { version: "1.0.0", flags: ["--architecture", "--mcp", "mcp-for-unity"] } });
+  writeState(repo, {
+    "setup-unity": {
+      version: "1.0.0",
+      flags: ["--architecture", "--analyzer", "--mcp", "mcp-for-unity"],
+    },
+  });
   git(["add", "-A"], repo);
   git(["commit", "-q", "-m", "init"], repo);
   git(["remote", "add", "origin", origin], repo);
@@ -276,6 +281,18 @@ ${stderr}`);
   const wt = join(worktrees, readdirSync(worktrees)[0]);
   assert.ok(existsSync(join(wt, "ProjectSettings", "ProjectVersion.txt")), "ProjectSettings が展開されていない");
   assert.ok(existsSync(join(wt, ".claude", "rules", "unity-cli.md")), "rules/unity-cli.md が配置されていない");
+  // analyzer は .claude ではなく Assets 配下へ書く。sparse-checkout がそこを展開して
+  // いなければ、同期 PR から analyzer の更新だけが静かに落ちる。
+  assert.ok(
+    existsSync(join(wt, "Assets", "Analyzers", "UnityCodingStandards.Analyzers.dll")),
+    "Assets/Analyzers が展開されず analyzer が配置されていない"
+  );
+  // PR ゲートの workflow も .claude の外。sparse-checkout が .github を展開していなければ
+  // 同期 PR から CI の更新だけが落ちる。
+  assert.ok(
+    existsSync(join(wt, ".github", "workflows", "unity-ci.yml")),
+    ".github が展開されず workflow が配置されていない"
+  );
   // 廃止フラグを渡されても止まらず、警告が出力に載る
-  assert.match(stdout, /--mcp mcp-for-unity は無視しました/);
+  assert.match(stdout, /廃止したオプションを無視しました/);
 });

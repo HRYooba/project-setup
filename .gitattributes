@@ -1,2 +1,6 @@
 # 配布テンプレートに CRLF を混入させない（githooks は CRLF だと shebang が壊れる環境がある）
 * text=auto eol=lf
+
+# 配布する analyzer の DLL。text=auto の自動判定に任せず binary と明示する
+# （改行変換が入ると Unity 側で読み込めない DLL になる）
+*.dll binary

@@ -120,8 +120,8 @@ unity command --format json    # 再コンパイル・完了確認・ログ取�
    **sleep を挟んだ手書きループにしない** — 長引くなら 1 の呼び出しを `--detach` + `unity job wait` に置き換える
 3. コンソールのエラーを読む（次節）
 
-Editor に到達できない場合、`unity test` が実行前にコンパイルを通すため、テスト実行が
-コンパイル確認を兼ねる（コンパイルエラーなら exit 8 ではなく 6 で落ちる）。
+Editor に到達できない場合、コンパイルの確認は PR の CI（`.github/workflows/unity-ci.yml`）に任せる。
+**テストをローカルで走らせてコンパイル確認の代わりにしない** — テストの実行は CI の役目。
 
 ## コンソールエラー取得
 
@@ -167,9 +167,11 @@ C# のコンパイルエラーがあると Editor は Safe Mode で起動し、`
 |:--|:--|
 | 前提の事前判定（ライセンス・Editor 有無・空き容量） | `unity doctor --ci --format json` |
 | プロジェクト整合性（meta 欠落・孤児・GUID 重複・conflict marker・manifest 破損） | `unity projects verify --format json` |
-| テスト実行 | `unity test --format json`（詳細は `/test-unity`） |
 
 `unity projects verify` は**検出のみで修復しない**（meta / GUID の修復は Editor のアセット
-データベースが必要）。検出コードの一覧と扱いは `.claude/skills/lint-unity/references/checklist.md`
-の `[K]` が正本。**exit 0 を「問題なし」と読まない** — `summary.unverifiable` が 0 でないときは
+データベースが必要）。検出コードの一覧は `unity projects verify --help` の `--check` が正本。
+**exit 0 を「問題なし」と読まない** — `summary.unverifiable` が 0 でないときは
 見ていないサブツリーがある。
+
+PR ごとの実行は `.github/workflows/unity-ci.yml` の verify ジョブが `--strict` で行う。
+ローカルで撃つのは、テストや lint の結果が信用できる状態かを先に確かめたいときだけでよい。

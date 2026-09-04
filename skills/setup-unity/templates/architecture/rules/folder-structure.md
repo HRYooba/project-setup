@@ -7,13 +7,16 @@
 ## Assets/App/
 
 ### Scripts/
+
+レイヤー直下は機能単位で分ける（例: `Application/Auth/`）。
+
 - `Shared/`
 - `Domain/`
 - `Application/`
 - `Infrastructure/`
 - `Presentation/`
 - `Composition/`
-- `Tests/EditMode/`  
+- `Tests/EditMode/` / `Tests/PlayMode/`  
 
 **フォルダパス はnamespaceと一致させる** (C# 標準慣習)
 

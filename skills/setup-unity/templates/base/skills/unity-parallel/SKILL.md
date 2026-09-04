@@ -127,12 +127,12 @@ worker は自分のコンテキストを保ったまま再開する（起動し�
 検証エージェントを使う場合は、**先に権限を委譲する**:
 
 ```bash
-node .claude/skills/unity-parallel/lane.mjs delegate unity-tester
-# unity-tester を起動して終わったら
+node .claude/skills/unity-parallel/lane.mjs delegate unity-linter
+# unity-linter を起動して終わったら
 node .claude/skills/unity-parallel/lane.mjs undelegate
 ```
 
-委譲しないと `unity-tester` は別エージェント扱いになり、門番に拒否されて止まる。
+委譲しないと `unity-linter` は別エージェント扱いになり、門番に拒否されて止まる。
 
 ### Step 5: 返却
 
