@@ -1,8 +1,5 @@
 # Unity 操作ルール（Unity CLI）
 
-Unity Editor に関わる操作時に常に従う絶対ルール。**やり方は書かない** — コマンド・フラグ・
-exit code・ログの場所・復旧手順は `unity-cli` skill が持つ。ここには規約だけを置く。
-
 ## 操作
 
 - Editor の状態を変える操作は Unity CLI 経由で行う。テキスト/アセットファイルの編集自体は
