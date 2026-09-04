@@ -203,7 +203,7 @@ test("Unity 操作の方針は CLAUDE.md の 2 行だけ（CLI の写しを持�
     "utf8"
   );
   assert.match(md, /Unity CLI 経由で行う/, "CLI 経由の方針が消えている");
-  assert.match(md, /シリアライズファイル/, "手編集の禁止が消えている");
+  assert.match(md, /\.prefab.*手編集しない/, "手編集の禁止が消えている");
   assert.ok(
     !existsSync(
       join(here, "..", "skills", "setup-unity", "templates", "base", "rules", "unity-cli.md")

@@ -126,7 +126,7 @@ test("Unity 操作の方針は CLAUDE.md にあり、旧 rules は残らない",
   const repo = unityRepo("up-rule-");
   const md = readFileSync(join(repo, ".claude", "CLAUDE.md"), "utf8");
   assert.match(md, /Unity CLI 経由/, "CLI 経由の方針が無い");
-  assert.match(md, /シリアライズファイル/, "手編集禁止が無い");
+  assert.match(md, /手編集しない/, "手編集禁止が無い");
   for (const stale of ["unity-cli.md", "unity-mcp.md"]) {
     assert.ok(
       !existsSync(join(repo, ".claude", "rules", stale)),
