@@ -176,6 +176,39 @@ test("workflow は Editor を起こさない（ライセンスも secret も要�
   );
 });
 
+test("公式 unity-cli skill は配備先へ入れ、unity が無くても導入は止まらない", () => {
+  // CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所）は我々が写さず、CLI 自身が
+  // 配る版を `--local` で入れる。写しを持つと CLI を上げるたびに黙ってズレる。
+  // ただし CLI 未導入の配備先でも配置は決定的に完了させる（ここで落ちると導入が止まる）。
+  const target = unityProject();
+  const res = spawnSync(process.execPath, [APPLY_UNITY, target], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: "", Path: "" }, // unity を見つけられない環境を作る
+  });
+
+  assert.equal(res.status, 0, `unity が無いだけで落ちた: ${res.stderr}\n${res.stdout}`);
+  assert.match(res.stdout, /公式 unity-cli skill: 見送りました/, "見送りが報告されていない");
+  assert.ok(
+    existsSync(join(target, ".claude", "rules", "unity-cli.md")),
+    "見送りの後に配置が中断している"
+  );
+});
+
+test("rules/unity-cli.md は公式 skill にある表を持たない（写しを増やさない）", () => {
+  // exit code 表・ログの場所・Safe Mode の復旧手順は公式 unity-cli skill が持つ。
+  // ここに写すと CLI を上げたときに黙って古くなる。残すのは方針と実測の罠だけ。
+  const rule = readFileSync(
+    join(here, "..", "skills", "setup-unity", "templates", "base", "rules", "unity-cli.md"),
+    "utf8"
+  );
+  assert.doesNotMatch(rule, /^\| 130 \/ 143 \|/m, "exit code の一覧表が復活している");
+  assert.doesNotMatch(rule, /AppData\\Local\\Unity|Library\/Logs\/Unity|config\/unity3d/, "Editor ログのパス表が復活している");
+  // 逆に、公式に無い実測はここが正本なので消えていないことを見る。
+  assert.match(rule, /到達不可でも exit 0/, "pipeline list の罠が消えている");
+  assert.match(rule, /0 件マッチを緑と読まない/, "0 件マッチの罠が消えている");
+  assert.match(rule, /シリアライズファイルを手編集しない/, "手編集の禁止が消えている");
+});
+
 test("配布 Markdown が指す rules の節は実在する（消した節への参照を残さない）", () => {
   // 節を消しても参照が残ると、読んだ側は「どこかに書いてある」と信じて探し、見つからない。
   // 書いた時点では正しかった記述が、周りが変わって黙って嘘になる典型。

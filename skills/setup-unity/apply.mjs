@@ -12,7 +12,9 @@
 //         (target-dir 省略時は cwd)
 //
 // 依存なし（Node 標準のみ / Node 16.7+ の fs.cpSync を使用）。
+// 例外は unity の呼び出し 1 箇所（公式 unity-cli skill を配備先へ入れる。失敗しても続行する）。
 
+import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
@@ -228,6 +230,35 @@ if (!existsSync(claudeMdPath)) {
   claudeMdState = "要マージ";
 }
 
+// ---- 公式 unity-cli skill の導入（CLI 自身が配るリファレンス） ----
+// CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所・Safe Mode の復旧）は
+// **我々が写さない**。CLI バイナリに埋め込まれた版を `--local` で配備先へ入れる。
+// 写しを持つと CLI を上げるたびにズレるが、これは配備先の CLI と同じ版が入る。
+// **グローバル（~/.claude/skills/）には入れない** — 配備先ごとに CLI の版が違いうる。
+//
+// 失敗しても導入は止めない（CLI 未導入の環境でも配置は決定的に完了させる）。
+function installUnityCliSkill() {
+  const res = spawnSync("unity", ["skill", "install", "claude-code", "--local", "--yes"], {
+    cwd: target,
+    encoding: "utf8",
+    timeout: 120000,
+  });
+  if (res.error) {
+    return res.error.code === "ENOENT"
+      ? "見送りました（unity コマンドがありません。CLI 導入後に再実行すると入ります）"
+      : `見送りました（${res.error.message}）`;
+  }
+  if (res.status !== 0) {
+    // 既に別物が置かれている場合は --force が要る。奪うかはユーザーの判断なので勧めない。
+    const msg = (res.stderr || res.stdout || "").trim().split(/\r?\n/).pop() ?? "";
+    return `見送りました（exit ${res.status}${msg ? `: ${msg}` : ""}）`;
+  }
+  return existsSync(join(claudeDir, "skills", "unity-cli", "SKILL.md"))
+    ? "導入しました（.claude/skills/unity-cli/）"
+    : "コマンドは成功しましたが SKILL.md が見つかりません";
+}
+const unityCliSkillState = installUnityCliSkill();
+
 // ---- Unity プロジェクト本体へ配るもの（.claude/ の外）----
 // Roslyn analyzer は Assets 配下にあり RoslynAnalyzer ラベルの付いた DLL だけが csc へ渡るため、
 // 置き場所と .meta が動作条件そのものになる。PR ゲートの workflow は .github/ へ。
@@ -300,6 +331,7 @@ if (architectureInherited) {
   console.log("注意: 導入済みの architecture 規約を検出したため、--architecture 指定なしでも architecture モードで適用しました（巻き戻り防止）。");
 }
 console.log("Unity 操作: Unity CLI（rules/unity-cli.md）");
+console.log(`公式 unity-cli skill: ${unityCliSkillState}`);
 if (droppedFlags.length) {
   console.log(`注意: 廃止したオプションを無視しました: ${droppedFlags.join(" / ")}`);
   console.log(

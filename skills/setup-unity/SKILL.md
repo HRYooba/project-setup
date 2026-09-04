@@ -165,10 +165,15 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
   - **Pipeline が入れられなかった** → 止まった理由（認証・CLI 未導入・6.0 未満・Safe Mode）と、解消後に `/setup-unity` を再実行すれば入る旨を伝える
   - **Safe Mode** → 導入の問題ではない。`rules/unity-cli.md`「Safe Mode」の手順でコンパイルエラーを解消する
   - **Editor 版が 6.0 未満** → live Editor 操作は使えない。lint-unity は Editor 不要カテゴリのみの縮退動作になる
-- 公式の `unity-cli` skill（`unity skill install claude-code`。`--local` でプロジェクトへも入る）は
-  CLI の詳細リファレンス。**任意**。setup-unity はこれに依存しない — CLI バイナリに埋め込まれた
-  スナップショットなので、配備先ごとに CLI の版が違えば内容も違い、`rules/unity-cli.md` の
-  「発見してから呼ぶ」方針とも役割が重ならないため
+- **公式の `unity-cli` skill は apply.mjs が `--local` で配備先へ入れる**
+  （`.claude/skills/unity-cli/`）。CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所・
+  Safe Mode の復旧手順）はこれが正本で、`rules/unity-cli.md` はそこに無いものだけを持つ。
+  - **グローバル（`~/.claude/skills/`）には入れない。** 配備先ごとに CLI の版が違いうるので、
+    プロジェクトローカルに置く。CLI バイナリに埋め込まれた版が入るため、配備先の CLI と必ず一致する
+  - **git に入れる**（無視しない）。配備先メンバーの CLI 版が揃っていないと差分が出るが、
+    追跡しないと各自が `unity skill install` を手で撃つことになり、揃っている保証が消える
+  - unity コマンドが無い環境では**見送って続行する**。出力の `公式 unity-cli skill:` 行に
+    その旨が出るので、CLI を入れた後に再実行すれば入る
 - アーキテクチャ規約の後付けは、再実行してセットアップ質問で選び直せばよい
 - **analyzer について**は、次を伝える:
   - 反映には **Unity Editor 側の再コンパイル**が要る（Editor を開いているならフォーカスを戻す）
