@@ -118,8 +118,22 @@ test("workflow は YAML として壊れていない（生 CR や欠けた行継�
     assert.doesNotMatch(text, /  {4,}--[a-z-]+ +--[a-z-]+/, `${f} で行継続が落ちている疑い`);
   }
   const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  for (const job of ["  resolve:", "  verify:", "  test:"]) {
+  for (const job of ["  changes:", "  resolve:", "  verify:", "  test:", "  gate:"]) {
     assert.ok(workflow.includes(job), `${job} が無い`);
+  }
+
+  // **列 0 の行は `run: |` ブロックを終わらせる。** シェルを書いているつもりで
+  // ヒアドキュメントの終端や継続行を左端へ置くと、そこから先が YAML の別トークンとして
+  // 読まれ、workflow が丸ごと読み込めなくなる（実際に壊れたまま main へ入った）。
+  // トップレベルのキーとコメントだけを列 0 に許す。
+  const topLevel = /^(name|on|concurrency|env|jobs|permissions|defaults|run-name):/;
+  for (const [i, line] of workflow.split(/\r?\n/).entries()) {
+    if (line === "" || line.startsWith(" ") || line.startsWith("#")) continue;
+    assert.match(
+      line,
+      topLevel,
+      `${WORKFLOW}:${i + 1} が列 0 にある（run: | ブロックを終わらせてしまう）: ${line}`
+    );
   }
 });
 

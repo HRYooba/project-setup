@@ -20,9 +20,10 @@
 # verify ジョブはライセンス不要なので、Personal のプロジェクトでもそちらは動く。
 name: unity-ci
 
-# paths / paths-ignore で絞らない。branch protection の必須チェックにしたとき、
-# パスフィルタで skip された実行は「未完了」として扱われ、PR が永久にマージできなくなる。
-# docs だけの PR でも Editor が起動する分は払う。
+# paths / paths-ignore で絞らない。パスフィルタで skip された実行は「未完了」として扱われ、
+# 必須チェックにしていると PR が永久にマージできなくなる。
+# 代わりに **workflow は必ず起動し、変更の種類で走らせるジョブを変える**（changes ジョブ）。
+# 必須チェックにするのは最後の gate ジョブ 1 つだけ。
 on:
   pull_request:
   push:
@@ -35,6 +36,70 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 変更の種類で走らせる検査を変える。全部を常に走らせると、ドキュメントだけの PR でも
+  # Editor の起動（10〜30 分）を払う。逆にパスフィルタで workflow ごと skip すると
+  # 必須チェックが「未完了」になって PR がマージできない（上のコメント参照）ので、
+  # **workflow は必ず起動し、ジョブ単位で出し入れする**。最終判定は gate ジョブが返す。
+  #
+  # | 変更 | verify | EditMode | PlayMode | UCS gate | 件数チェック |
+  # |:--|:--:|:--:|:--:|:--:|:--:|
+  # | コンパイル入力（下記 code） | ✅ | ✅ | ✅ | ✅ | ✅ |
+  # | Assets のシーン・prefab 等 | ✅ | – | ✅ | – | – |
+  # | .md / .github / .claude のみ | – | – | – | – | – |
+  #
+  # EditMode は plain class のロジックしか見ないのでアセット変更では要らない。
+  # PlayMode はシーンと prefab を読むのでどちらでも要る。UCS gate は Editor の
+  # コンパイルログを読むので、再コンパイルが起きない変更では「見ていない」緑になるだけ。
+  # 件数チェックは絞り込みの破綻を見る段で、それはコード側の変更から来るので code に揃える
+  # （EditMode を飛ばした回に走らせると、EditMode テストしか持たないプロジェクトを
+  #  「テストがあるのに 0 件」と誤って落とす）。
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.detect.outputs.code }}
+      assets: ${{ steps.detect.outputs.assets }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # **比較元が取れないときは絞らない。** 初回 push や force push の後は before が
+          # 空だったり親を辿れなかったりする。判定不能を「変更なし」と読み替えると、
+          # 検査を落としたまま緑で通る。
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "比較元が取れないので全ての検査を走らせる（BASE_SHA=${BASE_SHA:-空}）"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "assets=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # core.quotepath=false が無いと、非 ASCII を含むパスが "..." で囲まれエスケープされる。
+          # すると下の判定に一致せず「変更なし」と読み、検査を落としたまま緑で通る。
+          files=$(git -c core.quotepath=false diff --name-only "$BASE_SHA" HEAD)
+          echo "変更ファイル:"
+          printf '%s\n' "$files" | sed 's/^/  /'
+
+          code=false
+          assets=false
+          # **コンパイルの入力になるものは全部 code。** 狭く取ると EditMode と UCS gate を
+          # 飛ばしたまま緑になる（取りこぼしは気付けない。無駄な実行は時間だけ払う）。
+          #   .cs / .asmdef / .asmref — ソースとアセンブリ構成・参照
+          #   .dll / .rsp             — analyzer や外部アセンブリ、コンパイラ応答ファイル
+          #   ProjectSettings/        — scripting define、Editor 版
+          #   Packages/*.json         — 依存パッケージ
+          if printf '%s\n' "$files" | grep -qE '\.(cs|asmdef|asmref|dll|rsp)$|^ProjectSettings/|^Packages/.*\.json$'; then
+            code=true
+          fi
+          # verify が見る対象と、PlayMode が読むアセット。
+          if printf '%s\n' "$files" | grep -qE '^(Assets|ProjectSettings)/|^Packages/.*\.json$'; then
+            assets=true
+          fi
+          echo "code=$code / assets=$assets"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "assets=$assets" >> "$GITHUB_OUTPUT"
+
   # Editor 版を ProjectSettings/ProjectVersion.txt から取り出して後続へ渡す。
   # ワークフローに版を直書きすると、Editor を上げたときに黙ってズレる。
   resolve:
@@ -54,6 +119,8 @@ jobs:
           echo "Editor: $version"
 
   verify:
+    needs: [changes]
+    if: needs.changes.outputs.assets == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +132,10 @@ jobs:
       - run: unity projects verify --strict --format github --non-interactive
 
   test:
-    needs: [resolve]
+    needs: [resolve, changes]
+    # ジョブごと飛ばすのは container のイメージ pull がどの step より前に走るため。
+    # step を if で飛ばしても数 GB の pull 時間は払う。
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.assets == 'true'
     runs-on: ubuntu-latest
     # GameCI の Editor 入りイメージ。headless の Unity に要るシステムライブラリが揃っている。
     # 末尾の数字は GameCI 側のイメージ改訂番号で、Editor 版からは導出できない（手で上げる）。
@@ -191,12 +261,11 @@ jobs:
               ns=${ns%.EditMode}
               ns=${ns%.PlayMode}
             fi
-            [ -n "$ns" ] && prefixes="$prefixes
-$ns"
-          done <<EOF
-$asmdefs
-EOF
-          uniq=$(printf '%s\n' "$prefixes" | sed '/^$/d' | sort -u)
+            # 名前空間に空白は入らないので、ここは空白区切りで足してよい
+            # （空白安全にしたいのは asmdef の**パス**の方）。
+            [ -n "$ns" ] && prefixes="$prefixes $ns"
+          done <<< "$asmdefs"
+          uniq=$(printf '%s\n' $prefixes | sed '/^$/d' | sort -u)
           if [ -z "$uniq" ]; then
             # 何にもマッチしない値。Editor は起動するがテストは 0 件になる。
             echo "Assets/App/ 配下にテストアセンブリがありません（テストの成否は判定しません）"
@@ -218,6 +287,7 @@ EOF
         id: test
         env:
           FILTER: ${{ steps.scope.outputs.filter }}
+          CODE: ${{ needs.changes.outputs.code }}
         run: |
           # **仮想ディスプレイが要る。** Unity は batchmode でも X ディスプレイを開こうとし、
           # 無いと Editor がテストを 1 件も走らせずに終了する
@@ -230,6 +300,12 @@ EOF
           fi
           rc=0
           for mode in EditMode PlayMode; do
+            # EditMode は plain class のロジックしか見ないので、コードが変わっていなければ
+            # 回す意味がない（PlayMode はシーンと prefab を読むので常に回す）。
+            if [ "$mode" = "EditMode" ] && [ "$CODE" != "true" ]; then
+              echo "EditMode は skip（コードの変更なし）"
+              continue
+            fi
             echo "::group::$mode"
             # 出力先を mode ごとに分ける（既定は両方 test-results.xml で、後者が前者を潰す）
             xvfb-run --auto-servernum \
@@ -255,7 +331,7 @@ EOF
       # 「まだテストを書いていない」を赤にしない。テストの成否そのものは前の step が判定
       # 済みで、ここは「走ったはずのものが走ったか」だけを見る段。
       - name: テストが 1 件も走っていなければ落とす
-        if: steps.test.outcome == 'success' && steps.scope.outputs.has_tests == 'true'
+        if: steps.test.outcome == 'success' && steps.scope.outputs.has_tests == 'true' && needs.changes.outputs.code == 'true'
         env:
           FILTER: ${{ steps.scope.outputs.filter }}
         run: |
@@ -292,7 +368,7 @@ EOF
       # ログが見つからないときは緑にせず落とす — 「違反ゼロ」と「見ていない」は
       # 外から区別が付かず、素通しの gate は無い gate より悪い。
       - name: コーディング規約違反（UCS）を検出したら落とす
-        if: always() && steps.test.outcome != 'skipped'
+        if: always() && steps.test.outcome != 'skipped' && needs.changes.outputs.code == 'true'
         run: |
           log=""
           for candidate in \
@@ -330,3 +406,33 @@ EOF
           xvfb-run --auto-servernum "$UNITY_EDITOR" \
             -batchmode -nographics -logFile /dev/stdout -quit \
             -returnlicense || echo "::warning::ライセンスの返却に失敗しました（seat を消費したままの可能性があります）"
+
+  # **branch protection の必須チェックはこれ 1 つにする。**
+  # verify / test は変更の種類で skip される。skipped が必須チェックで pass 扱いに
+  # なるかは GitHub 側の仕様に依存するので、そこに賭けない — 常に走るこのジョブが
+  # 結果をまとめて返す。skip は「その検査が要らない変更だった」なので通す。
+  gate:
+    needs: [changes, resolve, verify, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 検査の結果をまとめる
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RESOLVE: ${{ needs.resolve.result }}
+          VERIFY: ${{ needs.verify.result }}
+          TEST: ${{ needs.test.result }}
+        run: |
+          echo "changes=$CHANGES / resolve=$RESOLVE / verify=$VERIFY / test=$TEST"
+          failed=0
+          # **resolve も見る。** resolve が落ちると test は skipped になり、skip を通す
+          # このジョブだけでは「Editor 版が読めなかった」実行が緑で抜ける。
+          for pair in "changes:$CHANGES" "resolve:$RESOLVE" "verify:$VERIFY" "test:$TEST"; do
+            name=${pair%%:*}
+            result=${pair#*:}
+            case "$result" in
+              success|skipped) ;;
+              *) echo "::error::$name が完了していません（$result）"; failed=1 ;;
+            esac
+          done
+          exit $failed
