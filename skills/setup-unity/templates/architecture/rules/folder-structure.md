@@ -17,6 +17,9 @@
 - `Presentation/`
 - `Composition/`
 - `Tests/EditMode/` / `Tests/PlayMode/`  
+- `Tests/EditMode/TestDoubles/`: テストスタブ（Stub / Spy / Fake）を context 別サブフォルダで
+  共有定義する。同じ interface のスタブを各テストファイルの private nested クラスとして
+  重複定義しない
 
 **フォルダパス はnamespaceと一致させる** (C# 標準慣習)
 
