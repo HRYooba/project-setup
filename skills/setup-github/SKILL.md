@@ -9,7 +9,7 @@ description: >
   create-issue skill を撒く。ブランチ保護の有無と、PR 自動レビュー3機能（Copilot 自動アサイン /
   watch-pr / resolve-pr）と AGENTS.md 自動生成（Copilot code review にプロジェクト規約を教える）の
   導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.25.0
+version: 1.26.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -27,7 +27,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 5. **create-issue skill** — skill 同梱の `templates/base/skills/create-issue/` を `.claude/skills/` へコピー
 5-b. **`.github/` テンプレート（seed）** — `templates/base/.github/` の `pull_request_template.md`（小文字・単一ファイル）と `ISSUE_TEMPLATE/{bug_report,feature_request,task}.yml` を配置。**既にファイルがある場合は一切触らない**（PR / Issue テンプレはリポジトリ所有の成果物で、独自に育てているリポがあるため）。更新したいときはプロジェクト側で同梱版から手動で取り込む
 6. **CLAUDE.md** — ブランチ規約（作業ブランチ経由の PR 必須）と PR 前レビュー運用を**ソフト指示**として配る（強制はしない）。レビュー（`/code-review` / `/security-review`）は条件付きで各 1 回。**発火条件の文面は `templates/claude-md.md` が正本**でありここには写さない（写すとテンプレ更新で黙ってズレる）。**ファイルが無ければ書き、節の行が揃っていれば触らず、揃っていなければ「要マージ」として報告**する（Step 2.6 で Claude が統合。文面の移行リストは保守しない）
-7. **テンプレート更新の検知と実行** — `.claude/sync-setup-state.json` に「適用時の project-setup プラグイン版」と「有効フラグ一式」を記録し（setup-github / setup-unity が同じファイルへ各自のキーでマージ。相手のキーは消さない）、2 つの hook が現行版と比較する。比較の実体は `.claude/hooks/lib/sync-setup-drift.mjs`（両 hook の正本。判定を写すと片方だけ直って黙ってズレる）。**`sync-setup-check.mjs`（SessionStart）は `systemMessage` で人へ 1 行出すだけ**、**`sync-setup-prompt.mjs`（UserPromptSubmit）がそのセッションの最初のプロンプトを `updatedInput` で包んで `/project-setup:sync-setup` を先に実行させる**（差が無ければ即 exit・毎セッションの税を最小化）。実行指示を SessionStart へ置かないのは、その時点でモデルが呼ばれず、人が何か打つまで何も起きないため。差し込みは 1 セッション 1 回（`session_id` を `~/.claude/plugins/data/project-setup/sync-setup-prompted.json` に記録。差し込んだときだけ記録するので、セッション途中のプラグイン自動更新は次のプロンプトで拾う）。スラッシュコマンド・`!`・`#` で始まるプロンプトは先頭に文字を足すと展開が壊れるため書き換えず `additionalContext` で渡す。書き換えは `systemMessage` で必ず知らせる（打っていない文が会話ログに残るため）。同期そのものは **そのセッションの Claude が**走らせる（裏で別プロセスの Claude には走らせない。進行も .md 統合の判断も会話に出るのが正しい）。**重複PR防止・試行回数ガード（同一版 最大2回）・merge 禁止・作業ツリー分離は sync-run.mjs がコード担保する**（origin の default から使い捨て sparse worktree を切ってその中だけで作業・PR は作るが merge はしない・apply の warnings を PR 本文へ全文転記・古い版の同期 PR は新しい PR 作成後に close して常に 1 本に保つ）。発火はアップグレード方向のみ（複数マシンで版がずれても古い版が新しい同期を巻き戻さない）。無効化は `SYNC_SETUP_DISABLE=1`。**この 2 つの hook が setup-unity のドリフトも検知する**（setup-unity は状態ファイルへ自分のキーを書くだけで settings.json には触れない。検知には setup-github の導入が前提）
+7. **テンプレート更新の検知と実行** — `.claude/sync-setup-state.json` に「適用時の project-setup プラグイン版」と「有効フラグ一式」を記録し（setup-github / setup-unity が同じファイルへ各自のキーでマージ。相手のキーは消さない）、2 つの hook が現行版と比較する。比較の実体は `.claude/hooks/lib/sync-setup-drift.mjs`（両 hook の正本。判定を写すと片方だけ直って黙ってズレる）。**`sync-setup-check.mjs`（SessionStart）は `systemMessage` で人へ 1 行出すだけ**、**`sync-setup-prompt.mjs`（UserPromptSubmit）がそのセッションの最初のプロンプトを `updatedInput` で包んで `/project-setup:sync-setup` を先に実行させる**（差が無ければ即 exit・毎セッションの税を最小化）。実行指示を SessionStart へ置かないのは、その時点でモデルが呼ばれず、人が何か打つまで何も起きないため。差し込みは 1 セッション 1 回（`session_id` を `~/.claude/plugins/data/project-setup/sync-setup-prompted.json` に記録。差し込んだときだけ記録するので、セッション途中のプラグイン自動更新は次のプロンプトで拾う）。スラッシュコマンド・`!`・`#` で始まるプロンプトは先頭に文字を足すと展開が壊れるため書き換えず `additionalContext` で渡す。書き換えは `systemMessage` で必ず知らせる（打っていない文が会話ログに残るため）。同期そのものは **そのセッションの Claude が**走らせる（裏で別プロセスの Claude には走らせない。進行も .md 統合の判断も会話に出るのが正しい）。同期そのものの手順とガード（重複 PR 防止・試行上限・merge 禁止・作業ツリー分離）は **`sync-setup` skill が正本**でここには写さない。発火はアップグレード方向のみ（複数マシンで版がずれても古い版が新しい同期を巻き戻さない）。無効化は `SYNC_SETUP_DISABLE=1`。**この 2 つの hook が setup-unity のドリフトも検知する**（setup-unity は状態ファイルへ自分のキーを書くだけで settings.json には触れない。検知には setup-github の導入が前提）
 
 ## pr-copilot モード（質問で「PR 自動レビューを入れる」を選んだ場合）
 

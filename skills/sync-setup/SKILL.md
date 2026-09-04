@@ -7,7 +7,7 @@ description: >
   記録版と現行プラグイン版を比較し、更新があれば使い捨て worktree の中で保存フラグから
   apply.mjs を再適用し、要マージの Markdown を統合してから commit → push → 同期 PR を
   作成する（merge はしない）。重複 PR 防止・試行上限・作業ツリー分離はコード担保。
-version: 1.4.0
+version: 1.5.0
 user-invocable: true
 argument-hint: "[対象ディレクトリ（省略時はカレント）]"
 ---
@@ -56,8 +56,8 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/sync-setup/sync-run.mjs" {target} --phase=app
 1. **重複防止** — 同期ブランチ `chore/sync-setup-v<version>` の open PR があれば、何もせず終了する
 2. **試行上限** — 同一版につき最大 2 回（`SYNC_SETUP_MAX_ATTEMPTS` で変更可）。副作用に入る前に
    試行回数を +1 保存するため、途中失敗も 1 回として数える。上限到達なら起動せず終了する
-3. `origin` を fetch し、**default ブランチから使い捨て worktree を切る**（sparse-checkout で
-   `.claude` / `.github` / `.githooks` とルート直下だけ展開）→ その中で同期ブランチを作成
+3. `origin` を fetch し、**default ブランチから使い捨て worktree を切る**（sparse-checkout の
+   範囲は `sync-run.mjs` が持つ。テンプレが触る領域だけ展開する）→ その中で同期ブランチを作成
 4. 保存フラグで `apply.mjs` を再適用 → 出力（要マージ一覧を含む）を流す
 5. 同期計画・警告・worktree パスをフェーズ間ファイルへ保存して停止する（**commit はしない**）
 
