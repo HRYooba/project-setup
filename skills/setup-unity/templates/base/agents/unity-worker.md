@@ -111,8 +111,8 @@ Editor を待つ間に進められるものは進める。順番待ちの回数�
 ## 規約
 
 - 出力・メッセージは日本語、思考・推論は英語
-- コミット subject は日本語・全角 25〜30 字目安・体言止めか動詞終止形・末尾に句点を付けない
-- 実装の規約は `.claude/rules/` が正（coding-standards / folder-structure / asset-naming / hierarchy / testing）
+- コミットの書き方は `.claude/rules/git-conventions.md` が正
+- 実装の規約は `.claude/rules/` が正（coding-standards / folder-structure / asset-naming / hierarchy）
 - 独立したツール呼び出しは 1 レスポンスにまとめる
 
 ## 報告
