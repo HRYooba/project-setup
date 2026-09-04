@@ -30,7 +30,9 @@ const MARKS = readFileSync(join(APPLY, "..", "templates", "claude-md.md"), "utf8
   .split(/\r?\n/)
   .map((l) => l.match(/^- (\*\*.+?\*\*:)/)?.[1])
   .filter(Boolean);
-assert.ok(MARKS.length >= 3, `claude-md.md から箇条書きラベルを抽出できませんでした: ${MARKS}`);
+// 件数は固定しない。ここで見たいのは「抽出が壊れていないか」だけで、箇条書きの本数は
+// テンプレの都合で増減する（3 本を前提にしていた頃、項目を畳んだだけで落ちた）。
+assert.ok(MARKS.length >= 1, `claude-md.md から箇条書きラベルを抽出できませんでした: ${MARKS}`);
 
 test("初回適用 → 再実行で重複せず、review-config が温存される", () => {
   const target = tempDir("apply-test-");
