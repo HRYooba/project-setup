@@ -7,6 +7,7 @@
 //   4. 設定ファイル（.ruleset / .globalconfig）を配らない ＝ Assets 直下を汚さない
 //   5. 廃止フラグを渡されても止まらない（配備先の状態ファイルに記録が残っているため）
 //   6. workflow が Editor 版を直書きしていない
+//   7. CI の secret 確認が導入を止めない（gh が使えない環境でも完走して状態を報告する）
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -127,4 +128,17 @@ test("workflow は Editor 版を直書きせず ProjectVersion.txt から読む"
   assert.match(workflow, /ProjectSettings\/ProjectVersion\.txt/, "Editor 版の出所が workflow に無い");
   // 版を直書きすると Editor を上げたときに黙ってズレる。コメント中の例示も含めて禁止する。
   assert.doesNotMatch(workflow, /\b\d{4}\.\d+\.\d+[abf]\d+\b/, "Editor 版が直書きされている");
+});
+
+test("CI の secret 確認は導入を止めない（gh が使えなくても完走して状態を報告する）", () => {
+  // 状態確認は報告だけの段。gh が無い / 未認証 / git リポジトリでない配備先でも、
+  // 配置そのものは決定的に完了させる（ここで exit 1 にすると導入が止まる）。
+  const target = unityProject(); // git リポジトリではないので gh はリポジトリを特定できない
+  const out = runApply(target);
+
+  assert.match(out, /CI の Unity ライセンス secret:/, "secret の状態が報告されていない");
+  assert.ok(
+    existsSync(join(target, ".github", "workflows", "unity-ci.yml")),
+    "確認の失敗で配置が中断している"
+  );
 });

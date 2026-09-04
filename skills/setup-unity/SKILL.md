@@ -185,18 +185,13 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
     非対話・オフライン有効化を Enterprise / Industry 限定にしており、手元の `.ulf` を
     持ち込む経路も Licensing Client が拒否する。Personal のプロジェクトでは test ジョブが
     赤いままになる（**verify ジョブはライセンス不要なので動く**）
-  - **secret を登録するまで test ジョブは赤くなる**:
-
-    | secret | 内容 |
-    |:--|:--|
-    | `UNITY_EMAIL` | Unity アカウントのメールアドレス |
-    | `UNITY_PASSWORD` | Unity アカウントのパスワード |
-    | `UNITY_SERIAL` | 任意。永続ライセンス等でシリアルが要る契約のときだけ。seat が割り当てられていれば無くてよい |
-
+  - **Personal のプロジェクトでは test を branch protection の必須チェックに入れない**。
+    永久に赤いままなので、必須にすると PR がマージできなくなる（verify は必須にしてよい）
   - ライセンス認証だけ Unity CLI を使わず Editor バイナリへ直接渡している。
     `unity license activate` はどの経路でもサインイン済みセッションを要求し、
     `unity auth login` は資格情報を OS のキーリングへ保存しようとするため、
     コンテナでは通らない。`unity test` / `unity projects verify` は CLI のまま
+  - **secret の登録は Step 3.5 で行う**。値をこのセッションへ入力させない
 
   - **gate も一度は陽性を確かめる**。規約違反を 1 つ含む PR を出して `unity-ci` が赤くなるのを見る。
     analyzer と同じ理由で、通っている状態と見ていない状態は外から区別できない
@@ -209,6 +204,40 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
 - coding-standards / architecture / class-catalog の先頭にある `<!-- agents-md: include -->` は、
   setup-github（--pr-copilot）の AGENTS.md 自動生成が「Copilot code review に教える規約」として
   取り込むための目印。setup-github 未導入なら不活性なだけで無害（導入後の次のコミットで自動反映される）
+
+### Step 3.5: CI の secret を登録する
+
+`apply.mjs` の出力の最終行 `CI の Unity ライセンス secret:` を読む。**「登録済み」なら何もしない。**
+それ以外（未登録 / 確認できません）のときだけ、下記を実行する。
+
+必要な secret は 3 つ。`UNITY_EMAIL`（アカウントのメールアドレス）、`UNITY_PASSWORD`、
+`UNITY_SERIAL`（任意。シリアルが要る契約のときだけ。seat が割り当たっていれば無くてよい）。
+
+**値をこのセッションへ入力させない。** `!` 実行も使わない — `!` の出力は会話へ入るので、
+入力した値がそのまま会話に残る。別ウィンドウで受け取る。
+
+1. 別コンソールを立ち上げ、`run_in_background: true` で投げる（ウィンドウが閉じたら完了通知が来る。
+   `sleep` で待たない）。Windows:
+
+   ```powershell
+   Start-Process -Wait powershell -ArgumentList '-NoProfile','-NoLogo','-Command',
+     'node "<plugin>/skills/setup-unity/set-secrets.mjs" "<repo>" --result "<tmp>/unity-secrets-result.json"'
+   ```
+
+   macOS / Linux は `open -a Terminal` / `x-terminal-emulator -e` など、環境にあるものを使う。
+
+2. ユーザーは**その別ウィンドウにだけ**値を入力する（入力は伏せない。打ち間違いは CI の
+   ライセンス認証まで露見せず追跡が遠いので、目視できるほうがよい）。スクリプトは値を stdin で
+   `gh secret set` へ渡す（`--body` は argv に載るので使わない）。
+
+3. 完了通知が来たら `--result` のファイルを読む。**値は入っていない**（status と登録した secret 名だけ）。
+
+   | status | 対応 |
+   |:--|:--|
+   | `ok` | `gh secret list --app actions` で裏取りして完了を伝える（値は返らない） |
+   | `cancelled` | 中断された。再実行するか聞く |
+   | `error` | `detail` をそのまま出す。原因が分かれば直す |
+   | ファイルが無い | ウィンドウを閉じられた。再実行するか聞く |
 
 ## 注意
 

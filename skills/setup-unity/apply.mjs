@@ -12,7 +12,9 @@
 //         (target-dir 省略時は cwd)
 //
 // 依存なし（Node 標準のみ / Node 16.7+ の fs.cpSync を使用）。
+// 例外は gh の呼び出し 1 箇所（CI の secret が登録済みかを見るだけ。失敗しても続行する）。
 
+import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
@@ -305,8 +307,29 @@ if (needsMerge.length) {
   }
 }
 if (syncState) console.log(`状態ファイル(sync-setup-state.json): ${syncState}`);
+console.log(`CI の Unity ライセンス secret: ${unitySecretState()}`);
 if (!existsSync(join(target, "Assets", "App"))) {
   console.log("注意: Assets/App/ が存在しません。規約はアプリ本体を Assets/App/ 配下に置く前提です。");
+}
+
+// CI の test ジョブは UNITY_EMAIL / UNITY_PASSWORD を要る。未登録なら赤くなるので、
+// 導入直後の 1 回だけ実状を出す（常時出る注意文は読まれない）。
+// gh が無い・未認証・権限不足でも導入は止めない — ここは報告だけの段。
+//
+// **org レベルの secret は見えない。** gh secret list はリポジトリ分しか返さないため、
+// org に登録済みでも「未登録」と出る。文面でその可能性を明示する。
+function unitySecretState() {
+  const run = (argv) => {
+    const res = spawnSync("gh", argv, { cwd: target, encoding: "utf8", timeout: 15000 });
+    if (res.error || res.status !== 0) return null;
+    return res.stdout ?? "";
+  };
+  if (run(["auth", "status"]) === null) return "確認できません（gh が未導入か未認証。導入は完了しています）";
+  const list = run(["secret", "list", "--app", "actions"]);
+  if (list === null) return "確認できません（リポジトリを特定できないか、secret を読む権限がありません）";
+  const missing = ["UNITY_EMAIL", "UNITY_PASSWORD"].filter((n) => !list.includes(n));
+  if (missing.length === 0) return "登録済み";
+  return `リポジトリに ${missing.join(" / ")} がありません（org 側にあるなら無視してよい）。未登録なら CI の test ジョブは赤くなります`;
 }
 
 function walk(dir) {
