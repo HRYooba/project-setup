@@ -151,6 +151,12 @@ jobs:
       # Assets/App/ 配下のテスト asmdef から名前空間の接頭辞を集める:
       #   rootNamespace があればそれ / 無ければ asmdef 名から末尾の .EditMode / .PlayMode を落とす
       #
+      # **複数の区切りはセミコロン。**（Unity 6.3 系 + CLI 1.0.0-beta.8 で実測）
+      #   `A.*`           → A だけ走る
+      #   `A.*;B.*`       → A と B が走る。存在しない名前空間は無視される
+      #   `A.*,B.*`       → **カンマは効かない。0 件になる**
+      #   `--filter` 2 回 → **最後の 1 つだけ効く**
+      #
       # **filter は必ず埋める。空にすると全件になり、ホワイトリストが崩れる。**
       # App にテストアセンブリが無いときは何にもマッチしない値を入れる — Editor は起動して
       # コンパイルさせつつ（規約違反の gate がそのログを読む）、外部のテストは走らせない。
@@ -187,9 +193,8 @@ jobs:
             echo "filter=__no_app_tests__" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # 複数あればすべて並べる。区切りを CLI が解さなければテストは 0 件になり、
-          # 次段の件数チェックが赤にする（黙って全件へ広がることはない）。
-          filter=$(echo "$uniq" | sed 's/$/.*/' | paste -sd, -)
+          # 複数あればセミコロンで並べる（実測で効く区切り。カンマは効かない）。
+          filter=$(echo "$uniq" | sed 's/$/.*/' | paste -sd';' -)
           echo "has_tests=true" >> "$GITHUB_OUTPUT"
           echo "filter=$filter" >> "$GITHUB_OUTPUT"
           echo "ホワイトリスト: $filter"
