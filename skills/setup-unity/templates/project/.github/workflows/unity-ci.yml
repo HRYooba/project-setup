@@ -13,6 +13,9 @@
 #   UNITY_PASSWORD — Unity アカウントのパスワード
 #   UNITY_SERIAL   — 任意。永続ライセンス等でシリアルが要る契約のときだけ入れる
 #                    （アカウントに seat が割り当てられていれば無くても通る。実測）
+#   UNITY_PACKAGES_TOKEN
+#                  — 任意。Packages/manifest.json が private repo を git URL で参照する
+#                    ときだけ要る。無いと Package Manager がそこで止まり Unity が exit 1
 #
 # **Personal では動かない。** アカウントに Plus / Pro 以上の seat が要る。
 # Unity は Personal のオフライン有効化を Enterprise / Industry 限定にしており、
@@ -190,15 +193,43 @@ jobs:
           restore-keys: |
             Library-
 
+      # **private repo を git URL で参照するパッケージは、認証が無いと CI で必ず止まる。**
+      # Package Manager は git を起動して取得するが、CI には資格情報が無く端末も無いので
+      # 解決に失敗し、Unity はテストを 1 件も走らせず exit 1 する（実測）:
+      #   Project has invalid dependencies:
+      #     <package>: Error when executing git command.
+      #     fatal: could not read Username for 'https://github.com': terminal prompts disabled
+      # **この失敗は `unity test` の出力に出ない。** Editor ログにしか書かれず、CLI は
+      # 無関係な license の警告 1 行だけを見せる（下の「失敗したら〜」がそれを補う）。
+      #
+      # トークンは任意。public しか参照しないプロジェクトに secret を強制しない。
+      # 差し込む先を github.com の https に限る — 他のホストへトークンを送らない。
+      - name: private git パッケージの取得を通す
+        env:
+          PACKAGES_TOKEN: ${{ secrets.UNITY_PACKAGES_TOKEN }}
+        run: |
+          if [ -z "$PACKAGES_TOKEN" ]; then
+            echo "UNITY_PACKAGES_TOKEN は未設定。public なパッケージだけを取得する"
+            exit 0
+          fi
+          # **トークンを argv に載せない。** `git config <key> <value>` だと URL ごと
+          # コマンド行に乗り、`ps` から見える。ヒアドキュメントで設定ファイルへ直接書く。
+          cat >> "$HOME/.gitconfig" <<EOF
+          [url "https://x-access-token:$PACKAGES_TOKEN@github.com/"]
+          insteadOf = https://github.com/
+          EOF
+          echo "github.com への git 取得にトークンを差し込んだ（$HOME/.gitconfig）"
+
       # **Editor が書く先を先に作る。** container の $HOME は runner が空のディレクトリを
       # bind mount するので、`.local/share` も `.cache` も存在しない。Unity は
       # ライセンス情報の置き場をここに作ろうとするが、この経路は親を再帰的に作らないため
       # 失敗する（実測）:
       #   Editor preferences folder (…/.local/share/unity3d) does not exist and could not be created.
       #   CreateDirectory '…/.cache/unity3d' failed
-      # 認証ステップ自体は success で終わるのに access token がディスクに残らず、
-      # 次に起動した Editor が `Access token is unavailable` で落ちる
-      # （$HOME が書けないわけではない。Editor のログは同じ $HOME 配下に書けている）。
+      # $HOME が書けないわけではない（Editor のログは同じ $HOME 配下に書けている）。
+      # 親が無いだけなので先に作る。**これはノイズ潰しで、テストの失敗要因ではない。**
+      # 実測ではこの 2 行が出ていてもライセンスは解決できていた。消しておくのは、
+      # 本物の失敗を追うときに紛れ込ませないため。
       # 権限が原因ならここで mkdir が落ちて理由が出る。黙って先へ進ませない。
       - name: Editor の書き込み先を用意する
         run: mkdir -p "$HOME/.local/share/unity3d" "$HOME/.cache/unity3d" "$HOME/.config/unity3d"
@@ -383,28 +414,62 @@ jobs:
             exit 1
           fi
 
-      # テストが落ちても規約違反は見たいので always()。テスト自体が走らなかったときだけ飛ばす。
-      #
-      # **`unity test` の標準出力にコンパイル警告は載らない**（実測済み: 出力は空）。
-      # 診断は Editor が既定のログファイルへ書くので、そこを読む。
-      # ログが見つからないときは緑にせず落とす — 「違反ゼロ」と「見ていない」は
-      # 外から区別が付かず、素通しの gate は無い gate より悪い。
-      - name: コーディング規約違反（UCS）を検出したら落とす
-        if: always() && steps.test.outcome != 'skipped' && needs.changes.outputs.code == 'true'
+      # Editor ログの所在を**ここ 1 箇所で**決める。UCS gate と失敗時のダンプが読む。
+      # 候補のパスを両方に書くと、片方だけ直したときに黙ってズレる。
+      # ここでは落とさない（見つからないことの意味は読む側の段で決まる）。
+      - name: Editor ログの所在を確定する
+        id: editorlog
+        if: always() && steps.test.outcome != 'skipped'
         run: |
-          log=""
           for candidate in \
             "$HOME/.config/unity3d/Editor.log" \
             "$HOME/.config/unity3d/Unity/Editor/Editor.log"; do
-            if [ -f "$candidate" ]; then log="$candidate"; break; fi
+            if [ -f "$candidate" ]; then
+              echo "Editor ログ: $candidate"
+              echo "log=$candidate" >> "$GITHUB_OUTPUT"
+              # artifact のアップロード先に渡す。
+              echo "EDITOR_LOG=$candidate" >> "$GITHUB_ENV"
+              exit 0
+            fi
           done
-          if [ -z "$log" ]; then
+          echo "::warning::Editor のログが見つかりませんでした（Editor が起動しなかった可能性）"
+          find "$HOME/.config" -name "*.log" 2>/dev/null | head -20
+
+      # **`unity test` が見せるエラーを信用しない。** CLI は Editor ログから拾った数行しか
+      # 出さない。実測では無関係な license の警告 1 行だけが出て、本当の原因
+      # （private git パッケージの解決失敗で Unity が exit 1）はログ本体にしか無く、
+      # 誤った原因を 2 回追いかけた。落ちたらログから本物のエラーを出す。
+      #
+      # 末尾も出す。致命的な理由はログの最後に来ることが多く（上の実測もそう）、
+      # 既知のパターンに一致しない失敗を「静かに何も出ない」にしないため。
+      - name: 失敗したら Editor ログのエラーを出す
+        if: failure() && steps.test.outcome == 'failure' && steps.editorlog.outputs.log != ''
+        env:
+          LOG: ${{ steps.editorlog.outputs.log }}
+        run: |
+          echo "::group::Editor ログのエラー行"
+          grep -nE "error CS[0-9]+|invalid dependencies|An error occurred|Unhandled|Exception:|Fatal Error|Aborting batchmode|Failed to |Unable to " \
+            "$LOG" | head -60 || echo "既知のパターンには一致しなかった"
+          echo "::endgroup::"
+          echo "::group::Editor ログの末尾"
+          tail -60 "$LOG"
+          echo "::endgroup::"
+
+      # テストが落ちても規約違反は見たいので always()。テスト自体が走らなかったときだけ飛ばす。
+      # **`unity test` の標準出力にコンパイル警告は載らない**（実測済み: 出力は空）。
+      # 診断は Editor が既定のログファイルへ書くので、そこを読む。
+      - name: コーディング規約違反（UCS）を検出したら落とす
+        if: always() && steps.test.outcome != 'skipped' && needs.changes.outputs.code == 'true'
+        env:
+          LOG: ${{ steps.editorlog.outputs.log }}
+        run: |
+          # ログが見つからないときは緑にせず落とす — 「違反ゼロ」と「見ていない」は
+          # 外から区別が付かず、素通しの gate は無い gate より悪い。
+          if [ -z "$LOG" ]; then
             echo "::error::Editor のログが見つからず、規約違反を検査できませんでした（Editor が起動しなかった可能性。前のステップの失敗を先に見る）"
-            find "$HOME/.config" -name "*.log" 2>/dev/null | head -20
             exit 1
           fi
-          echo "EDITOR_LOG=$log" >> "$GITHUB_ENV"
-          if grep -nE "warning UCS[0-9]{4}" "$log"; then
+          if grep -nE "warning UCS[0-9]{4}" "$LOG"; then
             echo "::error::コーディング規約違反が残っています（上の行）。.claude/rules/coding-standards.md を参照して直してください"
             exit 1
           fi

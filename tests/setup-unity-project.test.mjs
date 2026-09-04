@@ -176,9 +176,9 @@ test("workflow は run: のシェルを宣言する（container の既定 sh に
 });
 
 test("workflow はライセンス認証より前に Editor の書き込み先を作る", () => {
-  // container の $HOME には `.local/share` も `.cache` も無く、Unity はライセンス情報の
-  // 置き場をそこへ作れない。認証は success で終わるのに token がディスクに残らず、
-  // 次に起動した Editor が `Access token is unavailable` で落ちる。
+  // container の $HOME には `.local/share` も `.cache` も無く、Unity はそこへ
+  // preferences とキャッシュを作れずエラー 2 行を出す（ライセンス自体は解決できる。
+  // これはノイズ潰しで、本物の失敗を追うときに紛れ込ませないための段）。
   // **順序が本質**なので、mkdir の存在ではなく認証より前にあることを見る。
   const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
   const mkdir = workflow.indexOf('mkdir -p "$HOME/.local/share/unity3d"');
@@ -186,6 +186,38 @@ test("workflow はライセンス認証より前に Editor の書き込み先を
   assert.notEqual(mkdir, -1, "Editor の書き込み先を作る step が無い");
   assert.notEqual(license, -1, "ライセンス認証 step が無い");
   assert.ok(mkdir < license, "書き込み先を作る step がライセンス認証より後にある");
+});
+
+test("workflow は private git パッケージの認証をテストより前に通す", () => {
+  // manifest.json が private repo を git URL で参照するプロジェクトは、認証が無いと
+  // Package Manager がそこで止まり Unity がテストを 1 件も走らせず exit 1 する。
+  // **順序が本質**なので、設定の存在ではなくテスト実行より前にあることを見る。
+  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
+  const auth = workflow.indexOf("secrets.UNITY_PACKAGES_TOKEN");
+  const runStep = workflow.indexOf("- name: EditMode / PlayMode テスト");
+  assert.notEqual(auth, -1, "UNITY_PACKAGES_TOKEN を読む step が無い");
+  assert.notEqual(runStep, -1, "テスト実行 step が無い");
+  assert.ok(auth < runStep, "認証の設定がテスト実行より後にある");
+  assert.match(workflow, /insteadOf = https:\/\/github\.com\//, "git の URL 差し替えが無い");
+});
+
+test("workflow は Editor ログの所在を 1 箇所でしか決めない", () => {
+  // 同じ候補パスを複数の step に書くと、片方だけ直したときに黙ってズレる。
+  // 所在を決める step が 1 つで、読む側はその出力を使う形を保つ。
+  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
+  const occurrences = workflow.split('"$HOME/.config/unity3d/Editor.log"').length - 1;
+  assert.equal(occurrences, 1, `Editor ログの候補パスが ${occurrences} 箇所にある`);
+  assert.match(workflow, /steps\.editorlog\.outputs\.log/, "所在を決める step の出力を使っていない");
+});
+
+test("workflow はテストが落ちたとき Editor ログの中身を出す", () => {
+  // `unity test` は Editor ログから拾った数行しか出さない。実測では無関係な license の
+  // 警告 1 行だけが出て、本当の原因（パッケージ解決の失敗）はログ本体にしか無かった。
+  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
+  const dump = workflow.indexOf("- name: 失敗したら Editor ログのエラーを出す");
+  assert.notEqual(dump, -1, "失敗時に Editor ログを出す step が無い");
+  // 既知のパターンに一致しない失敗を「静かに何も出ない」にしない担保。
+  assert.match(workflow.slice(dump), /tail -\d+ "\$LOG"/, "末尾を出していない");
 });
 
 test("workflow は Editor 版を直書きせず ProjectVersion.txt から読む", () => {

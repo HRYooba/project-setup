@@ -11,7 +11,7 @@ description: >
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無だけを
   実行時に AskUserQuestion で確認する。コーディング規約を機械で止める Roslyn analyzer と、
   PR ゲートの GitHub Actions は常時配布する。
-version: 2.7.0
+version: 2.8.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -212,6 +212,11 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
 
 必要な secret は 3 つ。`UNITY_EMAIL`（アカウントのメールアドレス）、`UNITY_PASSWORD`、
 `UNITY_SERIAL`（任意。シリアルが要る契約のときだけ。seat が割り当たっていれば無くてよい）。
+
+**`Packages/manifest.json` が private repo を git URL で参照しているなら `UNITY_PACKAGES_TOKEN`
+（その repo を読める PAT / App トークン）も要る。** 無いと Package Manager がそこで止まり、
+Unity はテストを 1 件も走らせず exit 1 する。参照が無ければ登録しなくてよい。
+manifest を見て `https://github.com/` を含む依存があるかで判断する。
 
 **値をこのセッションへ入力させない。** `!` 実行も使わない — `!` の出力は会話へ入るので、
 入力した値がそのまま会話に残る。別ウィンドウで受け取る。
