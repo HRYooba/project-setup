@@ -29,6 +29,15 @@ on:
   push:
     branches: [main, master, develop]
 
+# **すべての run: を bash で走らせる。** container 上のジョブは既定シェルが `sh` になり、
+# bash 前提の構文が実行時の構文エラーで落ちる（実測: dash が `done <<< "$var"` を
+# `Syntax error: redirection unexpected` で拒否し、test ジョブが丸ごと止まった）。
+# イメージには bash が入っている（setup-unity-cli も `shell: bash` で動いている）ので、
+# runner の既定に任せず宣言する。
+defaults:
+  run:
+    shell: bash
+
 # 同じブランチへ続けて push したとき、古い実行を捨てる。Editor の起動は高価なので、
 # 追い越された実行に Actions 分数を払わない。
 concurrency:
