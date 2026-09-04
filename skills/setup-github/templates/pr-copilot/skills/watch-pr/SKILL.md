@@ -5,7 +5,7 @@ description: >
   Monitor ツールで PR のレビューと CI チェックをポーリング監視し、
   指摘または CI の失敗があれば resolve-pr を自動実行する。
   PR番号またはURLを指定。
-version: 1.5.0
+version: 1.5.1
 user-invocable: false
 argument-hint: [PR番号 or URL]
 ---
@@ -89,12 +89,14 @@ PR 作成後に外から返ってくる非同期の結果は 2 系統ある。**
 Monitor(
   description: "PR #{pr} レビュー・CI 監視",
   persistent: true,
-  timeout_ms: 1,
+  timeout_ms: 1000,
   command: <下記スクリプト>
 )
 ```
 
-`persistent: true` のため `timeout_ms` は無視されるが、必須パラメータのため任意の値を指定する。
+`persistent: true` のため `timeout_ms` は無視されるが、必須パラメータなので値が要る。
+**`1000` 未満は書かない** — 無視されるのは値の使用だけで、スキーマ検証は先に走る
+（`minimum: 1000`。`1` を渡していた間は Monitor の呼び出しが毎回 Invalid tool parameters で落ちていた）。
 監視上限はスクリプト内の `max_checks=60`（30秒 × 60回 = 30分）で制御する。
 **CI は Unity Editor を起動するため 10〜30 分かかる**ので、この上限は縮めない。
 
