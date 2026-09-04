@@ -11,7 +11,7 @@ description: >
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無だけを
   実行時に AskUserQuestion で確認する。コーディング規約を機械で止める Roslyn analyzer と、
   PR ゲートの GitHub Actions は常時配布する。
-version: 2.8.0
+version: 3.0.0
 user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
@@ -26,7 +26,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 4. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
 5. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards への差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
 6. **Roslyn analyzer** — `coding-standards.md` のうち**機械で判定できる規約**をコンパイル時に止める。`Assets/Analyzers/`（DLL + `.meta` + README）を**`.claude/` ではなく Unity プロジェクト本体へ**置く（判断が要る規約と、プロジェクト名を知らないと当てられない名前空間の規約は持たない）。**設定ファイル（`.ruleset` / `.globalconfig`）は配らない** — 全規則 Warning 固定で、PR の gate は次の CI が担う
-7. **PR ゲートの GitHub Actions** — `.github/workflows/unity-ci.yml` と `.github/actions/setup-unity-cli/`。`unity projects verify --strict`（Editor 不要）と `unity test`（EditMode / PlayMode を順に。GameCI の Editor イメージ上）を走らせ、Editor のコンパイルログに `warning UCS` があれば落とす。**Unity ライセンスの secret 登録と Plus / Pro 以上の seat が要る**（未登録なら test ジョブが赤くなる。verify ジョブは secret 不要で常に動く）
+7. **プロジェクト整合性の GitHub Actions** — `.github/workflows/unity-ci.yml` と `.github/actions/setup-unity-cli/`。`unity projects verify --strict` だけを走らせる（Editor もライセンスも secret も要らず 10 秒で返る）。**テストとコンパイル確認は CI でやらない** — Editor を起こすジョブは 1 回 10 分以上かかり PR ゲートに使えないため、ローカルへ移した。CI に残す理由は git の checkout 側にあり、追跡外の実体を持つ `.meta` のような「clone した人の手元で初めて壊れる」欠陥はここでしか出ない
 
 ## 前提（満たされていないと skills が動かない）
 
@@ -177,72 +177,23 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
     ラベルや配置が崩れていると **診断が 1 件も出ない**＝「違反ゼロ」と見分けが付かないため、
     最初の 1 回だけは陽性を確認する価値がある
   - **severity は Warning 固定で、Error には上げない**。Unity は C# のコンパイルエラーで Safe Mode に
-    入るため、命名違反 1 件で Editor が作業不能になる。PR を止めるのは CI の役目
+    入るため、命名違反 1 件で Editor が作業不能になる。違反は Editor のコンソールで見て直す
   - 正当な例外は `#pragma warning disable UCS0006` のように範囲を絞って抑制し、理由をコメントに書く
     （配布する `rules/coding-standards.md`「規約の機械チェック」に同じことが書いてある）
 - **CI について**は、次を伝える:
-  - **CI のテスト実行には Plus / Pro 以上のライセンスが要る**。Unity は Personal の
-    非対話・オフライン有効化を Enterprise / Industry 限定にしており、手元の `.ulf` を
-    持ち込む経路も Licensing Client が拒否する。Personal のプロジェクトでは test ジョブが
-    赤いままになる（**verify ジョブはライセンス不要なので動く**）
-  - **Personal のプロジェクトでは test を branch protection の必須チェックに入れない**。
-    永久に赤いままなので、必須にすると PR がマージできなくなる（verify は必須にしてよい）
-  - ライセンス認証だけ Unity CLI を使わず Editor バイナリへ直接渡している。
-    `unity license activate` はどの経路でもサインイン済みセッションを要求し、
-    `unity auth login` は資格情報を OS のキーリングへ保存しようとするため、
-    コンテナでは通らない。`unity test` / `unity projects verify` は CLI のまま
-  - **secret の登録は Step 3.5 で行う**。値をこのセッションへ入力させない
-
-  - **gate も一度は陽性を確かめる**。規約違反を 1 つ含む PR を出して `unity-ci` が赤くなるのを見る。
-    analyzer と同じ理由で、通っている状態と見ていない状態は外から区別できない
-  - 両ジョブを **branch protection の必須チェック**に登録するのはリポジトリ側の設定
-    （このスキルは触らない）
-- 全件のテスト実行は CI（`unity-ci` の test ジョブ）が担う。ローカルでは差分に対応する
-  テストだけ回す。プロジェクト外の常時失敗テストを拾うプロジェクトでは、workflow の
-  `TEST_FILTER` に自分のテスト名前空間を書いて絞る（**人が読む一覧ではなくコマンドへ渡る値**なので、
-  記述と実行の乖離が起きない）
+  - 見るのは `unity projects verify --strict` だけ。**Editor を起こさないのでライセンスも
+    secret も要らない**（Personal のプロジェクトでも動く）
+  - **ローカルで撃つ verify と結果が変わる**。ローカルは作業ツリー、CI は追跡されている
+    ものだけを見る。空ディレクトリの `.meta` や `.gitignore` された実体はローカルで緑になり
+    CI で赤くなる。**CI 側が正しい**
+  - **必須チェックに入れてよい**。常に走り skip されないので、パスフィルタ由来の
+    「永久に未完了」が起きない（登録するのはリポジトリ側の設定で、このスキルは触らない）
+- **テストはローカルで回す。** 回し方は `rules/unity-cli.md`「テストの実行」、回す順序は
+  `CLAUDE.md`（レビューの指摘を反映した後）。到達できる Editor があればそれに走らせ、
+  無ければ `unity test` が自分で Editor を起こす
 - coding-standards / architecture / class-catalog の先頭にある `<!-- agents-md: include -->` は、
   setup-github（--pr-copilot）の AGENTS.md 自動生成が「Copilot code review に教える規約」として
   取り込むための目印。setup-github 未導入なら不活性なだけで無害（導入後の次のコミットで自動反映される）
-
-### Step 3.5: CI の secret を登録する
-
-`apply.mjs` の出力の最終行 `CI の Unity ライセンス secret:` を読む。**「登録済み」なら何もしない。**
-それ以外（未登録 / 確認できません）のときだけ、下記を実行する。
-
-必要な secret は 3 つ。`UNITY_EMAIL`（アカウントのメールアドレス）、`UNITY_PASSWORD`、
-`UNITY_SERIAL`（任意。シリアルが要る契約のときだけ。seat が割り当たっていれば無くてよい）。
-
-**`Packages/manifest.json` が private repo を git URL で参照しているなら `UNITY_PACKAGES_TOKEN`
-（その repo を読める PAT / App トークン）も要る。** 無いと Package Manager がそこで止まり、
-Unity はテストを 1 件も走らせず exit 1 する。参照が無ければ登録しなくてよい。
-manifest を見て `https://github.com/` を含む依存があるかで判断する。
-
-**値をこのセッションへ入力させない。** `!` 実行も使わない — `!` の出力は会話へ入るので、
-入力した値がそのまま会話に残る。別ウィンドウで受け取る。
-
-1. 別コンソールを立ち上げ、`run_in_background: true` で投げる（ウィンドウが閉じたら完了通知が来る。
-   `sleep` で待たない）。Windows:
-
-   ```powershell
-   Start-Process -Wait powershell -ArgumentList '-NoProfile','-NoLogo','-Command',
-     'node "<plugin>/skills/setup-unity/set-secrets.mjs" "<repo>" --result "<tmp>/unity-secrets-result.json"'
-   ```
-
-   macOS / Linux は `open -a Terminal` / `x-terminal-emulator -e` など、環境にあるものを使う。
-
-2. ユーザーは**その別ウィンドウにだけ**値を入力する（入力は伏せない。打ち間違いは CI の
-   ライセンス認証まで露見せず追跡が遠いので、目視できるほうがよい）。スクリプトは値を stdin で
-   `gh secret set` へ渡す（`--body` は argv に載るので使わない）。
-
-3. 完了通知が来たら `--result` のファイルを読む。**値は入っていない**（status と登録した secret 名だけ）。
-
-   | status | 対応 |
-   |:--|:--|
-   | `ok` | `gh secret list --app actions` で裏取りして完了を伝える（値は返らない） |
-   | `cancelled` | 中断された。再実行するか聞く |
-   | `error` | `detail` をそのまま出す。原因が分かれば直す |
-   | ファイルが無い | ウィンドウを閉じられた。再実行するか聞く |
 
 ## 注意
 

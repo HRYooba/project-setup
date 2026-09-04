@@ -3,7 +3,7 @@
 `.claude/rules/` の各ルールを凝縮したチェックリスト。Unity のスクリプト以外のアセット・シーン・設定の lint 用。
 
 プロジェクト整合性（`.meta` 欠落・GUID 重複・衝突マーカー等）はこのチェックリストの範囲外。
-`.github/workflows/unity-ci.yml` の verify ジョブが `unity projects verify --strict` で見る。
+`.github/workflows/unity-ci.yml` が `unity projects verify --strict` で見る。
 
 ## Editor 依存の区分
 

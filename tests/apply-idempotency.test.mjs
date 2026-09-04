@@ -224,6 +224,36 @@ test("配備済みの code-review 用 hook 実体は再実行で削除される�
   );
 });
 
+test("setup-unity: CLAUDE.md は初回に配り、揃っていれば触らず、欠けていれば要マージ", () => {
+  // テストを回す順序（レビューの後）は CLAUDE.md でしか書けない。rules は「どう回すか」で、
+  // 「いつ回すか」は PR 前の流れの話なので置き場が違う。配り忘れると順序が誰にも届かない。
+  const target = tempDir("apply-test-");
+  mkdirSync(join(target, "ProjectSettings"), { recursive: true });
+  writeFileSync(join(target, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 6000.3.9f1\n", "utf8");
+
+  const first = runApplyUnity(target);
+  assert.match(first, /\.claude\/CLAUDE\.md: 新規作成/);
+  const mdPath = join(target, ".claude", "CLAUDE.md");
+  const delivered = readFileSync(mdPath, "utf8");
+
+  // プロジェクト固有の節を足しても、テンプレ節が揃っている限り触らない。
+  const withOwn = `${delivered}\n## ビルド\n\n- ここはプロジェクト固有の節\n`;
+  writeFileSync(mdPath, withOwn, "utf8");
+  assert.match(runApplyUnity(target), /\.claude\/CLAUDE\.md: 変更なし/);
+  assert.equal(readFileSync(mdPath, "utf8"), withOwn, "固有の節が変化した");
+
+  // テンプレ節を欠いていれば書かずに要マージへ回す（統合は SKILL 手順で Claude が行う）。
+  writeFileSync(mdPath, "# プロジェクト規約\n\n## ビルド\n\n- 固有の節だけ\n", "utf8");
+  const out = runApplyUnity(target);
+  assert.match(out, /\.claude\/CLAUDE\.md: 要マージ/);
+  assert.match(out, /テンプレ: .*claude-md\.md/);
+  assert.equal(
+    readFileSync(mdPath, "utf8"),
+    "# プロジェクト規約\n\n## ビルド\n\n- 固有の節だけ\n",
+    "CLAUDE.md が書き換えられた"
+  );
+});
+
 test("setup-unity: カスタマイズされた rules/*.md は cpSync に上書きされず要マージになる", () => {
   const target = tempDir("apply-test-");
   mkdirSync(join(target, "ProjectSettings"), { recursive: true });

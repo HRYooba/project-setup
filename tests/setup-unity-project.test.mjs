@@ -1,4 +1,4 @@
-// setup-unity が .claude/ の外へ配るもの（Roslyn analyzer と PR ゲートの workflow）の検証。
+// setup-unity が .claude/ の外へ配るもの（Roslyn analyzer と整合性検査の workflow）の検証。
 //
 // 観点:
 //   1. 配布 DLL がソースから作り直されている（build.mjs の流し忘れを検知する）
@@ -6,8 +6,8 @@
 //   3. Unity が analyzer を読み込む条件（配置場所と .meta）が崩れていない
 //   4. 設定ファイル（.ruleset / .globalconfig）を配らない ＝ Assets 直下を汚さない
 //   5. 廃止フラグを渡されても止まらない（配備先の状態ファイルに記録が残っているため）
-//   6. workflow が Editor 版を直書きしていない
-//   7. CI の secret 確認が導入を止めない（gh が使えない環境でも完走して状態を報告する）
+//   6. workflow が Editor を起こさない（ライセンスも secret も要らない形を保つ）
+//   7. 配る Markdown が実在しない節を参照していない
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -144,9 +144,7 @@ test("workflow は YAML として壊れていない（生 CR や欠けた行継�
     assert.doesNotMatch(text, /  {4,}--[a-z-]+ +--[a-z-]+/, `${f} で行継続が落ちている疑い`);
   }
   const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  for (const job of ["  changes:", "  resolve:", "  verify:", "  test:", "  gate:"]) {
-    assert.ok(workflow.includes(job), `${job} が無い`);
-  }
+  assert.ok(workflow.includes("  verify:"), "verify ジョブが無い");
 
   // **列 0 の行は `run: |` ブロックを終わらせる。** シェルを書いているつもりで
   // ヒアドキュメントの終端や継続行を左端へ置くと、そこから先が YAML の別トークンとして
@@ -163,80 +161,18 @@ test("workflow は YAML として壊れていない（生 CR や欠けた行継�
   }
 });
 
-test("workflow は run: のシェルを宣言する（container の既定 sh に落ちない）", () => {
-  // container 上のジョブは既定シェルが sh になる。bash 前提の構文（here-string 等）は
-  // 実行時に構文エラーで落ち、ステップの中身を 1 行も走らせない。runner の既定に
-  // 任せると、同じ workflow が runs-on では通り container では落ちる。
+test("workflow は Editor を起こさない（ライセンスも secret も要らない形を保つ）", () => {
+  // Editor を起こすジョブは 1 回 10 分以上かかり、PR ゲートとして使えない。そこから
+  // ライセンス secret・seat・private パッケージのトークンという運用の面倒も全部来ていた。
+  // テストとコンパイル確認はローカルへ移した。ここへ戻すなら意図的な決定として戻す。
   const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
+  assert.doesNotMatch(workflow, /^\s*container:/m, "container を使うジョブが増えている");
+  assert.doesNotMatch(workflow, /secrets\./, "secret を読んでいる");
+  assert.doesNotMatch(workflow, /unity test\b/, "CI でテストを走らせている");
   assert.match(
     workflow,
-    /^defaults:\n {2}run:\n {4}shell: bash$/m,
-    "workflow に defaults.run.shell: bash が無い"
-  );
-});
-
-test("workflow はライセンス認証より前に Editor の書き込み先を作る", () => {
-  // container の $HOME には `.local/share` も `.cache` も無く、Unity はそこへ
-  // preferences とキャッシュを作れずエラー 2 行を出す（ライセンス自体は解決できる。
-  // これはノイズ潰しで、本物の失敗を追うときに紛れ込ませないための段）。
-  // **順序が本質**なので、mkdir の存在ではなく認証より前にあることを見る。
-  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  const mkdir = workflow.indexOf('mkdir -p "$HOME/.local/share/unity3d"');
-  const license = workflow.indexOf("- name: ライセンス認証");
-  assert.notEqual(mkdir, -1, "Editor の書き込み先を作る step が無い");
-  assert.notEqual(license, -1, "ライセンス認証 step が無い");
-  assert.ok(mkdir < license, "書き込み先を作る step がライセンス認証より後にある");
-});
-
-test("workflow は private git パッケージの認証をテストより前に通す", () => {
-  // manifest.json が private repo を git URL で参照するプロジェクトは、認証が無いと
-  // Package Manager がそこで止まり Unity がテストを 1 件も走らせず exit 1 する。
-  // **順序が本質**なので、設定の存在ではなくテスト実行より前にあることを見る。
-  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  const auth = workflow.indexOf("secrets.UNITY_PACKAGES_TOKEN");
-  const runStep = workflow.indexOf("- name: EditMode / PlayMode テスト");
-  assert.notEqual(auth, -1, "UNITY_PACKAGES_TOKEN を読む step が無い");
-  assert.notEqual(runStep, -1, "テスト実行 step が無い");
-  assert.ok(auth < runStep, "認証の設定がテスト実行より後にある");
-  assert.match(workflow, /insteadOf = https:\/\/github\.com\//, "git の URL 差し替えが無い");
-});
-
-test("workflow は Editor ログの所在を 1 箇所でしか決めない", () => {
-  // 同じ候補パスを複数の step に書くと、片方だけ直したときに黙ってズレる。
-  // 所在を決める step が 1 つで、読む側はその出力を使う形を保つ。
-  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  const occurrences = workflow.split('"$HOME/.config/unity3d/Editor.log"').length - 1;
-  assert.equal(occurrences, 1, `Editor ログの候補パスが ${occurrences} 箇所にある`);
-  assert.match(workflow, /steps\.editorlog\.outputs\.log/, "所在を決める step の出力を使っていない");
-});
-
-test("workflow はテストが落ちたとき Editor ログの中身を出す", () => {
-  // `unity test` は Editor ログから拾った数行しか出さない。実測では無関係な license の
-  // 警告 1 行だけが出て、本当の原因（パッケージ解決の失敗）はログ本体にしか無かった。
-  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  const dump = workflow.indexOf("- name: 失敗したら Editor ログのエラーを出す");
-  assert.notEqual(dump, -1, "失敗時に Editor ログを出す step が無い");
-  // 既知のパターンに一致しない失敗を「静かに何も出ない」にしない担保。
-  assert.match(workflow.slice(dump), /tail -\d+ "\$LOG"/, "末尾を出していない");
-});
-
-test("workflow は Editor 版を直書きせず ProjectVersion.txt から読む", () => {
-  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
-  assert.match(workflow, /ProjectSettings\/ProjectVersion\.txt/, "Editor 版の出所が workflow に無い");
-  // 版を直書きすると Editor を上げたときに黙ってズレる。コメント中の例示も含めて禁止する。
-  assert.doesNotMatch(workflow, /\b\d{4}\.\d+\.\d+[abf]\d+\b/, "Editor 版が直書きされている");
-});
-
-test("CI の secret 確認は導入を止めない（gh が使えなくても完走して状態を報告する）", () => {
-  // 状態確認は報告だけの段。gh が無い / 未認証 / git リポジトリでない配備先でも、
-  // 配置そのものは決定的に完了させる（ここで exit 1 にすると導入が止まる）。
-  const target = unityProject(); // git リポジトリではないので gh はリポジトリを特定できない
-  const out = runApply(target);
-
-  assert.match(out, /CI の Unity ライセンス secret:/, "secret の状態が報告されていない");
-  assert.ok(
-    existsSync(join(target, ".github", "workflows", "unity-ci.yml")),
-    "確認の失敗で配置が中断している"
+    /unity projects verify --strict/,
+    "プロジェクト整合性の検査が無い（この workflow の唯一の仕事）"
   );
 });
 
@@ -265,7 +201,19 @@ test("配布 Markdown が指す rules の節は実在する（消した節への
     const own = headings(layerRoot);
     const base = layer === "base" ? own : headings(join(templates, "base"));
 
-    for (const file of walk(layerRoot).filter((f) => f.endsWith(".md"))) {
+    // templates 直下の .md（CLAUDE.md へ配る節）と SKILL.md も同じ規則で見る。
+    // 参照先は base の rules。SKILL.md は配布物ではないが、配る規約の節を指す記述を持つ。
+    const rootMds =
+      layer === "base"
+        ? [
+            ...readdirSync(templates)
+              .filter((n) => n.endsWith(".md"))
+              .map((n) => join(templates, n)),
+            join(templates, "..", "SKILL.md"),
+          ]
+        : [];
+
+    for (const file of [...walk(layerRoot), ...rootMds].filter((f) => f.endsWith(".md"))) {
       const text = readFileSync(file, "utf8");
       for (const [, target, section] of text.matchAll(/rules\/([a-z-]+\.md)`?「([^」]+)」/g)) {
         const list = own.get(target) ?? base.get(target);

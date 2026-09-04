@@ -41,7 +41,7 @@ Unity 操作の方針・失敗判定・コマンドの発見手順は `.claude/r
 | 引数なし | 未コミット変更から自動検出 |
 
 プロジェクト整合性（`unity projects verify`）はこの skill では見ない。
-`.github/workflows/unity-ci.yml` の verify ジョブが担う（同じ検査を 2 箇所で走らせない）。
+`.github/workflows/unity-ci.yml` が担う（同じ検査を 2 箇所で走らせない）。
 
 **除外:** `Assets/ThirdParty/`（E1のみ例外）、`Assets/Plugins/`、`Library/`、`Packages/`
 

@@ -2,6 +2,19 @@
 
 # コーディング規約
 
+## 規約の機械チェック
+
+この規約の一部は Roslyn analyzer（`Assets/Analyzers/`）が機械で見る。違反は Editor の
+コンパイル時に `warning UCS####` として出る。**コンソールを読んで直す**（読み方は
+`rules/unity-cli.md`「コンソールエラー取得」）。
+
+- **CI は見ない。** 配布する workflow は Editor を起こさないので、警告を無視したまま
+  PR は通る。止めるのは自分
+- severity は Warning 固定。Error にすると Unity がコンパイルエラーとして扱い、
+  命名違反 1 件で Safe Mode に落ちて Editor が作業不能になる
+- 正当な例外は `#pragma warning disable UCS0006` のように範囲を絞って抑制し、
+  理由をコメントに書く。ファイル全体やプロジェクト全体で無効化しない
+
 ## 命名規則
 
 | 対象 | 規則 | 例 |
