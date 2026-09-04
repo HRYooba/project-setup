@@ -3,14 +3,13 @@ name: setup-github
 description: >
   現在のプロジェクトに GitHub 開発フロー一式を導入するセットアップコマンド。
   ユーザーが「setup-github」「GitHub運用ルールを導入」「ブランチ保護を入れて」
-  「Git運用セットアップ」などと依頼したときに使用する。対象リポジトリに
-  ブランチ保護（.githooks/pre-push + SessionStart 自動有効化。既定 ON・質問で外せる）、
-  PR 前レビュー運用（/code-review + /security-review のソフト指示）、git-conventions ルール、
-  create-issue skill を撒く。ブランチ保護の有無と、PR 自動レビュー3機能（Copilot 自動アサイン /
-  watch-pr / resolve-pr）と AGENTS.md 自動生成（Copilot code review にプロジェクト規約を教える）の
-  導入有無は、実行時に AskUserQuestion で確認する。
+  「Git運用セットアップ」などと依頼したときに使用する。保護ブランチへの直 push を拒否する
+  pre-push、PR 前レビュー運用（/code-review / /security-review）の CLAUDE.md 指示、
+  git-conventions ルール、create-issue skill、テンプレート更新を検知する hook
+  （setup-unity のドリフトもこれが見るので、Unity プロジェクトでも導入が要る）を撒く。
+  ブランチ保護の有無と、PR 自動レビュー（Copilot 自動アサイン / watch-pr / resolve-pr /
+  AGENTS.md 自動生成）の導入有無は、実行時に AskUserQuestion で確認する。
 version: 1.26.0
-user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 

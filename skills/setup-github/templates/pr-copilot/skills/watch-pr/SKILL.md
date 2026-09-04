@@ -1,11 +1,11 @@
 ---
 name: watch-pr
 description: >
-  PR作成後に Claude が自動で起動するスキル。
-  Monitor ツールで PR のレビューと CI チェックをポーリング監視し、
-  指摘または CI の失敗があれば resolve-pr を自動実行する。
-  PR番号またはURLを指定。
-version: 1.6.0
+  **after-pr-create hook が起動を指示したときだけ**起動する。指示が無い PR は Copilot の
+  レビュー対象外（コード変更なし等）なので自発的に起動しない — 起動すると 30 分の空監視になる。
+  1 PR につき 1 回のみ。Monitor で PR のレビューと CI チェックを監視し、両方が出揃ってから
+  指摘または CI の失敗があれば resolve-pr を起動する。PR 番号または URL を指定。
+version: 1.7.0
 argument-hint: [PR番号 or URL]
 ---
 

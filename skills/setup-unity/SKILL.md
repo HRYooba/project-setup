@@ -1,20 +1,16 @@
 ---
 name: setup-unity
 description: >
-  現在の Unity プロジェクトに開発規約一式（rules / lint-unity / サブエージェント）を
-  導入するセットアップコマンド。ユーザーが「Unityセットアップ」「setup-unity」「Unity規約を導入」
-  「このプロジェクトにUnity開発ルールを入れて」などと依頼したときに使用する。
-  カレントのリポジトリの .claude/ に rules（folder-structure / hierarchy /
-  asset-naming / coding-standards）、skills（lint-unity / unity-parallel）、
-  agents（unity-linter / unity-worker）を撒く。Unity 操作は Unity CLI に固定で、
-  Unity CLI 本体と com.unity.pipeline が未導入なら入れる。
-  CLAUDE.md へ Unity 操作の方針 2 行とテスト / lint の実行タイミングを配り、CLI の詳細は
+  現在の Unity プロジェクトに開発規約一式を導入するセットアップコマンド。ユーザーが
+  「Unityセットアップ」「setup-unity」「Unity規約を導入」「このプロジェクトにUnity開発ルールを入れて」
+  などと依頼したときに使用する。`.claude/` へ rules（folder-structure / hierarchy /
+  asset-naming / coding-standards）、CLAUDE.md（Unity 操作の方針と、テスト / lint を PR 前に
+  回すタイミング）、skills（lint-unity / unity-parallel）、agents（unity-linter / unity-worker）を
+  撒き、プロジェクト本体へ Roslyn analyzer と整合性検査の GitHub Actions を置く。
+  Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れ、CLI の詳細は
   公式 unity-cli skill を `--local` で入れて任せる。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無だけを実行時に AskUserQuestion で確認する。
-  コーディング規約を機械で止める Roslyn analyzer と、プロジェクト整合性を見る
-  GitHub Actions は常時配布する。
 version: 3.1.0
-user-invocable: true
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 

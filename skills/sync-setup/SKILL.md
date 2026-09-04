@@ -8,7 +8,6 @@ description: >
   apply.mjs を再適用し、要マージの Markdown を統合してから commit → push → 同期 PR を
   作成する（merge はしない）。重複 PR 防止・試行上限・作業ツリー分離はコード担保。
 version: 1.5.0
-user-invocable: true
 argument-hint: "[対象ディレクトリ（省略時はカレント）]"
 ---
 
