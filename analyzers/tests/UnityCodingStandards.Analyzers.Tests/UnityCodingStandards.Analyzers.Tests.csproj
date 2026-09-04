@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+    <!-- 版は解析対象アセンブリ側（src の MicrosoftCodeAnalysisVersion）と揃える。
+         Unity 同梱の Roslyn と違う版でテストすると、通ったのに Unity で落ちる。 -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 解析対象としてではなく、テスト対象アセンブリとして参照する
+         （OutputItemType を Analyzer にしないので、このテストプロジェクト自身は解析されない）。 -->
+    <ProjectReference Include="..\..\src\UnityCodingStandards.Analyzers\UnityCodingStandards.Analyzers.csproj" />
+  </ItemGroup>
+
+</Project>

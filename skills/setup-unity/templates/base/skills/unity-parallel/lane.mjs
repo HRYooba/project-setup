@@ -14,7 +14,7 @@
 //   request --worktree <name> --commit <sha>   Editor の順番待ちに入る（差分ゲートを通る）
 //   grant                     先頭の待ち手へ貸し出す（PREPARING → checkout --detach）
 //   activate                  Editor の準備完了を確認して ACTIVE にする
-//   delegate <agentType>      検証エージェント（unity-tester 等）へ一時的に権限を渡す
+//   delegate <agentType>      検証エージェント（unity-linter 等）へ一時的に権限を渡す
 //   undelegate                委譲を戻す
 //   drain                     新規の Editor 操作を締め切る（ACTIVE → DRAINING）
 //   seal -m <msg>             レーン上の Editor 成果をコミットする（.meta の取りこぼし防止）
@@ -352,7 +352,7 @@ function cmdActivate() {
 
 function cmdDelegate() {
   const agentType = positional[0] || opts.agent;
-  if (!agentType) fail("委譲先のエージェント種別を指定してください: lane.mjs delegate unity-tester");
+  if (!agentType) fail("委譲先のエージェント種別を指定してください: lane.mjs delegate unity-linter");
   mutate((st) => {
     if (!st.holder) fail("貸し出し中の worktree がありません。");
     if (st.holder.phase !== "ACTIVE") fail(`ACTIVE ではありません（現在 ${st.holder.phase}）。`);

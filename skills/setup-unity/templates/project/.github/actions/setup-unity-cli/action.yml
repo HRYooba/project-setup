@@ -1,0 +1,18 @@
+# Unity CLI を入れて PATH へ通す（setup-unity が配布）。
+# verify ジョブと test ジョブの両方が要るので、composite action に切り出してある。
+name: setup-unity-cli
+description: Unity CLI をインストールして PATH に通す
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      # 公式のインストールスクリプト。Linux では $HOME/.local/bin へバイナリを置き、
+      # PATH は shell の rc へ書く（CI の非対話シェルでは読まれないので $GITHUB_PATH へ自分で足す）。
+      #
+      # UNITY_CLI_CHANNEL=beta は Unity CLI がまだ 1.0.0-beta のため。GA が出たらこの行を
+      # 消す（既定が stable）。消し忘れても beta を追い続けるだけで、静かに壊れはしない。
+      run: |
+        curl -fsSL https://public-cdn.cloud.unity3d.com/hub/prod/cli/install.sh | UNITY_CLI_CHANNEL=beta bash
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        "$HOME/.local/bin/unity" --version

@@ -1,1 +1,8 @@
 node_modules/
+
+# .NET のビルド中間物（配布物は analyzers/build.mjs が templates/ へ置く）
+analyzers/**/bin/
+analyzers/**/obj/
+
+# unity test のレポート（検証時に cwd へ落ちる。--output の既定が cwd 相対）
+test-results.xml

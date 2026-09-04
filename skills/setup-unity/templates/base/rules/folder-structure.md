@@ -7,8 +7,8 @@
 アプリ本体のアセット・コードはすべて `Assets/App/` 配下に置く。
 
 ### Scripts/
-- 機能（Bounded Context）単位のフォルダで整理する（例: `Auth/`, `Stage/`, `Ui/`）
-- `Tests/EditMode/`: EditMode テスト（テスト用 asmdef 配下）
+- 機能単位のフォルダで整理する（例: `Auth/`, `Stage/`, `Ui/`）
+- `Tests/EditMode/` / `Tests/PlayMode/`: テスト（層ごとにテスト用 asmdef 配下）
 
 **フォルダパス はnamespaceと一致させる** (C# 標準慣習)
 

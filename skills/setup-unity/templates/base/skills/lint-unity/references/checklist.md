@@ -2,6 +2,9 @@
 
 `.claude/rules/` の各ルールを凝縮したチェックリスト。Unity のスクリプト以外のアセット・シーン・設定の lint 用。
 
+プロジェクト整合性（`.meta` 欠落・GUID 重複・衝突マーカー等）はこのチェックリストの範囲外。
+`.github/workflows/unity-ci.yml` の verify ジョブが `unity projects verify --strict` で見る。
+
 ## Editor 依存の区分
 
 各カテゴリ見出しに **Editor: 不要 / 必須** を書く。live Editor に到達できないときは
@@ -9,7 +12,7 @@
 
 | 区分 | カテゴリ |
 |:--|:--|
-| Editor 不要 | [E] [H] [K]、および [A] のうち行末に「Editor 必須」と書いていない項目 |
+| Editor 不要 | [E] [H]、および [A] のうち行末に「Editor 必須」と書いていない項目 |
 | Editor 必須 | [B] [C] [D] [F] [G] [I] [J]、および [A] のうち行末に「Editor 必須」と書いた項目 |
 
 区分の正本は**各カテゴリ見出しと各項目の行末**。この表はその要約なので、項目を増減したら
@@ -125,22 +128,3 @@ asset-naming.md を編集し、必要ならこの対応表と上の A 項目を�
 - J2: **ERROR** — Material のシェーダーが `Hidden/InternalErrorShader` (ピンク) になっていないか
 - J3: **WARNING** — Material のテクスチャスロットに Missing テクスチャがないか
 - J4: **INFO** — 未使用の Material がプロジェクトに残っていないか
-
-## [K] Project Integrity (プロジェクト整合性) — Editor: 不要
-
-`unity projects verify --format json` の検出結果をそのまま報告するカテゴリ。
-**独自に判定せず、severity も付け直さない**（判定の出所を二重にしない）。
-
-| code | 内容 |
-|:--|:--|
-| `META_MISSING` | アセットの `.meta` が無い（マージが落とすと Unity が新しい GUID を振り、全参照が静かに切れる） |
-| `META_ORPHAN` | 削除されたアセットの `.meta` が残っている |
-| `GUID_DUPLICATE` | 2 つのブランチが同じ GUID を導入した |
-| `CONFLICT_MARKERS` | `.meta` / `ProjectSettings/*.asset` / `manifest.json` / `packages-lock.json` に未解決の衝突マーカー |
-| `MANIFEST_INVALID` | `Packages/manifest.json` が解析できない |
-| `EDITOR_VERSION_DRIFT` | `--expect-editor <version>` を渡したときのみ。`ProjectVersion.txt` との不一致 |
-
-- severity は verify の出力（error / warning）に従う。error は exit 6、warning のみなら exit 0
-- **検出のみ。修復は Editor のアセットデータベースが要る**ので、この skill は直さない
-- `summary.unverifiable > 0` / `PATH_UNVERIFIABLE` があれば、**見ていないサブツリーがある**ことを
-  レポートに明示する（exit 0 を「問題なし」と読ませない）

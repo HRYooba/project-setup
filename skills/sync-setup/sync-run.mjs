@@ -11,7 +11,8 @@
 //   4. 作業ツリーを汚さない: 対象リポジトリのブランチは切り替えない。origin の default から
 //      使い捨て worktree を切り、その中だけで apply / commit / push / PR を行う
 //
-// worktree は sparse-checkout（.claude / .github / .githooks + ルート直下）で展開する。
+// worktree は sparse-checkout（.claude / .github / .githooks / ProjectSettings /
+// Assets/Analyzers + ルート直下）で展開する。
 // Unity リポジトリを全展開すると Windows の MAX_PATH（260 字）に当たり、数 GB と数分を払う。
 //
 // drift 判定（記録版 vs 現行版）と現行版の読み取りは sync-setup-check.mjs と同じロジックを
@@ -346,7 +347,21 @@ if (phase === "apply") {
   // `ProjectSettings/ProjectVersion.txt` の存在で Unity プロジェクトかを判定するため要る。
   // 展開しないと Unity リポの同期が毎回「Unity プロジェクトではありません」で落ち、
   // 試行上限に達して以後どの更新も届かなくなる。数ファイルなので MAX_PATH の懸念は無い。
-  git(worktree, "sparse-checkout", "set", "--cone", ".claude", ".github", ".githooks", "ProjectSettings");
+  //
+  // Assets/Analyzers は setup-unity が analyzer の DLL を書く先（.claude の外）。
+  // PR ゲートの workflow は .github/ へ書くので、こちらは上の ".github" で足りている。
+  // Assets 全体は展開しない（Unity リポで MAX_PATH に当たるのはここ）。
+  git(
+    worktree,
+    "sparse-checkout",
+    "set",
+    "--cone",
+    ".claude",
+    ".github",
+    ".githooks",
+    "ProjectSettings",
+    "Assets/Analyzers"
+  );
   if (git(worktree, "checkout") === null) fail("worktree の sparse checkout に失敗しました。");
   // 同期ブランチは常に origin/default から引き直す（前回の中断が残っていても上書きする）。
   if (git(worktree, "switch", "-C", branch) === null) {

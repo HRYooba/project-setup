@@ -30,7 +30,6 @@ Unity プロジェクトのアセット・シーン・Prefab が `.claude/rules/
 - **Editor が公開するコマンド名を推測しない。** `unity command --format json` でカタログを 1 回引き、その名前とパラメータ schema のとおりに呼ぶ
 - **Editor に到達できなくても Editor 不要カテゴリだけで完走する。** 「lint できません」で終わらせない
 - 実行できなかったカテゴリは**未検査として明示**する。「検出 0 件」と書かない
-- `unity projects verify` の結果（[K]）は **severity を付け直さず**そのまま報告する
 - Bash で `cd` を使わない。作業ディレクトリは自動設定済み
 - チェック項目・severity は `.claude/skills/lint-unity/references/checklist.md` が正
 - 独立したツール呼び出しは 1 レスポンスにまとめる（逐次呼び出し禁止）
@@ -38,7 +37,7 @@ Unity プロジェクトのアセット・シーン・Prefab が `.claude/rules/
 
 ## Workflow Overview
 
-1. Editor 到達性判定（`unity pipeline list`）+ プロジェクト整合性検査（`unity projects verify`）+ 変更アセット検出（git diff）またはスコープ指定
+1. Editor 到達性判定（`unity pipeline list`）+ 変更アセット検出（git diff）またはスコープ指定
 2. コマンドカタログの取得 → Editor 依存カテゴリのデータ取得
 3. ルール照合 → 違反を severity（ERROR / WARNING / INFO）で記録
 4. レポート出力（重複抑制）

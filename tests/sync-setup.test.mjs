@@ -99,7 +99,7 @@ test("setup-unity: 状態ファイルに残った旧フラグ --mcp を渡され
   mkdirSync(join(target, "ProjectSettings"), { recursive: true });
   writeFileSync(join(target, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 6000.3.9f1\n", "utf8");
   const out = runApply(APPLY_UNITY, target, ["--architecture", "--mcp", "mcp-for-unity"]);
-  assert.match(out, /--mcp mcp-for-unity は無視しました/);
+  assert.match(out, /廃止したオプションを無視しました: --mcp mcp-for-unity/);
   const state = JSON.parse(readFileSync(join(target, ".claude", "sync-setup-state.json"), "utf8"));
   assert.deepEqual(state["setup-unity"].flags, ["--architecture"], "旧フラグが state に残っている");
 });

@@ -30,7 +30,9 @@ const MARKS = readFileSync(join(APPLY, "..", "templates", "claude-md.md"), "utf8
   .split(/\r?\n/)
   .map((l) => l.match(/^- (\*\*.+?\*\*:)/)?.[1])
   .filter(Boolean);
-assert.ok(MARKS.length >= 3, `claude-md.md から箇条書きラベルを抽出できませんでした: ${MARKS}`);
+// 件数は固定しない。ここで見たいのは「抽出が壊れていないか」だけで、箇条書きの本数は
+// テンプレの都合で増減する（3 本を前提にしていた頃、項目を畳んだだけで落ちた）。
+assert.ok(MARKS.length >= 1, `claude-md.md から箇条書きラベルを抽出できませんでした: ${MARKS}`);
 
 test("初回適用 → 再実行で重複せず、review-config が温存される", () => {
   const target = tempDir("apply-test-");
@@ -228,7 +230,7 @@ test("setup-unity: カスタマイズされた rules/*.md は cpSync に上書�
   writeFileSync(join(target, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 2022.3.0f1\n", "utf8");
   runApplyUnity(target);
 
-  const rulePath = join(target, ".claude", "rules", "testing.md");
+  const rulePath = join(target, ".claude", "rules", "coding-standards.md");
   const customized = `${readFileSync(rulePath, "utf8")}\n## このプロジェクト固有\n\n- 追記した規約\n`;
   writeFileSync(rulePath, customized, "utf8");
   // 触っていない規約は「変更なし」のままであることも同時に確かめる。
@@ -236,13 +238,13 @@ test("setup-unity: カスタマイズされた rules/*.md は cpSync に上書�
 
   const out = runApplyUnity(target);
 
-  assert.match(out, /rules\/testing\.md: 要マージ/);
+  assert.match(out, /rules\/coding-standards\.md: 要マージ/);
   assert.match(out, /rules\/hierarchy\.md: 変更なし/);
   assert.equal(readFileSync(rulePath, "utf8"), customized, "cpSync がカスタマイズを上書きした");
   assert.equal(readFileSync(join(target, ".claude", "rules", "hierarchy.md"), "utf8"), untouched);
   // 要マージのファイルは「配置ファイル」に出さない（実際に書いていないため）。
   const placed = out.slice(out.indexOf("配置ファイル:"), out.indexOf("Markdown（"));
-  assert.ok(!placed.includes("rules/testing.md"), "書いていないファイルが配置ファイルに出ている");
+  assert.ok(!placed.includes("rules/coding-standards.md"), "書いていないファイルが配置ファイルに出ている");
 });
 
 test("setup-unity: このスキルが配らないファイルは再適用で取り除かれる", () => {
@@ -256,8 +258,16 @@ test("setup-unity: このスキルが配らないファイルは再適用で取�
   const legacy = [
     ["rules", "unity-mcp.md"],
     ["rules", "unity-mcp-tools.md"],
+    ["skills", "test-unity", "SKILL.md"],
+    ["skills", "test-unity", "references", "test-designing-guide.md"],
+    ["skills", "test-unity", "references", "test-writing-guide.md"],
     ["skills", "test-unity", "references", "unity-mcp-tools.md"],
     ["skills", "lint-unity", "references", "unity-mcp-tools.md"],
+    ["rules", "testing.md"],
+    ["rules", "dev-flow.md"],
+    ["references", "test-designing-guide.md"],
+    ["references", "test-writing-guide.md"],
+    ["agents", "unity-tester.md"],
   ];
   for (const parts of legacy) {
     const p = join(target, ".claude", ...parts);
@@ -274,6 +284,10 @@ test("setup-unity: このスキルが配らないファイルは再適用で取�
   // 旧 rules が「要マージ」へ回ると消えないまま残るので、そこに出ていないことも確かめる
   assert.ok(!out.includes("rules/unity-mcp.md: 要マージ"), "取り除く対象が要マージへ回っている");
   assert.ok(existsSync(join(target, ".claude", "rules", "unity-cli.md")), "rules/unity-cli.md が無い");
+  // 空の殻が残ると、配備先を見た人が「まだあるもの」と読む
+  assert.ok(!existsSync(join(target, ".claude", "skills", "test-unity")), "空になった test-unity が残っている");
+  // テスト専用の rules / skill / references は撒かない。空の殻も残らない
+  assert.ok(!existsSync(join(target, ".claude", "references")), "空になった references が残っている");
 });
 
 test("--no-pre-push 初回: pre-push を配らず core.hooksPath も登録しない", () => {
