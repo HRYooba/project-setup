@@ -1,7 +1,7 @@
 {
   "name": "project-setup",
   "description": "プロジェクト初期セットアップ skill 集。setup-github（GitHub 開発フロー一式: ブランチ保護 / PR 前レビュー運用 / git 規約 / create-issue、任意で Copilot PR 自動レビュー + AGENTS.md 生成）と setup-unity（Unity 開発規約: rules / lint-unity / unity-parallel / サブエージェント、任意でレイヤードアーキテクチャ規約。コーディング規約を機械で止める Roslyn analyzer と PR ゲートの GitHub Actions は常時）を対象リポジトリへ冪等に導入する。sync-setup でテンプレート更新への追随（同期 PR 作成、merge はしない）を行う。",
-  "version": "2.6.0",
+  "version": "2.6.1",
   "author": {
     "name": "hryooba"
   },
