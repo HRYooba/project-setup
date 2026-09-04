@@ -314,30 +314,34 @@ if (migratedState) console.log(`状態ファイル: ${migratedState}`);
 // ---- 状態ファイル sync-setup-state.json への setup-unity キーの記録 ----
 // このスキルは settings.json に触れず hook も配らない（従来の契約どおり）。同期チェック hook は
 // setup-github が配る単一の sync-setup-check.mjs が担い、この状態ファイルの全キー（setup-github /
-// setup-unity）を現行版と比較する。ここでは自分のキー（適用時のプラグイン版と有効フラグ）だけを
-// マージ更新し、setup-github のキーや未知フィールドは温存する。ヘルパーはこのファイルに閉じる
+// setup-unity）を現行の skill 版と比較する。ここでは自分のキー（適用時の skill 版と有効フラグ）
+// だけをマージ更新し、setup-github のキーや未知フィールドは温存する。ヘルパーはこのファイルに閉じる
 // （スキル単体コピーで動くよう外部モジュールに依存しない ＝ upsertWorkflowSection と同方針）。
 let syncState = null;
-const pluginVersion = readPluginVersion();
-if (pluginVersion) {
+const skillVersion = readOwnSkillVersion();
+if (skillVersion) {
   const syncFlags = [];
   if (useArchitecture) syncFlags.push("--architecture");
-  writeSyncState("setup-unity", pluginVersion, syncFlags, cliVersion);
-  syncState = `setup-unity v${pluginVersion}（flags: ${syncFlags.join(" ") || "なし"}）`;
+  writeSyncState("setup-unity", skillVersion, syncFlags, cliVersion);
+  syncState = `setup-unity v${skillVersion}（flags: ${syncFlags.join(" ") || "なし"}）`;
 } else {
   console.log(
-    "注意: .claude-plugin/plugin.json のバージョンを読めなかったため sync-setup-state.json を書きませんでした（テンプレ自動追随は無効のまま）。"
+    "注意: SKILL.md の version を読めなかったため sync-setup-state.json を書きませんでした（テンプレ自動追随は無効のまま）。"
   );
 }
 
-// このプラグインの現行版を読む（`.claude-plugin/plugin.json`）。apply.mjs は skills/setup-unity/ に
-// あるので plugin root は 2 つ上。cache 版でも dev repo でも同じ相対で当たる。読めなければ null。
-function readPluginVersion() {
+// このスキル自身の版を読む（同じディレクトリの `SKILL.md` の frontmatter `version:`）。
+// **プラグイン全体の版ではない。** プラグイン版は marketplace の更新トリガーであって
+// 「どの skill が変わったか」を表さないため、これで判定すると他スキルの更新でも
+// 配備先が drift 扱いになる。本文の `version:` 行を拾わないよう frontmatter だけを見る。
+// 読めなければ null（＝状態ファイルを書かない＝自動追随は無効のまま）。
+function readOwnSkillVersion() {
   try {
-    const pj = JSON.parse(
-      readFileSync(join(here, "..", "..", ".claude-plugin", "plugin.json"), "utf8").replace(/^\uFEFF/, "")
-    );
-    return typeof pj.version === "string" ? pj.version : null;
+    const src = readFileSync(join(here, "SKILL.md"), "utf8").replace(/^\uFEFF/, "");
+    const fm = src.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!fm) return null;
+    const m = fm[1].match(/^version:[ \t]*["']?(\d+(?:\.\d+){0,2})["']?[ \t]*$/m);
+    return m ? m[1] : null;
   } catch {
     return null;
   }
@@ -345,7 +349,10 @@ function readPluginVersion() {
 
 // 状態ファイル `.claude/sync-setup-state.json` へ自分のキー（skillKey）をマージ更新する。相手のキーや
 // 未知フィールドは消さない（読み → 該当キーだけ差し替え → 書き戻し）。
-function writeSyncState(skillKey, version, flags, unityCli) {
+//
+// 記録するのは skill 版だけ。プラグイン版は書かない（同期コミットの subject が git 履歴に残す）。
+// 旧配備先に残る `version`（プラグイン版）は読み手のフォールバックが読み、初回同期で置き換わる。
+function writeSyncState(skillKey, skillVersion, flags, unityCli) {
   const p = join(claudeDir, "sync-setup-state.json");
   let obj = {};
   if (existsSync(p)) {
@@ -360,7 +367,7 @@ function writeSyncState(skillKey, version, flags, unityCli) {
   // 既存の記録を消さない（消すと次の適用が版の食い違いを検出できなくなる）。
   const prevCli = obj[skillKey]?.unityCli;
   const cli = unityCli ?? (typeof prevCli === "string" ? prevCli : undefined);
-  obj[skillKey] = cli ? { version, flags, unityCli: cli } : { version, flags };
+  obj[skillKey] = cli ? { skillVersion, flags, unityCli: cli } : { skillVersion, flags };
   writeFileSync(p, JSON.stringify(obj, null, 2) + "\n", "utf8");
 }
 

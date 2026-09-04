@@ -4,10 +4,10 @@ description: >
   project-setup のテンプレート更新に、対象リポジトリを追随させるセットアップコマンド。
   テンプレ更新を検知した hook が最初のプロンプトへ差し込んだとき、およびユーザーが「sync-setup」
   「テンプレ同期」「テンプレを最新に追随」などと依頼したときに使う。
-  記録版と現行プラグイン版を比較し、更新があれば使い捨て worktree の中で保存フラグから
+  記録版と現行の skill 版を比較し、更新があれば使い捨て worktree の中で保存フラグから
   apply.mjs を再適用し、要マージの Markdown を統合してから commit → push → 同期 PR を
   作成する（merge はしない）。重複 PR 防止・試行上限・作業ツリー分離はコード担保。
-version: 1.5.0
+version: 1.6.0
 argument-hint: "[対象ディレクトリ（省略時はカレント）]"
 ---
 
@@ -99,6 +99,21 @@ PR が作られた場合は「merge はしていないので、内容を確認�
 - **merge は決してしない**。PR を作るところで止まる。マージ可否はレビューして人間が判断する
 - 試行上限に達した版は同期されない。原因（apply 失敗・push 権限・gh 未認証など）を解消し、
   必要なら `~/.claude/plugins/data/project-setup/sync-attempts.json` の該当キーを削除して再試行する
+- **判定は skill ごと**。物差しは `skills/<skill>/SKILL.md` の frontmatter `version:` で、
+  プラグイン全体の版ではない。プラグイン版で判定すると、setup-unity のテンプレだけ変わった
+  更新で setup-github だけの配備先まで drift 扱いになり、状態ファイルの版を進めるだけの PR が
+  出る。規則の正本は `skills/sync-setup/skill-version.mjs`（配備先の hook は import できない
+  ため同じ規則を自前で持つ。変えるときは両方）
+- skill 版は手で上げる数字なので、bump 忘れは更新がどの配備先にも**黙って**届かなくなる。
+  これは `scripts/check-skill-version-bump.mjs` が PR で落とす（`templates/**` か `apply.mjs` が
+  変わったのに版が動いていなければ CI が赤くなる）
+- プラグイン版は判定には使わず、**同期 1 回を識別する鍵**として残る（ブランチ名
+  `chore/sync-setup-v<プラグイン版>`・PR タイトル・commit subject・試行上限キー）。
+  どのプラグイン世代を当てたかは同期コミットの subject が git 履歴に残すので、状態ファイルには
+  記録しない
+- 記録に `skillVersion` が無い旧配備先は、プラグイン版での旧規則へ落として判定する
+  （「対象外」にするとその配備先が永久に追随を止める）。初回の同期で `skillVersion` に
+  置き換わり、そこから先は使われない
 - 発火方向はアップグレードのみ（現行版 > 記録版）。ダウングレードや版一致では何もしない
 - **フェーズを飛ばさない**。`--phase` 無しの実行はエラーになる（apply と publish の間の統合工程を
   スキップさせないため）。publish は apply が残した同期計画

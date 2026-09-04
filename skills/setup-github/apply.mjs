@@ -152,15 +152,18 @@ function git(...a) {
   }
 }
 
-// このプラグインの現行版を読む（`.claude-plugin/plugin.json`）。apply.mjs は
-// skills/setup-github/ にあるので plugin root は 2 つ上。cache 版（.../<version>/skills/...）でも
-// dev repo（project-setup/skills/...）でも同じ相対で当たる。読めなければ null。
-function readPluginVersion() {
+// このスキル自身の版を読む（同じディレクトリの `SKILL.md` の frontmatter `version:`）。
+// **プラグイン全体の版ではない。** プラグイン版は marketplace の更新トリガーであって
+// 「どの skill が変わったか」を表さないため、これで判定すると他スキルの更新でも
+// 配備先が drift 扱いになる。本文の `version:` 行を拾わないよう frontmatter だけを見る。
+// 読めなければ null（＝状態ファイルを書かない＝自動追随は無効のまま）。
+function readOwnSkillVersion() {
   try {
-    const pj = JSON.parse(
-      readFileSync(join(here, "..", "..", ".claude-plugin", "plugin.json"), "utf8").replace(/^\uFEFF/, "")
-    );
-    return typeof pj.version === "string" ? pj.version : null;
+    const src = readFileSync(join(here, "SKILL.md"), "utf8").replace(/^\uFEFF/, "");
+    const fm = src.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!fm) return null;
+    const m = fm[1].match(/^version:[ \t]*["']?(\d+(?:\.\d+){0,2})["']?[ \t]*$/m);
+    return m ? m[1] : null;
   } catch {
     return null;
   }
@@ -169,9 +172,14 @@ function readPluginVersion() {
 // 状態ファイル `.claude/sync-setup-state.json` へ自分のキー（skillKey）をマージ更新する。
 // setup-github / setup-unity が同じファイルに各自のキーで書くため、相手のキーや未知フィールドは
 // 消さない（読み → 該当キーだけ差し替え → 書き戻し）。両 hook（sync-setup-check.mjs /
-// sync-setup-prompt.mjs）がこのファイルの記録版と現行版を比較し、更新時に `/sync-setup`
+// sync-setup-prompt.mjs）がこのファイルの記録版と現行の skill 版を比較し、更新時に `/sync-setup`
 //（sync-run.mjs）へ繋ぐ。比較の実体は lib/sync-setup-drift.mjs。
-function writeSyncState(skillKey, version, flags) {
+//
+// 記録するのは skill 版だけ。プラグイン版は書かない（どのプラグイン世代を当てたかは同期
+// コミットの subject が git 履歴に残す。誰も読まない記録は黙って古くなるだけ）。
+// 旧配備先に残る `version`（プラグイン版）は読み手のフォールバックが読む。初回の同期で
+// `skillVersion` に置き換わり、そこから先は使われない。
+function writeSyncState(skillKey, skillVersion, flags) {
   const p = join(claudeDir, "sync-setup-state.json");
   let obj = {};
   if (existsSync(p)) {
@@ -182,7 +190,7 @@ function writeSyncState(skillKey, version, flags) {
       warnings.push("sync-setup-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）");
     }
   }
-  obj[skillKey] = { version, flags };
+  obj[skillKey] = { skillVersion, flags };
   writeFileSync(p, JSON.stringify(obj, null, 2) + "\n", "utf8");
 }
 
@@ -681,12 +689,12 @@ const migratedState = consolidateSyncState(claudeDir);
 if (migratedState) console.log(`状態ファイル: ${migratedState}`);
 
 // ---- 5b. 状態ファイル sync-setup-state.json の書き込み ----
-// 適用時のプラグイン版と有効フラグを記録する。テンプレ更新検知の hook がこれと現行版を比較し、
-// 更新時に `/sync-setup`（sync-run.mjs）の実行を促す。フラグは「有効値」を明示保存する
+// 適用時の **skill 版**と有効フラグを記録する。テンプレ更新検知の hook がこれと現行の skill 版を
+// 比較し、更新時に `/sync-setup`（sync-run.mjs）の実行を促す。フラグは「有効値」を明示保存する
 // （配備済み設定からの継承に依存せず、テンプレ同期の再適用が決定的に同じ構成を再現できるように）。
 const syncStates = [];
-const pluginVersion = readPluginVersion();
-if (pluginVersion) {
+const skillVersion = readOwnSkillVersion();
+if (skillVersion) {
   // csv 化は末尾スラッシュを外して可読性を上げる（apply.mjs 側の normTarget が付け直す）。
   const csv = (arr) => arr.map((s) => s.replace(/\/+$/, "")).join(",");
   const syncFlags = [];
@@ -694,12 +702,12 @@ if (pluginVersion) {
   if (!prePush) syncFlags.push("--no-pre-push");
   syncFlags.push(`--review-targets=${csv(effectiveTargets)}`);
   syncFlags.push(`--review-excludes=${csv(effectiveExcludes)}`);
-  writeSyncState("setup-github", pluginVersion, syncFlags);
+  writeSyncState("setup-github", skillVersion, syncFlags);
   copied.push(".claude/sync-setup-state.json");
-  syncStates.push(`setup-github v${pluginVersion}（flags: ${syncFlags.join(" ") || "なし"}）`);
+  syncStates.push(`setup-github v${skillVersion}（flags: ${syncFlags.join(" ") || "なし"}）`);
 } else {
   warnings.push(
-    ".claude-plugin/plugin.json のバージョンを読めなかったため sync-setup-state.json を書きませんでした（テンプレ自動追随は無効のまま）"
+    "SKILL.md の version を読めなかったため sync-setup-state.json を書きませんでした（テンプレ自動追随は無効のまま）"
   );
 }
 

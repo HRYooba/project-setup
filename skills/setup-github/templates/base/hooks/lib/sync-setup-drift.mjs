@@ -1,7 +1,11 @@
 // setup-github / setup-unity テンプレートの版ドリフト検知。
 //
-// 配備先の `.claude/sync-setup-state.json`（apply.mjs が記録した適用時のプラグイン版とフラグ）と、
-// いまインストールされている project-setup プラグインの現行版を比較する。
+// 配備先の `.claude/sync-setup-state.json`（apply.mjs が記録した適用時の版とフラグ）と、
+// いまインストールされている project-setup プラグインの現行版を **skill ごとに**比較する。
+//
+// 比較する版は `skills/<skill>/SKILL.md` の frontmatter `version:`。プラグイン全体の版では
+// 判定しない — setup-unity のテンプレだけ変えてもプラグイン版は上がるため、setup-github だけを
+// 入れた配備先まで drift 扱いになり、状態ファイルの版を進めるだけの PR が出る。
 //
 // 同じ判定を 2 つの hook が使う:
 //   - sync-setup-check.mjs（SessionStart）: 人の画面へ 1 行出す
@@ -11,6 +15,8 @@
 // 設計:
 //   - 発火はアップグレード方向のみ（現行版 > 記録版）。複数マシンでプラグイン版がずれていても、
 //     古い版のマシンが新しい版で同期済みのプロジェクトを古いテンプレへ巻き戻す churn を防ぐ。
+//   - 記録に skillVersion が無い旧配備先は、プラグイン版での旧規則へ落とす（判定しないと
+//     既存の配備先が黙って追随を止める）。次の apply が skillVersion を書くので 1 度だけ。
 //   - ここはファイルを読むだけ。ネットワーク・gh・git は sync-run.mjs 側が叩く。
 //   - 状態ファイルが無いプロジェクト（未セットアップ or バックフィル前）は対象外 → null。
 //   - SYNC_SETUP_DISABLE=1 で黙らせられる（避難口）。
@@ -50,6 +56,8 @@ export function dataDir() {
 }
 
 // "1.2.0" 同士を数値比較。a > b で正。パースできない値（"unknown" 等）は 0.0.0 扱い。
+// 正本はプラグイン側の skills/sync-setup/skill-version.mjs（この lib は配備先へ単体コピー
+// される制約上 import できないので、意図的な重複。変えるときは両方を揃える）。
 function cmpVer(a, b) {
   const pa = String(a).split(".").map((n) => parseInt(n, 10));
   const pb = String(b).split(".").map((n) => parseInt(n, 10));
@@ -79,8 +87,9 @@ function readState(claudeDir) {
   return state;
 }
 
-// インストール済み project-setup プラグインの現行版。読めなければ null。
-function readCurrentVersion() {
+// インストール済み project-setup プラグインの現行版と展開先。読めなければ null。
+// installPath は skill ごとの SKILL.md を読むために要る（版だけでは skill を切り分けられない）。
+function readCurrentPlugin() {
   const pluginsJsonPath =
     process.env.SYNC_SETUP_PLUGINS_JSON ||
     join(homedir(), ".claude", "plugins", "installed_plugins.json");
@@ -102,10 +111,43 @@ function readCurrentVersion() {
     const pj = entry.installPath && readJson(join(entry.installPath, ".claude-plugin", "plugin.json"));
     version = pj?.version;
   }
-  return version || null;
+  if (!version) return null;
+  return { version, installPath: entry.installPath || null };
 }
 
 const SKILL_KEYS = ["setup-github", "setup-unity"];
+
+// `skills/<skill>/SKILL.md` の frontmatter から version を読む。読めなければ null。
+// 本文の `version:` 行を拾わないよう、先頭の `---` で囲まれた塊だけを見る。
+function readSkillVersion(installPath, skillKey) {
+  if (!installPath) return null;
+  try {
+    const src = stripBom(readFileSync(join(installPath, "skills", skillKey, "SKILL.md"), "utf8"));
+    const fm = src.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!fm) return null;
+    const m = fm[1].match(/^version:[ \t]*["']?(\d+(?:\.\d+){0,2})["']?[ \t]*$/m);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// 1 skill 分の判定。drift していれば { from, to, basis }、していなければ null。
+// 正本は skills/sync-setup/skill-version.mjs の decideDrift（意図的な重複）。
+function decideDrift(rec, curSkillVersion, curPluginVersion) {
+  if (!rec || typeof rec !== "object") return null;
+  if (rec.skillVersion) {
+    if (!curSkillVersion) return null; // 現行 skill 版が読めない＝プラグインが居ない
+    return cmpVer(curSkillVersion, rec.skillVersion) > 0
+      ? { from: rec.skillVersion, to: curSkillVersion, basis: "skill" }
+      : null;
+  }
+  // 旧配備先。実際に比べた値（プラグイン版）を from / to に入れる。
+  if (!rec.version || !curPluginVersion) return null;
+  return cmpVer(curPluginVersion, rec.version) > 0
+    ? { from: rec.version, to: curPluginVersion, basis: "plugin" }
+    : null;
+}
 
 // ドリフトがあれば { currentVersion, drifted, summary } を返す。無ければ null。
 export function detectDrift(projectDir) {
@@ -114,22 +156,20 @@ export function detectDrift(projectDir) {
   const state = readState(join(projectDir, ".claude"));
   if (Object.keys(state).length === 0) return null; // 未セットアップ or バックフィル前 → 対象外
 
-  const currentVersion = readCurrentVersion();
-  if (!currentVersion) return null;
+  const plugin = readCurrentPlugin();
+  if (!plugin) return null;
 
   const drifted = [];
   for (const k of SKILL_KEYS) {
-    const rec = state[k];
-    if (!rec || typeof rec !== "object" || !rec.version) continue;
-    if (cmpVer(currentVersion, rec.version) > 0) {
-      drifted.push({ skill: k, from: rec.version, flags: Array.isArray(rec.flags) ? rec.flags : [] });
-    }
+    const d = decideDrift(state[k], readSkillVersion(plugin.installPath, k), plugin.version);
+    if (!d) continue;
+    drifted.push({ skill: k, ...d, flags: Array.isArray(state[k].flags) ? state[k].flags : [] });
   }
   if (drifted.length === 0) return null;
 
   return {
-    currentVersion,
+    currentVersion: plugin.version,
     drifted,
-    summary: drifted.map((d) => `${d.skill} v${d.from}→v${currentVersion}`).join(" / "),
+    summary: drifted.map((d) => `${d.skill} v${d.from}→v${d.to}`).join(" / "),
   };
 }

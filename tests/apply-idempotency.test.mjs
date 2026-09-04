@@ -11,7 +11,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { APPLY, APPLY_UNITY, tempDir } from "./helpers.mjs";
+import { APPLY, APPLY_UNITY, skillVersion, tempDir } from "./helpers.mjs";
 /* global process */
 
 function run(applyPath, target, args = []) {
@@ -58,12 +58,12 @@ test("初回適用 → 再実行で重複せず、review-config が温存され�
     assert.ok(!existsSync(join(target, f)), `${f} が配置されている（配布対象外のはず）`);
   }
 
-  // 状態ファイル: setup-github キーに現行プラグイン版と有効フラグが入る
-  const pluginVersion = JSON.parse(
-    readFileSync(join(APPLY, "..", "..", "..", ".claude-plugin", "plugin.json"), "utf8")
-  ).version;
+  // 状態ファイル: setup-github キーに現行の skill 版と有効フラグが入る
+  // （プラグイン全体の版ではない。プラグイン版で判定すると、他スキルの更新でもこの配備先が
+  //   drift 扱いになる）
   const sync1 = JSON.parse(readFileSync(join(target, ".claude", "sync-setup-state.json"), "utf8"));
-  assert.equal(sync1["setup-github"].version, pluginVersion);
+  assert.equal(sync1["setup-github"].skillVersion, skillVersion("setup-github"));
+  assert.equal(sync1["setup-github"].version, undefined, "プラグイン版が記録されている（誰も読まない）");
   assert.deepEqual(sync1["setup-github"].flags, [
     "--review-targets=src",
     "--review-excludes=.claude,.github,.githooks",

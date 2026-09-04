@@ -26,8 +26,8 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 
 プラグインのテンプレートを更新したとき、展開済みの各プロジェクトを **「検知」と「実行」を分けて** 追随させる:
 
-- apply.mjs は適用時のプラグイン版と有効フラグを `.claude/sync-setup-state.json` に記録する（setup-github / setup-unity が同じファイルへ各自のキーでマージ）。
-- setup-github が配る 2 つの hook が、記録版と現行プラグイン版を比較して同期へ繋ぐ（比較の実体は `.claude/hooks/lib/sync-setup-drift.mjs`。差が無ければ即終了。ネットワーク・git は叩かない）。
+- apply.mjs は適用時の **skill 版**（`skills/<skill>/SKILL.md` の `version:`）と有効フラグを `.claude/sync-setup-state.json` に記録する（setup-github / setup-unity が同じファイルへ各自のキーでマージ）。
+- setup-github が配る 2 つの hook が、記録版と現行の skill 版を **skill ごとに**比較して同期へ繋ぐ（比較の実体は `.claude/hooks/lib/sync-setup-drift.mjs`。差が無ければ即終了。ネットワーク・git は叩かない）。プラグイン全体の版で判定しないのは、setup-unity のテンプレだけ変わった更新で setup-github だけの配備先まで drift 扱いになるため。
   - `sync-setup-check.mjs`（SessionStart）: `systemMessage` でユーザーの画面に 1 行出す。**知らせる役**。
   - `sync-setup-prompt.mjs`（UserPromptSubmit）: そのセッションの最初のプロンプトを `updatedInput` で包み、`/sync-setup` を先に実行させる。**実行のトリガー**。1 セッション 1 回（`session_id` で記録）。スラッシュコマンド・`!`・`#` で始まるプロンプトは展開が壊れるため書き換えず `additionalContext` で渡す。
   - 実行指示を SessionStart 側へ置かないのは、**その時点でモデルが呼ばれないから**。セッションは入力待ちで止まるので、そこに指示を積んでも人が何か打つまで効かず、打たれなければ放置される。Claude が実際に動く最初の瞬間は UserPromptSubmit。
@@ -89,7 +89,9 @@ skills/
 │       └─ pr-copilot/  … PR 自動レビュー導入時のみ
 ├─ sync-setup/
 │   ├─ SKILL.md
-│   └─ sync-run.mjs     … 同期の実行本体（--phase=apply / publish）
+│   ├─ sync-run.mjs     … 同期の実行本体（--phase=apply / publish）
+│   ├─ skill-version.mjs … skill 版の読み取りと drift 判定（判定規則の正本）
+│   └─ state.mjs        … 状態ファイルの読み書きと旧名の解決（規則の正本）
 └─ setup-unity/
     ├─ SKILL.md
     ├─ apply.mjs
@@ -104,6 +106,9 @@ analyzers/                … 配布 analyzer の C# ソースとテスト
 ├─ build.mjs              … dotnet build → DLL を templates/project/ へ焼き込み
 ├─ source-hash.mjs        … 焼き込み忘れ検知のハッシュ（build と test の単一ソース）
 └─ dist.json              … 配布 DLL の生成元記録
+
+scripts/
+└─ check-skill-version-bump.mjs … 配布物を変えた PR の skill 版 bump 忘れを CI で止める
 ```
 
 テンプレートは plugin に同梱されたスナップショットであり、この plugin 単体で完結する（外部ファイルを参照しない）。
