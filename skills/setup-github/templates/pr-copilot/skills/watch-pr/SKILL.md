@@ -5,25 +5,13 @@ description: >
   Monitor ツールで PR のレビューと CI チェックをポーリング監視し、
   指摘または CI の失敗があれば resolve-pr を自動実行する。
   PR番号またはURLを指定。
-version: 1.5.1
-user-invocable: false
+version: 1.6.0
 argument-hint: [PR番号 or URL]
 ---
 
 # PR のレビュー・CI 監視
 
 **PR指定**: $ARGUMENTS
-
-引数がPR番号またはURLの場合はそのPRを対象に、引数なしの場合は現在ブランチのPRを自動検出する。
-
-## 呼び出し規約
-
-このスキルは **Skill ツール** で起動する。Monitor によるポーリングはバックグラウンドで実行され、
-レビューまたは CI の結果が出た時点で通知が届く。
-
-```
-Skill(skill: "watch-pr", args: "{pr_number}")
-```
 
 ## 何を待つか
 
@@ -66,16 +54,13 @@ PR 作成後に外から返ってくる非同期の結果は 2 系統ある。**
    ただし **チェックが 1 つも無い PR ではエラー終了する**ので、出力に `no checks` を含むかで
    「失敗」と「そもそも無い」を切り分ける。
 
-   **Copilot 依頼が成立しているかをここで判定しない。** 依頼を投げるのも成否を見るのも
-   after-pr-create hook で、失敗した PR には hook が「watch-pr を起動しないでください」と出す。
-   つまりこのスキルが起動された時点で依頼は成立している。同じ事実を hook と skill の 2 箇所で
-   判定すると、判定式がずれたときに skill 側が hook の伝えた事実を上書きして
-   「Copilot レビュアーが付いていない」と誤報告し、届いているレビューを取りこぼす。
+   **Copilot 依頼の成否をここで判定しない。** 判定するのは after-pr-create hook で、
+   失敗した PR には hook が「起動しないでください」と出す。2 箇所で判定すると、
+   ずれたときに届いているレビューを取りこぼす。
 
-   **`requested_reviewers`（REST の PR 本体 `repos/{owner}/{repo}/pulls/{pr}`）を使ってはいけない。**
-   このフィールドは User 型しか返さず、Copilot は Bot 型のため依頼が成立していても常に空配列になる。
-   この Step が使う `pulls/{pr}/reviews` の `user.login` は Bot でも
-   `copilot-pull-request-reviewer[bot]` を返すため、Bot 型の穴が無い。
+   **`requested_reviewers` を使ってはいけない。** User 型しか返さず、Bot 型の Copilot は
+   依頼が成立していても常に空配列になる。`pulls/{pr}/reviews` の `user.login` は Bot でも
+   `copilot-pull-request-reviewer[bot]` を返すのでこの穴が無い。
 4. **開始時刻記録**（Step 2 へ進む場合のみ）: `date -u +%Y-%m-%dT%H:%M:%SZ` → `{start_time}`
 
 ---
@@ -94,11 +79,10 @@ Monitor(
 )
 ```
 
-`persistent: true` のため `timeout_ms` は無視されるが、必須パラメータなので値が要る。
-**`1000` 未満は書かない** — 無視されるのは値の使用だけで、スキーマ検証は先に走る
-（`minimum: 1000`。`1` を渡していた間は Monitor の呼び出しが毎回 Invalid tool parameters で落ちていた）。
-監視上限はスクリプト内の `max_checks=60`（30秒 × 60回 = 30分）で制御する。
-**CI は Unity Editor を起動するため 10〜30 分かかる**ので、この上限は縮めない。
+`persistent: true` でも `timeout_ms` は必須で、**`1000` 未満は書かない**（値は無視されるが
+スキーマ検証が先に走る。`1` を渡していた間は毎回 Invalid tool parameters で落ちていた）。
+監視上限はスクリプト内の `max_checks=60`（30 秒 × 60 = 30 分）。
+**CI が Editor を起動するプロジェクトでは 10〜30 分かかる**ので縮めない。
 
 ### ポーリングスクリプト
 
@@ -180,9 +164,7 @@ Monitor の終了通知（stream ended）は無視する。
 Skill(skill: "resolve-pr", args: "{pr}")
 ```
 
-resolve-pr は frontmatter で `context: fork` / `agent: review-responder` を指定しているため、
-専用エージェント上で自動的に対応が実行される。resolve-pr 自身がレビューコメントと
-失敗した check の両方を集めるので、ここで内容を渡す必要はない。
+resolve-pr 自身がレビューコメントと失敗した check の両方を集めるので、内容は渡さない。
 
 **resolve-pr は 1 度だけ起動する。** その push で CI が回り直した結果まで待たない
 （待ち直すと監視が入れ子になる）。resolve-pr の報告に「push 後の CI は未確認」と出るので、

@@ -1,9 +1,8 @@
 ---
 name: review-responder
 description: PR の指摘と CI 失敗への対応スペシャリスト。レビュー指摘と失敗した CI チェックの分析・コード修正・コミット・リプライ送信・Copilot コメントの自動 Resolve を一括実行する。
-disallowedTools: AskUserQuestion, EnterPlanMode
-model: opus
-effort: high
+disallowedTools: AskUserQuestion
+model: inherit
 permissionMode: acceptEdits
 maxTurns: 40
 ---
