@@ -5,11 +5,20 @@
 
 ## 何を担当するか
 
-`skills/setup-unity/templates/*/rules/coding-standards.md` のうち、**型を見ないと判定できない規約**だけ。
-`private _camelCase`・定数 `PascalCase`・`Async` サフィックス・namespace とフォルダの一致は
-**持っていない**。**Unity は `.editorconfig` を C# コンパイラへ渡さない**ので `dotnet_diagnostic` や
-naming rules の経路も無く、これらは**機械では担保されていない**（`coding-standards.md` を読んで
-守る前提）。名前だけで判定できるので、必要になれば規則として足せる。
+`skills/setup-unity/templates/*/rules/coding-standards.md` のうち、**機械で判定できる規約**。
+
+担当を「型を見ないと判定できない規約だけ」に絞らない。**Unity は `.editorconfig` を C#
+コンパイラへ渡さない**ので、`dotnet_naming_rule` や `dotnet_diagnostic` の経路が無い。
+既製ルールへ回す先が無いなら、名前だけで判定できる規約もここが持つ。
+
+持たないものは 2 種類だけ。
+
+| 持たない規約 | 理由 |
+|:---|:---|
+| 名前空間 `<Project>.<Context>` / `<Project>.Tests.<Context>` | `<Project>` は配備先ごとに違い、analyzer が知る手段が無い |
+| Subject で中継しない / `AddTo()` の束ね先 / XML doc の WHY / fail-fast と fail-soft の切り分け | 判断が要る。機械で当てると誤検知が規約への信頼を壊す |
+
+テストクラス名 `*Test` とテストメソッド名 `A_B_C` は判定できるが未実装（違反の害が小さい）。
 
 規則 ID の一覧は `src/UnityCodingStandards.Analyzers/AnalyzerReleases.Unshipped.md` が正本。
 新しい ID をそこへ書き忘れると `RS2008` でビルドが落ちる（一覧が腐らない）。

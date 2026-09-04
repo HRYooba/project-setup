@@ -34,6 +34,29 @@ namespace Cysharp.Threading.Tasks
 
     /// <summary>stub</summary>
     public struct UniTask<T> { }
+
+    /// <summary>stub</summary>
+    public struct UniTaskVoid
+    {
+        /// <summary>stub</summary>
+        public void Forget() { }
+
+        /// <summary>stub</summary>
+        public Awaiter GetAwaiter() => default;
+
+        /// <summary>stub</summary>
+        public struct Awaiter : System.Runtime.CompilerServices.INotifyCompletion
+        {
+            /// <summary>stub</summary>
+            public bool IsCompleted => true;
+
+            /// <summary>stub</summary>
+            public void GetResult() { }
+
+            /// <summary>stub</summary>
+            public void OnCompleted(System.Action continuation) { }
+        }
+    }
 }
 
 namespace UnityEngine
@@ -44,12 +67,31 @@ namespace UnityEngine
         /// <summary>stub</summary>
         public object StartCoroutine(System.Collections.IEnumerator routine) => routine;
     }
+
+    /// <summary>stub</summary>
+    public sealed class SerializeFieldAttribute : System.Attribute { }
 }
 
 namespace UnityEngine.TestTools
 {
     /// <summary>stub</summary>
     public sealed class UnityTestAttribute : System.Attribute { }
+}
+
+namespace VContainer.Unity
+{
+    /// <summary>stub</summary>
+    public class LifetimeScope : UnityEngine.MonoBehaviour
+    {
+        /// <summary>stub</summary>
+        public static LifetimeScope Find(System.Type type) => null;
+
+        /// <summary>stub</summary>
+        public static T FindFirstObjectByType<T>() where T : LifetimeScope => null;
+
+        /// <summary>stub</summary>
+        public object Container => null;
+    }
 }
 ";
     }

@@ -15,3 +15,8 @@ UCS0007 | Async | Warning | CancellationToken 引数に既定値を付けない
 UCS0008 | Async | Warning | 戻り値に Task 系を使わない（UniTask 系にする）
 UCS0009 | Async | Warning | Coroutine を使わない
 UCS0010 | Naming | Warning | 抽象基底クラスは Base サフィックスを付ける
+UCS0011 | Async | Warning | 非同期メソッドは Async サフィックスを付ける
+UCS0012 | Naming | Warning | private フィールドは _camelCase
+UCS0013 | Naming | Warning | SerializeField は private
+UCS0014 | Async | Warning | UniTaskVoid を await しない
+UCS0015 | Dependency | Warning | LifetimeScope を探索して自己注入しない

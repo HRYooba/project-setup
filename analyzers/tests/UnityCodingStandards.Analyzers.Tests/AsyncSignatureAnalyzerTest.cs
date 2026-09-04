@@ -66,6 +66,27 @@ public class Target
         }
 
         [Test]
+        public async Task Async_サフィックスが無ければ報告する()
+        {
+            var ids = await RunAsync("    public UniTask Run(CancellationToken cancellationToken) => default;");
+            Assert.That(ids, Is.EqualTo(new[] { "UCS0011" }));
+        }
+
+        [Test]
+        public async Task UniTaskVoid_も_Async_サフィックスの対象()
+        {
+            var ids = await RunAsync("    public UniTaskVoid Fire(CancellationToken cancellationToken) => default;");
+            Assert.That(ids, Is.EqualTo(new[] { "UCS0011" }));
+        }
+
+        [Test]
+        public async Task Async_サフィックスがあれば報告しない()
+        {
+            var ids = await RunAsync("    public UniTask RunAsync(CancellationToken cancellationToken) => default;");
+            Assert.That(ids, Is.Empty);
+        }
+
+        [Test]
         public async Task interface_実装は基底側の責任なので報告しない()
         {
             var source = @"

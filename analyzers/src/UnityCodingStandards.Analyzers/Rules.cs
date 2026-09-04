@@ -14,6 +14,7 @@ namespace UnityCodingStandards.Analyzers
     {
         private const string CategoryNaming = "Naming";
         private const string CategoryAsync = "Async";
+        private const string CategoryDependency = "Dependency";
 
         // 既定 severity は Warning 固定。Error にすると Unity が Safe Mode へ落ち、
         // 命名違反だけで Editor が作業不能になる。PR の gate は severity ではなく CI が担う
@@ -89,5 +90,40 @@ namespace UnityCodingStandards.Analyzers
             "抽象クラス '{0}' は名前の末尾を 'Base' にする",
             CategoryNaming, Default, true,
             "coding-standards.md「命名規則」: 抽象基底クラスは末尾に Base を付与する。");
+
+        internal static readonly DiagnosticDescriptor AsyncMethodSuffix = new DiagnosticDescriptor(
+            "UCS0011",
+            "非同期メソッドは Async サフィックスを付ける",
+            "非同期メソッド '{0}' は名前の末尾を 'Async' にする",
+            CategoryAsync, Default, true,
+            "coding-standards.md「非同期処理 (Async / UniTask)」: メソッド名は末尾に Async を付与する。");
+
+        internal static readonly DiagnosticDescriptor PrivateFieldNaming = new DiagnosticDescriptor(
+            "UCS0012",
+            "private フィールドは _camelCase",
+            "private フィールド '{0}' は '_' + camelCase にする",
+            CategoryNaming, Default, true,
+            "coding-standards.md「命名規則」: privateフィールドは '_' + camelCase。");
+
+        internal static readonly DiagnosticDescriptor SerializeFieldMustBePrivate = new DiagnosticDescriptor(
+            "UCS0013",
+            "SerializeField は private",
+            "'{0}' は [SerializeField] なので private にする（現在は {1}）",
+            CategoryNaming, Default, true,
+            "coding-standards.md「命名規則」: SerializeField は [SerializeField] private + _camelCase。");
+
+        internal static readonly DiagnosticDescriptor UniTaskVoidNotAwaited = new DiagnosticDescriptor(
+            "UCS0014",
+            "UniTaskVoid を await しない",
+            "UniTaskVoid は await せず '.Forget()' で fire-and-forget を明示する",
+            CategoryAsync, Default, true,
+            "coding-standards.md「非同期処理 (Async / UniTask)」: UniTaskVoid を await しない。");
+
+        internal static readonly DiagnosticDescriptor DiContainerLookupForbidden = new DiagnosticDescriptor(
+            "UCS0015",
+            "LifetimeScope を探索して自己注入しない",
+            "'{0}' で DI コンテナを探索している。生成経路を Composition Root で DI 管理下に置く",
+            CategoryDependency, Default, true,
+            "coding-standards.md「DI コンテナを Composition Root の外へ持ち出さない」: LifetimeScope や IObjectResolver を探索して自己注入しない。");
     }
 }

@@ -6,7 +6,8 @@ using Microsoft.CodeAnalysis.Diagnostics;
 namespace UnityCodingStandards.Analyzers
 {
     /// <summary>
-    /// 非同期メソッドの署名を検査する（UCS0006 CancellationToken 必須 / UCS0007 既定値禁止 / UCS0008 Task 禁止）。
+    /// 非同期メソッドの署名を検査する（UCS0006 CancellationToken 必須 / UCS0007 既定値禁止 /
+    /// UCS0008 Task 禁止 / UCS0011 Async サフィックス）。
     /// </summary>
     [DiagnosticAnalyzer(LanguageNames.CSharp)]
     public sealed class AsyncSignatureAnalyzer : DiagnosticAnalyzer
@@ -16,7 +17,8 @@ namespace UnityCodingStandards.Analyzers
             ImmutableArray.Create(
                 Rules.AsyncNeedsCancellationToken,
                 Rules.CancellationTokenNoDefault,
-                Rules.TaskReturnForbidden);
+                Rules.TaskReturnForbidden,
+                Rules.AsyncMethodSuffix);
 
         /// <inheritdoc />
         public override void Initialize(AnalysisContext context)
@@ -41,6 +43,13 @@ namespace UnityCodingStandards.Analyzers
             {
                 context.ReportDiagnostic(
                     Diagnostic.Create(Rules.TaskReturnForbidden, location, method.Name));
+            }
+
+            // 非同期の戻り値型を持つのに Async で終わらない。呼び出し側が await 忘れに気付けなくなる。
+            if (!NameConventions.HasSuffix(method.Name, "Async"))
+            {
+                context.ReportDiagnostic(
+                    Diagnostic.Create(Rules.AsyncMethodSuffix, location, method.Name));
             }
 
             var cancellationTokens = method.Parameters
