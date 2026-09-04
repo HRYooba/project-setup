@@ -2,10 +2,11 @@
   "name": "project-setup",
   "version": "0.0.0",
   "private": true,
-  "description": "project-setup プラグインの開発用ツール（lint / test / analyzer ビルド）。プラグイン本体は .claude-plugin/plugin.json で定義され、この package.json は配布物には含まれない（テンプレートは templates/ 配下のみコピーされる）。analyzers/ の C# は build:analyzer が templates/project へ焼き込む。",
+  "description": "project-setup プラグインの開発用ツール（lint / test / validate / analyzer ビルド）。プラグイン本体は .claude-plugin/plugin.json で定義され、この package.json は配布物には含まれない（テンプレートは templates/ 配下のみコピーされる）。analyzers/ の C# は build:analyzer が templates/project へ焼き込む。",
   "scripts": {
     "lint": "eslint .",
     "test": "node --test tests/*.test.mjs",
+    "validate": "npx --yes @anthropic-ai/claude-code plugin validate .claude-plugin/marketplace.json --json --strict && npx --yes @anthropic-ai/claude-code plugin validate .claude-plugin/plugin.json --json --strict",
     "build:analyzer": "node analyzers/build.mjs",
     "test:analyzer": "dotnet test analyzers/tests/UnityCodingStandards.Analyzers.Tests/UnityCodingStandards.Analyzers.Tests.csproj"
   },
