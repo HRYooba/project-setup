@@ -365,6 +365,10 @@ if (phase === "apply") {
     try {
       const out = execFileSync(process.execPath, [applyPath, worktree, ...d.flags], {
         encoding: "utf8",
+        // worktree は sparse-checkout。apply.mjs が展開範囲外を「無い」と読まないよう伝える。
+        // フラグで渡さないのは、これが実行の性質であって状態ファイルへ保存すべき構成では
+        // ないため（保存フラグに混ざると、次の適用が理由もなく検査を飛ばす）。
+        env: { ...process.env, SYNC_SETUP_SPARSE_WORKTREE: "1" },
       });
       // 出力はそのまま流す。要マージ一覧はこの後 Claude が読んでマージに使う。
       console.log(`--- ${d.skill} ---`);
