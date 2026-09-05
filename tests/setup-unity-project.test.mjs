@@ -36,8 +36,27 @@ function unityProject() {
   return target;
 }
 
-function runApply(target, args = []) {
-  const res = spawnSync(process.execPath, [APPLY_UNITY, target, ...args], { encoding: "utf8" });
+// 部分展開でない普通の適用では検査が生きていること。誤報を消すために検査ごと殺さない
+// （Assets/App を持たないプロジェクトへ規約を配っても誰も気づけなくなる）。
+test("Assets/App が無ければ注意を出す（部分展開でないとき）", () => {
+  const target = unityProject();
+  assert.match(runApply(target), /Assets\/App\/ が存在しません/);
+});
+
+// テンプレ同期は sparse-checkout の worktree の中で apply を走らせる。展開範囲外を
+// 「無い」と読むと、すべての Unity 同期 PR の本文に嘘の警告が載る。
+test("部分展開の実行では Assets/App の存在確認を省く", () => {
+  const target = unityProject();
+  const out = runApply(target, [], { SYNC_SETUP_SPARSE_WORKTREE: "1" });
+  assert.doesNotMatch(out, /Assets\/App\/ が存在しません/);
+  assert.match(out, /作業ツリーが部分展開のため/);
+});
+
+function runApply(target, args = [], env = {}) {
+  const res = spawnSync(process.execPath, [APPLY_UNITY, target, ...args], {
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
   assert.equal(res.status, 0, `apply failed: ${res.stderr}\n${res.stdout}`);
   return res.stdout;
 }

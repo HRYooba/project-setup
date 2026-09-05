@@ -7,7 +7,7 @@ description: >
   記録版と現行の skill 版を比較し、更新があれば使い捨て worktree の中で保存フラグから
   apply.mjs を再適用し、要マージの Markdown を統合してから commit → push → 同期 PR を
   作成する（merge はしない）。重複 PR 防止・試行上限・作業ツリー分離はコード担保。
-version: 1.6.0
+version: 1.7.0
 argument-hint: "[対象ディレクトリ（省略時はカレント）]"
 ---
 

@@ -298,6 +298,11 @@ ${stderr}`);
   );
   // 廃止フラグを渡されても止まらず、警告が出力に載る
   assert.match(stdout, /廃止したオプションを無視しました/);
+  // 展開範囲外を「無い」と読まない。ここは sparse-checkout なので Assets/App は展開されず、
+  // 素朴に existsSync すると必ず「存在しません」になる。sync-run は 注意: 行を PR 本文へ
+  // 転記するので、誤報を出すとすべての Unity 同期 PR に嘘の警告が載る。
+  assert.doesNotMatch(stdout, /Assets\/App\/ が存在しません/, "部分展開を「無い」と誤報している");
+  assert.match(stdout, /作業ツリーが部分展開のため/);
 });
 // ---- skill ごとの判定 ----
 // 判定は `skills/<skill>/SKILL.md` の version で行う。hook（lib/sync-setup-drift.mjs）と

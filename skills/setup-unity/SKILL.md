@@ -10,7 +10,7 @@ description: >
   Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れ、CLI の詳細は
   公式 unity-cli skill を `--local` で入れて任せる。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無だけを実行時に AskUserQuestion で確認する。
-version: 3.4.0
+version: 3.5.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 

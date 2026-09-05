@@ -413,7 +413,17 @@ if (needsMerge.length) {
   }
 }
 if (syncState) console.log(`状態ファイル(sync-setup-state.json): ${syncState}`);
-if (!existsSync(join(target, "Assets", "App"))) {
+// 展開範囲外を「無い」と読まない。テンプレ同期は sparse-checkout の worktree の中で apply を
+// 走らせる（Unity リポを全展開すると Windows の MAX_PATH に当たるため）。その worktree に
+// Assets/App は無いので、この検査は**必ず**「存在しません」と言う。sync-run はこの注意行を
+// PR 本文へ転記するので、毎回の同期 PR が嘘を載せることになる（警告を無視する習慣がつく）。
+//
+// 展開範囲は sync-run.mjs が決めるので、部分展開かどうかも呼び手しか知らない。
+// フラグではなく環境変数で受け取る: これは「その実行の性質」であって、状態ファイルへ保存して
+// 再現すべき構成ではない（保存フラグに混ざると、次の適用が理由もなく検査を飛ばす）。
+if (process.env.SYNC_SETUP_SPARSE_WORKTREE === "1") {
+  console.log("注意: 作業ツリーが部分展開のため、Assets/App/ の存在確認は省略しました。");
+} else if (!existsSync(join(target, "Assets", "App"))) {
   console.log("注意: Assets/App/ が存在しません。規約はアプリ本体を Assets/App/ 配下に置く前提です。");
 }
 
