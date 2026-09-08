@@ -3,10 +3,11 @@
 // 判定は lib/sync-setup-drift.mjs（両 hook の正本）。ここは出力だけを持つ。
 //
 // 設計:
-//   - **ここでは同期しない。Claude にも指示しない。** SessionStart の時点でモデルは呼ばれず、
-//     セッションは入力待ちで止まる。ここで additionalContext を積んでも「次に人が何か打つまで」
-//     効かないので、実行の指示は UserPromptSubmit（sync-setup-prompt.mjs）が持つ。
-//     ここは systemMessage だけを出し、人が最初に見る 1 行になる。
+//   - **ここでは同期しない。Claude にも指示しない。** SessionStart はモデルのターンを起こせない。
+//     additionalContext を積んでも「次に人が何か打つまで」効かず、initialUserMessage は対話 TUI では
+//     投入されない（消費側が stream/SDK transport の経路にしかない）。実行の指示は実際にモデルが
+//     動く UserPromptSubmit（sync-setup-prompt.mjs）が持つ。ここは systemMessage だけを出し、
+//     人が最初に見る 1 行になる。
 //   - 実行指示を両方の hook に置かない。二重に走る。
 //   - SessionStart はブロックできない（公式仕様: Can block? = No）。exit 2 でも stderr が
 //     出るだけでセッションは進む。止める設計は取れないし、取らない。
@@ -24,6 +25,6 @@ process.stdout.write(
   JSON.stringify({
     systemMessage:
       `【テンプレート更新】project-setup が更新されています（${drift.summary}）。` +
-      "次のプロンプトで /sync-setup を先に実行します（/sync-setup を手で打っても同じ）。",
+      "次に何か打つと /sync-setup を先に実行します（/sync-setup を手で打っても同じ）。",
   })
 );

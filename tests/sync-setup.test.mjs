@@ -5,8 +5,8 @@
 //   2. setup-github / setup-unity が同じ状態ファイルに各自のキーをマージ（相手を消さない）
 //   3. hook: 状態ファイル無し / 版一致 / ダウングレード方向 / 壊れた JSON → 何も出さない
 //   4. SessionStart hook: 現行版が新しい → systemMessage だけ出す（人へ知らせる役）
-//   5. UserPromptSubmit hook: 最初のプロンプトを updatedInput で包んで /sync-setup を実行させる
-//      （SessionStart ではモデルが呼ばれないため、実行のトリガーはこちらが持つ）
+//   5. UserPromptSubmit hook: 最初のプロンプトへ additionalContext で /sync-setup の実行を指示する
+//      （SessionStart はモデルのターンを起こせないため、実行のトリガーはこちらが持つ）
 //   6. hook: 子プロセスを起こさない（同期は /sync-setup 側で走らせる）
 //   7. hook: SYNC_SETUP_DISABLE=1 で黙る（避難口）
 
@@ -287,8 +287,12 @@ test("hook: SYNC_SETUP_DISABLE=1 なら黙る（避難口）", () => {
 
 
 // ---- UserPromptSubmit hook（実行のトリガー）----
-// SessionStart の時点ではモデルが呼ばれないため、「気づいたのに放置される」を断つのはここ。
-// 最初のプロンプトを updatedInput で包み、ユーザー自身の依頼として /sync-setup を先に走らせる。
+// SessionStart はモデルのターンを起こせないため、「気づいたのに放置される」を断つのはここ。
+// 最初のプロンプトへ additionalContext を添え、用件より先に /sync-setup を走らせる。
+//
+// UserPromptSubmit が受け付けるのは additionalContext / sessionTitle / suppressOriginalPrompt の
+// 3 つだけで、それ以外のキーは検証で黙って捨てられる。届かないのにエラーも出ないため、
+// 「additionalContext 以外を出していない」ことを機械で押さえる。
 
 // prompted 記録は毎回テンポラリへ隔離する（実ホームの ~/.claude/plugins/data を汚さない）。
 function runPromptHook(
@@ -324,18 +328,18 @@ test("prompt hook: 版が一致すれば何も注入しない", () => {
   assert.equal(runPromptHook(target, PLUGIN_VERSION), "");
 });
 
-test("prompt hook: 更新があれば updatedInput で元のプロンプトを包む", () => {
+test("prompt hook: 更新があれば additionalContext で同期を先に指示する", () => {
   const target = tempDir("sync-p-drift-");
   writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
   const out = JSON.parse(runPromptHook(target, "1.3.0", { prompt: "READMEを直して" }));
 
   assert.equal(out.hookSpecificOutput.hookEventName, "UserPromptSubmit");
-  const input = out.hookSpecificOutput.updatedInput;
-  assert.match(input, /\/project-setup:sync-setup/);
-  // 元の依頼を落とさない。落とすとユーザーの用件が消える。
-  assert.match(input, /READMEを直して/);
-  // 書き換えたことを人に知らせる（打っていない文が会話ログに残るため）。
-  assert.match(out.systemMessage, /setup-github v1\.0\.0→v1\.3\.0/);
+  const ctx = out.hookSpecificOutput.additionalContext;
+  assert.ok(ctx.includes("/project-setup:sync-setup"), "同期コマンドを指していない");
+  // 用件より先に走らせる。後回しにすると長い作業の末尾まで到達せず放置される。
+  assert.ok(ctx.includes("先に"), "同期を先に置く指示が無い");
+  // 指示を添えたことを人に知らせる（ユーザーが打っていない指示がモデルへ渡るため）。
+  assert.ok(out.systemMessage.includes("setup-github v1.0.0→v1.3.0"), out.systemMessage);
 });
 
 test("prompt hook: 同じセッションでは 1 回だけ差し込む", () => {
@@ -349,14 +353,20 @@ test("prompt hook: 同じセッションでは 1 回だけ差し込む", () => {
   assert.notEqual(runPromptHook(target, "1.3.0", { promptedJson, sessionId: "s2" }), "");
 });
 
-test("prompt hook: スラッシュコマンドは書き換えず additionalContext で渡す", () => {
-  const target = tempDir("sync-p-slash-");
+test("prompt hook: プロンプトの形に関わらず additionalContext だけで渡す", () => {
+  const target = tempDir("sync-p-shapes-");
   writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
-  // 先頭に文字を足すと /foo や !cmd の展開が壊れるため、updatedInput を使ってはいけない。
-  for (const prompt of ["/code-review", "!git status", "#メモ"]) {
+  // 平文・スラッシュコマンド・bash（!）・メモ（#）で扱いを分けない。分岐すると片側だけ壊れても
+  // 気づけないし、プロンプト本文へ文字を足すと /foo や !cmd の展開が壊れる。
+  for (const prompt of ["READMEを直して", "/code-review", "!git status", "#メモ"]) {
     const out = JSON.parse(runPromptHook(target, "1.3.0", { prompt }));
-    assert.equal(out.hookSpecificOutput.updatedInput, undefined, `${prompt} を書き換えている`);
-    assert.match(out.hookSpecificOutput.additionalContext, /\/project-setup:sync-setup/);
+    assert.ok(out.hookSpecificOutput.additionalContext.includes("/project-setup:sync-setup"), prompt);
+    // additionalContext 以外のキーを出さない。harness が黙って捨てるため、出しても届かない。
+    assert.deepEqual(
+      Object.keys(out.hookSpecificOutput).sort(),
+      ["additionalContext", "hookEventName"],
+      `${prompt} で届かないキーを出している`
+    );
   }
 });
 
