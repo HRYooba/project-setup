@@ -40,4 +40,9 @@ jobs:
       - uses: ./.github/actions/setup-unity-cli
       # --strict で warning も落とす。META_MISSING / META_ORPHAN / GUID_DUPLICATE /
       # CONFLICT_MARKERS はどれもマージ事故の残骸で、放置するとビルドが壊れる。
-      - run: unity projects verify --strict --format github --non-interactive
+      #
+      # 直に `unity projects verify` を撃たずラッパーを通すのは、CLI が Apple のバンドル形式の
+      # フォルダ（.xcframework / .bundle など）の中身まで META_MISSING と報告するため。
+      # 理由と抑止範囲は .github/scripts/unity-verify.mjs のヘッダにある。
+      # ubuntu-latest には node が同梱されているので setup-node は要らない。
+      - run: node .github/scripts/unity-verify.mjs --strict

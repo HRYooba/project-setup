@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { hashAnalyzerSources } from "../analyzers/source-hash.mjs";
 import { APPLY_UNITY, tempDir } from "./helpers.mjs";
+import { insideBundleDir, partitionFindings } from "../skills/setup-unity/templates/project/.github/scripts/unity-verify.mjs";
 /* global process */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,7 @@ const templateRoot = join(here, "..", "skills", "setup-unity", "templates", "pro
 const dist = JSON.parse(readFileSync(join(here, "..", "analyzers", "dist.json"), "utf8"));
 const WORKFLOW = join(".github", "workflows", "unity-ci.yml");
 const CLI_ACTION = join(".github", "actions", "setup-unity-cli", "action.yml");
+const VERIFY_SCRIPT = join(templateRoot, ".github", "scripts", "unity-verify.mjs");
 
 function unityProject() {
   const target = tempDir("setup-unity-project-");
@@ -85,6 +87,7 @@ test("フラグ無しで analyzer と workflow が配置される", () => {
     join("Assets", "Analyzers", "README.md.meta"),
     WORKFLOW,
     CLI_ACTION,
+    join(".github", "scripts", "unity-verify.mjs"),
   ]) {
     assert.ok(existsSync(join(target, f)), `${f} が配置されていない`);
   }
@@ -190,9 +193,50 @@ test("workflow は Editor を起こさない（ライセンスも secret も要�
   assert.doesNotMatch(workflow, /unity test\b/, "CI でテストを走らせている");
   assert.match(
     workflow,
-    /unity projects verify --strict/,
+    /node \.github\/scripts\/unity-verify\.mjs --strict/,
     "プロジェクト整合性の検査が無い（この workflow の唯一の仕事）"
   );
+});
+
+// 誤検知を消すためにラッパーを噛ませた。**噛ませたことで検査が死んでいない**ことを
+// ここで見る（抑止範囲・判定不能時の扱い・exit code）。
+test("verify ラッパーはバンドルフォルダの中身だけを抑止する", () => {
+  // Unity はバンドル形式のフォルダを 1 プラグインとして取り込むので、.meta が付くのは
+  // フォルダ自身だけ。中身の META_MISSING は常に誤検知で、フォルダ自身のそれは本物。
+  assert.equal(insideBundleDir("Assets/P/AVProVideo.xcframework/ios-arm64/Info.plist"), true);
+  assert.equal(insideBundleDir("Assets/P/AVProVideo.xcframework"), false);
+  assert.equal(insideBundleDir("Assets/App/Scripts/Foo.cs"), false);
+  // バンドル名の一部に拡張子が現れるだけのフォルダを巻き込まない。
+  assert.equal(insideBundleDir("Assets/Bundles/Data.json"), false);
+
+  const findings = [
+    { code: "META_MISSING", path: "Assets/P/X.bundle/Contents/Info.plist" },
+    { code: "META_MISSING", path: "Assets/P/X.bundle" },
+    { code: "META_MISSING", path: "Assets/App/Foo.cs" },
+    // .meta 以外は本物の事故なので、バンドルの中でも通す。
+    { code: "CONFLICT_MARKERS", path: "Assets/P/X.bundle/Contents/Info.plist" },
+    { code: "GUID_DUPLICATE", path: "Assets/P/X.bundle/Contents/a.meta" },
+  ];
+  const { kept, suppressed } = partitionFindings(findings);
+  assert.deepEqual(
+    suppressed.map((f) => f.path),
+    ["Assets/P/X.bundle/Contents/Info.plist"]
+  );
+  assert.deepEqual(
+    kept.map((f) => f.code),
+    ["META_MISSING", "META_MISSING", "CONFLICT_MARKERS", "GUID_DUPLICATE"]
+  );
+});
+
+test("verify ラッパーは判定不能を成功にしない", () => {
+  // CLI が失敗した／出力形式が変わったときに exit 0 を返すと、検査があるのに
+  // 何も見ていない状態が緑で通り続ける。unity を PATH から外して撃つ。
+  const res = spawnSync(process.execPath, [VERIFY_SCRIPT, "--strict"], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: tempDir("verify-nopath-"), Path: tempDir("verify-nopath-") },
+  });
+  assert.notEqual(res.status, 0, `判定不能なのに成功した:
+${res.stdout}${res.stderr}`);
 });
 
 test("公式 unity-cli skill は配備先へ入れ、unity が無くても導入は止まらない", () => {

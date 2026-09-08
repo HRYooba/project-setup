@@ -10,7 +10,7 @@ description: >
   Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れ、CLI の詳細は
   公式 unity-cli skill を `--local` で入れて任せる。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無だけを実行時に AskUserQuestion で確認する。
-version: 3.5.0
+version: 3.6.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -32,7 +32,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
    - **CLI 本体はここで入れない。** マシン単位の話なので Step 2.6 が担う（テンプレ同期が開発者のマシンを書き換えないため）
    - **既にあるなら触らない。** 上書きすると、テンプレ同期を走らせたマシンの CLI 版がそのまま配布物になる（その CLI が古ければ skill が古い版へ戻る。自動で・気づかずに）
    - **CLI を上げたときは `/setup-unity` を回さず、その一行だけ撃つ**（`cd <project> && unity skill install claude-code --local --yes`）。CLI の版は `sync-setup-state.json` に記録していないので、テンプレ同期はここでは発火しない
-9. **プロジェクト整合性の GitHub Actions** — `.github/workflows/unity-ci.yml` と `.github/actions/setup-unity-cli/`。`unity projects verify --strict` だけを走らせる（Editor もライセンスも secret も要らず 10 秒で返る）。**テストとコンパイル確認は CI でやらない** — Editor を起こすジョブは 1 回 10 分以上かかり PR ゲートに使えないため、ローカルへ移した。CI に残す理由は git の checkout 側にあり、追跡外の実体を持つ `.meta` のような「clone した人の手元で初めて壊れる」欠陥はここでしか出ない
+9. **プロジェクト整合性の GitHub Actions** — `.github/workflows/unity-ci.yml`、`.github/actions/setup-unity-cli/`、`.github/scripts/unity-verify.mjs`。`unity projects verify --strict` だけをラッパー経由で走らせる（Editor もライセンスも secret も要らず 10 秒で返る。ラッパーを噛ませる理由は下記「CI について」）。**テストとコンパイル確認は CI でやらない** — Editor を起こすジョブは 1 回 10 分以上かかり PR ゲートに使えないため、ローカルへ移した。CI に残す理由は git の checkout 側にあり、追跡外の実体を持つ `.meta` のような「clone した人の手元で初めて壊れる」欠陥はここでしか出ない
 
 ## 前提（満たされていないと skills が動かない）
 
@@ -194,6 +194,12 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
     CI で赤くなる。**CI 側が正しい**
   - **必須チェックに入れてよい**。常に走り skip されないので、パスフィルタ由来の
     「永久に未完了」が起きない（登録するのはリポジトリ側の設定で、このスキルは触らない）
+  - **Apple のバンドル形式フォルダの中身は誤検知なので落としている**。Unity は
+    `.xcframework` / `.bundle` などをフォルダごと 1 プラグインとして取り込み、`.meta` は
+    フォルダ自身にしか付かない。CLI はこれを知らず中の全ファイルを META_MISSING と報告する
+    （実測: AVProVideo 1 つで 45 件）。CLI 側に除外オプションが無いため
+    `.github/scripts/unity-verify.mjs` が JSON を読んで抑止する。抑止件数はログに出る。
+    落とすのは `.meta` の 2 種類だけで、`CONFLICT_MARKERS` などはバンドルの中でも通す
 - **テストはローカルで回す。** 回す順序は
   `CLAUDE.md`（レビューの指摘を反映した後）。到達できる Editor があればそれに走らせ、
   無ければ `unity test` が自分で Editor を起こす
