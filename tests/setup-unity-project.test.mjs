@@ -18,6 +18,7 @@ import { test } from "node:test";
 import { hashAnalyzerSources } from "../analyzers/source-hash.mjs";
 import { APPLY_UNITY, tempDir } from "./helpers.mjs";
 import {
+  bundleCandidates,
   insideBundleDir,
   partitionFindings,
   readExtraExtensions,
@@ -206,13 +207,14 @@ test("workflow は Editor を起こさない（ライセンスも secret も要�
 // 誤検知を消すためにラッパーを噛ませた。**噛ませたことで検査が死んでいない**ことを
 // ここで見る（抑止範囲・判定不能時の扱い・exit code）。
 test("verify ラッパーはバンドルフォルダの中身だけを抑止する", () => {
+  const exts = [".bundle", ".xcframework"];
   // Unity はバンドル形式のフォルダを 1 プラグインとして取り込むので、.meta が付くのは
-  // フォルダ自身だけ。中身の META_MISSING は常に誤検知で、フォルダ自身のそれは本物。
-  assert.equal(insideBundleDir("Assets/P/AVProVideo.xcframework/ios-arm64/Info.plist"), true);
-  assert.equal(insideBundleDir("Assets/P/AVProVideo.xcframework"), false);
-  assert.equal(insideBundleDir("Assets/App/Scripts/Foo.cs"), false);
+  // フォルダ自身だけ。中身の META_MISSING は誤検知で、フォルダ自身のそれは本物。
+  assert.equal(insideBundleDir("Assets/P/AVProVideo.xcframework/ios-arm64/Info.plist", exts), true);
+  assert.equal(insideBundleDir("Assets/P/AVProVideo.xcframework", exts), false);
+  assert.equal(insideBundleDir("Assets/App/Scripts/Foo.cs", exts), false);
   // バンドル名の一部に拡張子が現れるだけのフォルダを巻き込まない。
-  assert.equal(insideBundleDir("Assets/Bundles/Data.json"), false);
+  assert.equal(insideBundleDir("Assets/Bundles/Data.json", exts), false);
 
   const findings = [
     { code: "META_MISSING", path: "Assets/P/X.bundle/Contents/Info.plist" },
@@ -222,7 +224,7 @@ test("verify ラッパーはバンドルフォルダの中身だけを抑止す�
     { code: "CONFLICT_MARKERS", path: "Assets/P/X.bundle/Contents/Info.plist" },
     { code: "GUID_DUPLICATE", path: "Assets/P/X.bundle/Contents/a.meta" },
   ];
-  const { kept, suppressed } = partitionFindings(findings);
+  const { kept, suppressed } = partitionFindings(findings, exts);
   assert.deepEqual(
     suppressed.map((f) => f.path),
     ["Assets/P/X.bundle/Contents/Info.plist"]
@@ -233,23 +235,41 @@ test("verify ラッパーはバンドルフォルダの中身だけを抑止す�
   );
 });
 
-// 配備先はこの workflow を自力で直せない（テンプレ配布物なので次の同期で戻る）。
-// リストに無い形式に当たった配備先が設定ファイルで足せること、そして
-// **足すだけで組み込みリストを無効化できないこと**を見る。
-test("verify ラッパーの抑止リストは配備先が足せる（無効化はできない）", () => {
-  assert.deepEqual(readExtraExtensions('{"extraBundleExtensions":[".Weirdlib"]}'), [".weirdlib"]);
-  assert.deepEqual(readExtraExtensions("{}"), []);
+// **抑止リストは配布しない。** 何がバンドル形式かは配備先の Assets が持つ事実で、
+// plugin 側は確かめられない。憶測で配ると、その中の本物の .meta 欠落を全配備先で
+// 黙って隠す。ここが空でなくなったら、その拡張子を実物で確かめたのか問い直すこと。
+test("verify ラッパーは抑止リストを配布しない（既定は空）", () => {
+  assert.deepEqual(resolveExtensions(null), []);
+  assert.deepEqual(partitionFindings([{ code: "META_MISSING", path: "a/x.bundle/y" }], []).suppressed, []);
+});
+
+test("verify ラッパーの抑止対象は配備先の設定から来る", () => {
+  assert.deepEqual(resolveExtensions('{"extraBundleExtensions":[".Weirdlib"]}'), [".weirdlib"]);
+  assert.deepEqual(resolveExtensions("{}"), []);
   // 壊れた設定を黙って無視すると、書いたつもりの拡張子が効かないまま緑で通り続ける。
   assert.throws(() => readExtraExtensions('{"extraBundleExtensions":"weird"}'));
   assert.throws(() => readExtraExtensions('{"extraBundleExtensions":["weird"]}'));
   assert.throws(() => readExtraExtensions("{"));
+});
 
-  // 設定は「追加」しかできない。置き換えられると配備先が検査を静かに無効化できる。
-  const builtin = resolveExtensions(null);
-  assert.ok(builtin.includes(".xcframework") && builtin.includes(".bundle"), "組み込みリストが薄い");
-  const withExtra = resolveExtensions('{"extraBundleExtensions":[".weirdlib"]}');
-  for (const ext of builtin) assert.ok(withExtra.includes(ext), `${ext} が設定で消えた`);
-  assert.ok(withExtra.includes(".weirdlib"), "追加が効いていない");
+// 抑止リストを配らない代わりに、**落ちたその場で足し方を出す**のが配備先の唯一の導線。
+// 候補が拾えなくなると、誤検知に当たった配備先は doc を読むまで詰む
+// （そして「.meta を作って commit」という実害の出る直し方へ行く）。
+test("verify ラッパーは残った指摘からバンドル候補を拾う", () => {
+  assert.deepEqual(
+    bundleCandidates([
+      { code: "META_MISSING", path: "Assets/P/AVProVideo.xcframework/ios-arm64/libA.a" },
+      { code: "META_MISSING", path: "Assets/P/X.bundle/Contents/Info.plist" },
+    ]),
+    [".bundle", ".xcframework"]
+  );
+  // 末端のファイル拡張子は候補にしない（フォルダの話であって、ファイルの話ではない）。
+  assert.deepEqual(bundleCandidates([{ code: "META_MISSING", path: "Assets/App/Foo.cs" }]), []);
+  // .meta 以外の指摘からは拾わない（抑止の対象外なので足しても解決しない）。
+  assert.deepEqual(
+    bundleCandidates([{ code: "CONFLICT_MARKERS", path: "Assets/P/X.bundle/Contents/a.txt" }]),
+    []
+  );
 });
 
 test("verify ラッパーは判定不能を成功にしない", () => {
