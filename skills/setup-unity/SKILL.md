@@ -200,6 +200,11 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
     （実測: AVProVideo 1 つで 45 件）。CLI 側に除外オプションが無いため
     `.github/scripts/unity-verify.mjs` が JSON を読んで抑止する。抑止件数はログに出る。
     落とすのは `.meta` の 2 種類だけで、`CONFLICT_MARKERS` などはバンドルの中でも通す
+  - **リストに無い形式に当たったら配備先で足せる。** `.github/unity-verify.config.json` に
+    `{ "extraBundleExtensions": [".foo"] }` と置く（テンプレに含まれないファイルなので
+    同期に踏まれない）。**足すだけで組み込みリストは無効化できない。** workflow 本体を
+    プロジェクト側で書き換えても次の同期で戻るので、逃げ道はこの設定ファイルだけ。
+    足した形式は project-setup 側のリストにも入れる価値があるので、伝えてほしい
 - **テストはローカルで回す。** 回す順序は
   `CLAUDE.md`（レビューの指摘を反映した後）。到達できる Editor があればそれに走らせ、
   無ければ `unity test` が自分で Editor を起こす

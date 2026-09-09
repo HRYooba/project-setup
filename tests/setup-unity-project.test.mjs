@@ -17,7 +17,12 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { hashAnalyzerSources } from "../analyzers/source-hash.mjs";
 import { APPLY_UNITY, tempDir } from "./helpers.mjs";
-import { insideBundleDir, partitionFindings } from "../skills/setup-unity/templates/project/.github/scripts/unity-verify.mjs";
+import {
+  insideBundleDir,
+  partitionFindings,
+  readExtraExtensions,
+  resolveExtensions,
+} from "../skills/setup-unity/templates/project/.github/scripts/unity-verify.mjs";
 /* global process */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -226,6 +231,25 @@ test("verify ラッパーはバンドルフォルダの中身だけを抑止す�
     kept.map((f) => f.code),
     ["META_MISSING", "META_MISSING", "CONFLICT_MARKERS", "GUID_DUPLICATE"]
   );
+});
+
+// 配備先はこの workflow を自力で直せない（テンプレ配布物なので次の同期で戻る）。
+// リストに無い形式に当たった配備先が設定ファイルで足せること、そして
+// **足すだけで組み込みリストを無効化できないこと**を見る。
+test("verify ラッパーの抑止リストは配備先が足せる（無効化はできない）", () => {
+  assert.deepEqual(readExtraExtensions('{"extraBundleExtensions":[".Weirdlib"]}'), [".weirdlib"]);
+  assert.deepEqual(readExtraExtensions("{}"), []);
+  // 壊れた設定を黙って無視すると、書いたつもりの拡張子が効かないまま緑で通り続ける。
+  assert.throws(() => readExtraExtensions('{"extraBundleExtensions":"weird"}'));
+  assert.throws(() => readExtraExtensions('{"extraBundleExtensions":["weird"]}'));
+  assert.throws(() => readExtraExtensions("{"));
+
+  // 設定は「追加」しかできない。置き換えられると配備先が検査を静かに無効化できる。
+  const builtin = resolveExtensions(null);
+  assert.ok(builtin.includes(".xcframework") && builtin.includes(".bundle"), "組み込みリストが薄い");
+  const withExtra = resolveExtensions('{"extraBundleExtensions":[".weirdlib"]}');
+  for (const ext of builtin) assert.ok(withExtra.includes(ext), `${ext} が設定で消えた`);
+  assert.ok(withExtra.includes(".weirdlib"), "追加が効いていない");
 });
 
 test("verify ラッパーは判定不能を成功にしない", () => {
