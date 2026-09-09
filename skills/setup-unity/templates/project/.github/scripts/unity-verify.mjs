@@ -25,14 +25,15 @@ import { pathToFileURL } from "node:url";
 
 // Unity の PluginImporter がフォルダごと 1 アセットとして取り込む拡張子。
 // 中身に .meta は生成されない。
-const BUNDLE_DIR_EXTENSIONS = [
-  ".androidlib",
-  ".app",
-  ".bundle",
-  ".framework",
-  ".plugin",
-  ".xcframework",
-];
+//
+// **憶測で増やさない。** 誤って入れた拡張子は、その中の本物の `.meta` 欠落を全配備先で
+// 黙って隠す（この検査が守っているのは「clone した人の手元で初めて壊れる」欠陥なので、
+// 隠れると誰も気づけない）。心当たりがあっても実物で確かめてから足す。確かめる前に
+// 通したい配備先は下記 CONFIG_PATH で自分だけに足せる。
+//   .xcframework / .bundle … 実物で確認（own .meta あり・中に .meta なし）
+//   .framework / .plugin  … 同じ Apple のバンドル形式で、PluginImporter が丸ごと扱う
+// .androidlib と .app は未確認なので入れていない（実物に当たったら確かめて足す）。
+const BUNDLE_DIR_EXTENSIONS = [".bundle", ".framework", ".plugin", ".xcframework"];
 
 // **配備先がここへ足せる逃げ道。** この workflow とスクリプトはテンプレ配布物なので、
 // プロジェクト側で書き換えても次のテンプレ同期で戻る。上のリストに無い形式に当たった
