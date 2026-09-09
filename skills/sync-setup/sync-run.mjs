@@ -97,9 +97,11 @@ function resolveDefaultBranch(repo) {
   return null;
 }
 
-// worktree ディレクトリ名。パスだけから決める（同じリポジトリなら毎回同じ場所を使い、
-// 前回の残骸をそのまま踏み直せる）。
-function worktreeKey(dir) {
+// リポジトリ単位の鍵。パスだけから決める（同じリポジトリなら毎回同じ名前になり、
+// 前回の残骸をそのまま踏み直せる）。worktree ディレクトリ名と、フェーズ間ファイルの
+// ファイル名に使う。**データディレクトリを共有する以上、鍵を持たないファイルは
+// 別リポジトリの同時実行に踏まれる。**
+function repoKey(dir) {
   const norm = resolve(dir).replace(/[\\/]+$/, "");
   const canon = process.platform === "win32" ? norm.toLowerCase() : norm;
   let h = 0;
@@ -171,9 +173,14 @@ const maxAttempts = parseInt(process.env.SYNC_SETUP_MAX_ATTEMPTS || "2", 10);
 const dataDir =
   process.env.SYNC_SETUP_DATA_DIR || join(homedir(), ".claude", "plugins", "data", "project-setup");
 const attemptsPath = process.env.SYNC_SETUP_ATTEMPTS_JSON || join(dataDir, "sync-attempts.json");
-const planPath = process.env.SYNC_SETUP_PLAN_JSON || join(dataDir, "sync-plan.json");
+// **フェーズ間ファイルはリポジトリごとに分ける。** データディレクトリは全配備先で共有される。
+// 単一ファイルに置くと、別リポジトリで同時に走った sync-setup が上書き・削除していく:
+// plan は鍵の照合で気づけるものの publish が落ちて apply からやり直し（試行回数を 1 消費）、
+// notes は照合手段が無いので**別リポジトリの矛盾メモが黙って PR 本文へ載る**。
+const planPath = process.env.SYNC_SETUP_PLAN_JSON || join(dataDir, "plans", `${repoKey(target)}.json`);
 // .md 統合で矛盾が出たとき Claude が書き残すメモ。publish が PR 本文へ転記して消す。
-const notesPath = process.env.SYNC_SETUP_NOTES_MD || join(dataDir, "sync-notes.md");
+// 場所は apply が出力する（ドキュメントに literal を書くと、この式が動いたとき黙って嘘になる）。
+const notesPath = process.env.SYNC_SETUP_NOTES_MD || join(dataDir, "notes", `${repoKey(target)}.md`);
 const repoId = git(target, "remote", "get-url", "origin") || target;
 let attemptKey = `${repoId}@v${currentVersion}`;
 const attempts = readJson(attemptsPath) || {};
@@ -322,7 +329,7 @@ if (phase === "apply") {
   // ---- 使い捨て worktree ----
   // 対象リポジトリの作業ツリーには触らない。ユーザーが Unity Editor で編集中でもブランチが
   // 足元で切り替わらず、`git add -A` が無関係な変更を巻き込むことも構造的に起こらない。
-  const worktree = join(dataDir, "worktrees", `${worktreeKey(target)}-v${currentVersion}`);
+  const worktree = join(dataDir, "worktrees", `${repoKey(target)}-v${currentVersion}`);
   if (existsSync(worktree)) removeWorktree(target, worktree);
   git(target, "worktree", "prune");
   mkdirSync(dirname(worktree), { recursive: true });
@@ -404,6 +411,11 @@ if (phase === "apply") {
       ? "要マージの .md があります。worktree 内のファイルを統合してから publish フェーズへ進んでください。"
       : "要マージの .md はありません。そのまま publish フェーズへ進めます。"
   );
+  if (anyNeedsMerge) {
+    mkdirSync(dirname(notesPath), { recursive: true });
+    console.log(`矛盾メモの書き出し先: ${notesPath}`);
+    console.log("  統合でテンプレと現物が正面から矛盾し、その場で決め切らなかったときだけ書く（publish が PR 本文へ転記して消す）。");
+  }
   console.log(`次: node sync-run.mjs ${target} --phase=publish`);
   process.exit(0);
 }

@@ -175,6 +175,27 @@ test("publish を同期計画なしで叩くとエラー終了する（apply を
   assert.match(stderr, /--phase=apply/);
 });
 
+// データディレクトリは全配備先で共有される。フェーズ間ファイルを単一の名前に置くと、
+// 別リポジトリで同時に走った sync-setup が上書き・削除していく（実際に踏まれて publish が
+// 落ち、apply からやり直して試行回数を 1 消費した）。ここで見るのは計画の既定パス。
+// 矛盾メモも同じ鍵で分かれる（そちらは照合手段が無く、混ざっても気づけない）。
+test("フェーズ間ファイルの既定パスはリポジトリごとに分かれる", () => {
+  const dataDir = tempDir("syncrun-shared-data-");
+  const paths = [];
+  for (const name of ["syncrun-repo-a-", "syncrun-repo-b-"]) {
+    const target = tempDir(name);
+    writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
+    // planPath を渡さない ＝ 既定パスを使わせる。publish は計画が無くて落ち、
+    // 探した場所をエラー文に出す。
+    const { status, stderr } = runSyncRun(target, "1.3.0", { phase: "publish", dataDir });
+    assert.equal(status, 1);
+    const m = stderr.match(/同期計画が見つかりません（(.+?)）/);
+    assert.ok(m, `探した計画のパスが出ていない: ${stderr}`);
+    paths.push(m[1]);
+  }
+  assert.notEqual(paths[0], paths[1], `2 つのリポジトリが同じ計画ファイルを使っている: ${paths[0]}`);
+});
+
 // publish は apply が作った worktree の中で commit する。worktree が消えていれば
 // 対象リポジトリの作業ツリーへフォールバックしてはならない（ユーザーの作業を巻き込むため）。
 test("publish: 計画はあるが worktree が消えていればエラー終了する", () => {
