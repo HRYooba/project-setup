@@ -291,8 +291,53 @@ function readRecordedCli() {
   }
 }
 
+// ---- 公式 unity プラグインが同梱する unity-cli skill を伏せる ----
+// Unity 公式プラグイン（`unity@unity-agent-plugin`）は unity-cli skill を同梱するが、
+// その中身はプラグインのリリース時点で固定される。上の installUnityCliSkill が入れる
+// 「このマシンの CLI が吐いた版」とは別物で、プラグイン側が古いことがある。
+//
+// 両者は潰し合わない。プラグイン skill は `unity:unity-cli` へ名前空間化されるので、
+// `unity-cli`（配備先ローカル）と並んで**両方**モデルへ提示される。どちらを引くかは
+// 決まっていないので、古い方を引いて存在しないフラグや古い手順を返す余地が残る。
+//
+// `skillOverrides` で名指しして伏せる。配備先の settings.json に置くので、Unity 案件
+// だけで効く（他プロジェクトの設定は触らない）。
+//
+// **既に値があるなら上書きしない。** "on" を明示した配備先は、重複を承知で両方見たい
+// という意思表示なので、こちらが黙って戻すと理由の分からない挙動になる。
+const BUNDLED_CLI_SKILL = "unity:unity-cli";
+
+function disableBundledUnityCliSkill() {
+  const p = join(claudeDir, "settings.json");
+  let obj = {};
+  if (existsSync(p)) {
+    try {
+      obj = JSON.parse(readFileSync(p, "utf8").replace(/^\uFEFF/, ""));
+    } catch {
+      return "見送りました（settings.json が不正な JSON です。手で直してから再実行してください）";
+    }
+    if (obj === null || typeof obj !== "object" || Array.isArray(obj)) {
+      return "見送りました（settings.json のトップレベルがオブジェクトではありません）";
+    }
+  }
+  const overrides = obj.skillOverrides;
+  if (overrides !== undefined && (typeof overrides !== "object" || overrides === null || Array.isArray(overrides))) {
+    return "見送りました（settings.json の skillOverrides がオブジェクトではありません）";
+  }
+  const current = overrides?.[BUNDLED_CLI_SKILL];
+  if (typeof current === "string") {
+    return current === "off"
+      ? `設定済み（${BUNDLED_CLI_SKILL}: off）`
+      : `触っていません（${BUNDLED_CLI_SKILL}: ${current} が設定済み。配備先の意思とみなします）`;
+  }
+  obj.skillOverrides = { ...(overrides ?? {}), [BUNDLED_CLI_SKILL]: "off" };
+  writeFileSync(p, JSON.stringify(obj, null, 2) + "\n", "utf8");
+  return `設定しました（${BUNDLED_CLI_SKILL}: off）`;
+}
+
 const cliVersion = unityCliVersion();
 const unityCliSkillState = installUnityCliSkill(cliVersion, readRecordedCli());
+const bundledCliSkillState = disableBundledUnityCliSkill();
 
 // ---- Unity プロジェクト本体へ配るもの（.claude/ の外）----
 // Roslyn analyzer は Assets 配下にあり RoslynAnalyzer ラベルの付いた DLL だけが csc へ渡るため、
@@ -312,7 +357,7 @@ const migratedState = consolidateSyncState(claudeDir);
 if (migratedState) console.log(`状態ファイル: ${migratedState}`);
 
 // ---- 状態ファイル sync-setup-state.json への setup-unity キーの記録 ----
-// このスキルは settings.json に触れず hook も配らない（従来の契約どおり）。同期チェック hook は
+// このスキルが settings.json へ書くのは skillOverrides の 1 キーだけで、hook は配らない。同期チェック hook は
 // setup-github が配る単一の sync-setup-check.mjs が担い、この状態ファイルの全キー（setup-github /
 // setup-unity）を現行の skill 版と比較する。ここでは自分のキー（適用時の skill 版と有効フラグ）
 // だけをマージ更新し、setup-github のキーや未知フィールドは温存する。ヘルパーはこのファイルに閉じる
@@ -378,6 +423,7 @@ if (architectureInherited) {
 }
 console.log("Unity 操作: Unity CLI（方針は CLAUDE.md、使い方は unity-cli skill）");
 console.log(`公式 unity-cli skill: ${unityCliSkillState}`);
+console.log(`公式プラグイン同梱の ${BUNDLED_CLI_SKILL}: ${bundledCliSkillState}`);
 if (droppedFlags.length) {
   console.log(`注意: 廃止したオプションを無視しました: ${droppedFlags.join(" / ")}`);
   console.log(

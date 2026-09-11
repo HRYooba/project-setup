@@ -438,3 +438,49 @@ function walk(dir) {
   }
   return out;
 }
+
+// 公式 unity プラグインも unity-cli skill を同梱する。プラグイン側は `unity:unity-cli` へ
+// 名前空間化されてローカル版と**並んで**提示されるため、伏せないと古い方を引く余地が残る。
+// skillOverrides はその 1 キーだけを名指しする（プラグイン全体は無効化しない）。
+test("同梱の unity:unity-cli を skillOverrides で伏せる", () => {
+  const target = unityProject();
+  runApply(target);
+  const settings = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
+  assert.equal(settings.skillOverrides["unity:unity-cli"], "off");
+});
+
+// settings.json は配備先が育てるファイル。こちらのキーだけ足して、他は触らない。
+test("既存の settings.json の他キーを温存する", () => {
+  const target = unityProject();
+  mkdirSync(join(target, ".claude"), { recursive: true });
+  const p = join(target, ".claude", "settings.json");
+  writeFileSync(p, JSON.stringify({ env: { FOO: "1" }, skillOverrides: { "other:skill": "off" } }), "utf8");
+  runApply(target);
+  const settings = JSON.parse(readFileSync(p, "utf8"));
+  assert.equal(settings.env.FOO, "1");
+  assert.equal(settings.skillOverrides["other:skill"], "off");
+  assert.equal(settings.skillOverrides["unity:unity-cli"], "off");
+});
+
+// "on" を明示した配備先は、重複を承知で両方見たいという意思表示。黙って戻すと
+// 理由の分からない挙動になるので、値があるときは触らない。
+test("既に値があれば上書きしない", () => {
+  const target = unityProject();
+  mkdirSync(join(target, ".claude"), { recursive: true });
+  const p = join(target, ".claude", "settings.json");
+  writeFileSync(p, JSON.stringify({ skillOverrides: { "unity:unity-cli": "on" } }), "utf8");
+  const out = runApply(target);
+  assert.equal(JSON.parse(readFileSync(p, "utf8")).skillOverrides["unity:unity-cli"], "on");
+  assert.match(out, /触っていません/);
+});
+
+// 不正な JSON で導入全体を止めない（他の配置物は決定的に配り切る）。
+test("settings.json が壊れていても導入は完走する", () => {
+  const target = unityProject();
+  mkdirSync(join(target, ".claude"), { recursive: true });
+  const p = join(target, ".claude", "settings.json");
+  writeFileSync(p, "{ broken", "utf8");
+  const out = runApply(target);
+  assert.match(out, /見送りました（settings\.json が不正な JSON です/);
+  assert.equal(readFileSync(p, "utf8"), "{ broken");
+});
