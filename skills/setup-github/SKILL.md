@@ -9,7 +9,7 @@ description: >
   （setup-unity のドリフトもこれが見るので、Unity プロジェクトでも導入が要る）を撒く。
   ブランチ保護の有無と、PR 自動レビュー（Copilot 自動アサイン / watch-pr / resolve-pr /
   AGENTS.md 自動生成）の導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.28.1
+version: 1.29.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -20,7 +20,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ## base（常時。ただしブランチ保護は質問で外せる）
 
 1. **ブランチ保護（既定 ON・質問で外せる）** — `.githooks/pre-push` が保護ブランチ（default branch + develop）への直 push を拒否。保護ブランチは実行時に検出するため repo ごとの設定は不要。Claude Code 利用者は SessionStart hook で `core.hooksPath` が自動設定され、手動 push を含む全ツールの push に効く。質問で「入れない」を選ぶと `--no-pre-push` で導入をスキップし、**配備済みなら pre-push を削除**する（撒く git hook が他に無ければ `core.hooksPath` の自動設定 hook と即時設定も解除する）
-2. **レビュー対象フォルダ設定（残置）** — `.claude/hooks/review-config.json`（`reviewTargets` / `reviewExcludes`）と `.claude/hooks/lib/reviewable-files.mjs` は配布を続ける。**pr-copilot の Copilot 自動アサインの対象判定**に使う唯一のソース（除外デフォルトは `.claude/` `.github/` `.githooks/`。明示指定が無い限り再実行で温存）
+2. **レビュー対象フォルダ設定** — `.claude/hooks/review-config.json`（`reviewTargets` / `reviewExcludes`）と `.claude/hooks/lib/reviewable-files.mjs` を配布する。**レビュー対象範囲の唯一の正本**で、読み手は 2 つある: (a) pr-copilot の Copilot 自動アサイン（`reviewable-files.mjs` がフォルダ＋拡張子で判定）、(b) CLAUDE.md の `/code-review` / `/security-review` 指示（`reviewTargets` をコマンド引数として渡す。拡張子までは絞らない）。除外デフォルトは `.claude/` `.github/` `.githooks/`。明示指定が無い限り再実行で温存する
 3. **code-review 用 hook の撤去** — `pr-code-review-gate.mjs`（PR 作成 gate）と `code-review-effort-nudge.mjs`（effort 差し戻し nudge）は**配らない**。hook で PR 作成を機械的に堰き止める形は取らず、レビュー運用は CLAUDE.md のソフト指示に置く。配備先に残っていれば**再実行時に実体を削除**し、settings.json の登録も解除する
 4. **git-conventions ルール** — skill 同梱の `templates/base/rules/git-conventions.md` を `.claude/rules/` へコピー。ただし**既存があり内容が異なる場合は書かず「要マージ」として報告**し、Claude が現物とテンプレを読んで統合する（Step 2.6）。上書きするとプロジェクト固有のブランチ戦略が消え、スキップするとテンプレ更新が永久に届かないため、どちらも採らない
 5. **create-issue skill** — skill 同梱の `templates/base/skills/create-issue/` を `.claude/skills/` へコピー
@@ -54,7 +54,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 |:---|:---|:---|:---|
 | ブランチ保護 | 保護ブランチ（default branch + develop）への直 push を拒否する `.githooks/pre-push` を入れるか。既定は入れる（Git Flow 前提の推奨構成）。「入れない」を選ぶと導入せず、配備済みなら削除する | 入れる（推奨）/ 入れない | `.githooks/pre-push` の有無 |
 | PR 自動レビュー | Copilot 自動アサイン / watch-pr / resolve-pr / AGENTS.md 自動生成を入れるか。そのリポジトリで Copilot code review が使えるかを判断材料として添える。※導入済み（`after-pr-create.mjs` がある）なら、フラグ無し再実行でも apply.mjs が自動継承する | 入れる / 入れない | `.claude/hooks/after-pr-create.mjs` の有無 |
-| レビュー対象フォルダ | Copilot 自動アサインの対象フォルダを絞るか（ベンダーコードの一括導入 PR に Copilot レビューを付けないための絞り込み）。質問前にリポジトリ構成を見て自作コードのフォルダ候補（例: `src` `shared`、Unity なら `Assets/App`）を挙げる | 候補フォルダ（multiSelect 可）/ 絞らない（全フォルダ対象） | `.claude/hooks/review-config.json` の `reviewTargets` |
+| レビュー対象フォルダ | レビュー対象フォルダを絞るか（ベンダーコードの一括導入 PR にレビューを付けないための絞り込み）。**Copilot 自動アサインと `/code-review` / `/security-review` の両方に効く**旨を添える。質問前にリポジトリ構成を見て自作コードのフォルダ候補（例: `src` `shared`、Unity なら `Assets/App`）を挙げる。Unity プロジェクトでこれから setup-unity を走らせる場合は、`Assets/App` がまだ無くても候補に出す（setup-unity 側でも同じ設定を入れられる） | 候補フォルダ（multiSelect 可）/ 絞らない（全フォルダ対象） | `.claude/hooks/review-config.json` の `reviewTargets` |
 | レビュー除外フォルダ | 対象から常に外すフォルダ。デフォルトは `.claude/` `.github/` `.githooks/`（ツール設定系。setup-github の導入 PR を素通しする）。対象フォルダ指定より優先 | デフォルトのまま / 追加除外あり / 除外なし | `.claude/hooks/review-config.json` の `reviewExcludes` |
 | ブランチ自動削除 | PR マージ後に head ブランチを GitHub が自動削除するか（リポジトリ設定 `delete_branch_on_merge`）。**実行者が admin（`viewerPermission: ADMIN`）のときのみ質問する**（admin 以外は設定を変更できないため質問せず、現在値を Step 3 で報告するに留める）。ローカルに残る gone ブランチの掃除は git-refresh 等の運用側の役割である旨を判断材料として添える | 有効にする / 無効のまま（再実行時は現在値の維持を推奨選択肢に） | Step 1 で取得済みの `deleteBranchOnMerge` |
 
