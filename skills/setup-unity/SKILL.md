@@ -10,7 +10,7 @@ description: >
   Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れ、CLI の詳細は
   公式 unity-cli skill を `--local` で入れて任せる。レイヤードアーキテクチャ規約
   （architecture / class-catalog）の導入有無だけを実行時に AskUserQuestion で確認する。
-version: 3.6.0
+version: 3.7.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -32,7 +32,11 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
    - **CLI 本体はここで入れない。** マシン単位の話なので Step 2.6 が担う（テンプレ同期が開発者のマシンを書き換えないため）
    - **既にあるなら触らない。** 上書きすると、テンプレ同期を走らせたマシンの CLI 版がそのまま配布物になる（その CLI が古ければ skill が古い版へ戻る。自動で・気づかずに）
    - **CLI を上げたときは `/setup-unity` を回さず、その一行だけ撃つ**（`cd <project> && unity skill install claude-code --local --yes`）。CLI の版は `sync-setup-state.json` に記録していないので、テンプレ同期はここでは発火しない
-9. **プロジェクト整合性の GitHub Actions** — `.github/workflows/unity-ci.yml`、`.github/actions/setup-unity-cli/`、`.github/scripts/unity-verify.mjs`。`unity projects verify --strict` だけをラッパー経由で走らせる（Editor もライセンスも secret も要らず 10 秒で返る。ラッパーを噛ませる理由は下記「CI について」）。**テストとコンパイル確認は CI でやらない** — Editor を起こすジョブは 1 回 10 分以上かかり PR ゲートに使えないため、ローカルへ移した。CI に残す理由は git の checkout 側にあり、追跡外の実体を持つ `.meta` のような「clone した人の手元で初めて壊れる」欠陥はここでしか出ない
+9. **公式 unity プラグイン同梱の `unity:unity-cli` を伏せる** — `{target}/.claude/settings.json` の `skillOverrides` へ `"unity:unity-cli": "off"` を入れる。Unity 公式プラグイン（`unity@unity-agent-plugin`）も unity-cli skill を同梱するが、中身はプラグインのリリース時点で固定で、上記 8 が入れる「このマシンの CLI が吐いた版」より古いことがある
+   - **両者は潰し合わない。** プラグイン skill は `unity:unity-cli` へ名前空間化されるので、`unity-cli`（ローカル）と並んで両方モデルへ提示される。どちらを引くかは決まっていないので、伏せないと古い方を引く余地が残る
+   - **配備先の settings.json に置く**ので、効くのは Unity 案件だけ。プラグイン本体（残りの skill 群）は無効化しない
+   - **既に値があるなら上書きしない。** `"on"` を明示した配備先は重複を承知の意思表示とみなす
+10. **プロジェクト整合性の GitHub Actions** — `.github/workflows/unity-ci.yml`、`.github/actions/setup-unity-cli/`、`.github/scripts/unity-verify.mjs`。`unity projects verify --strict` だけをラッパー経由で走らせる（Editor もライセンスも secret も要らず 10 秒で返る。ラッパーを噛ませる理由は下記「CI について」）。**テストとコンパイル確認は CI でやらない** — Editor を起こすジョブは 1 回 10 分以上かかり PR ゲートに使えないため、ローカルへ移した。CI に残す理由は git の checkout 側にあり、追跡外の実体を持つ `.meta` のような「clone した人の手元で初めて壊れる」欠陥はここでしか出ない
 
 ## 前提（満たされていないと skills が動かない）
 
@@ -107,7 +111,8 @@ apply.mjs が次を行う:
   どれもビルド成果物・配布物なので上書きする（**設定ファイルは配らない**ので、配備先が育てる
   ファイルがここに無い ＝ マージ判定が要らない）
 - `.claude/rules/*.md` と `.claude/CLAUDE.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。CLAUDE.md は節を配るので全文一致では判定できず、**節の非空行がすべて配備先にあれば反映済み**とみなす（判定基準がテンプレ本体から導出されるので、別途マーカーを維持しなくてよい）
-- `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時の skill 版 = この SKILL.md の `version:`、と有効フラグ = `--architecture`）をマージ記録する（setup-github のキーは温存）。**このスキルは settings.json に触れず hook も配らない**（従来どおり）。ドリフト検知の hook（SessionStart の `sync-setup-check.mjs` と UserPromptSubmit の `sync-setup-prompt.mjs`）は setup-github が配り、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
+- `{target}/.claude/settings.json` の `skillOverrides` へ `"unity:unity-cli": "off"` をマージする（他キーは温存。既に値があれば触らない。settings.json が不正な JSON なら見送って続行する）
+- `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時の skill 版 = この SKILL.md の `version:`、と有効フラグ = `--architecture`）をマージ記録する（setup-github のキーは温存）。**settings.json へ書くのは `skillOverrides` の 1 キーだけで、hook は配らない**（上記 9）。ドリフト検知の hook（SessionStart の `sync-setup-check.mjs` と UserPromptSubmit の `sync-setup-prompt.mjs`）は setup-github が配り、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
 
 ### Step 2.5: 要マージのファイルを統合する
 

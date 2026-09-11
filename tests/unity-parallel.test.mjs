@@ -105,8 +105,13 @@ test("apply: unity-parallel の skill / スクリプト / agent が配られる"
   ]) {
     assert.ok(existsSync(join(repo, f)), `${f} が配置されていない`);
   }
-  // hook は skill frontmatter に閉じる。settings.json へは登録しない（setup-unity の契約）
-  assert.ok(!existsSync(join(repo, ".claude", "settings.json")), "setup-unity が settings.json を作っている");
+  // hook は skill frontmatter に閉じる。settings.json へは登録しない。
+  // settings.json 自体は skillOverrides のためだけに作られるので、hooks キーが混ざらないことを見る。
+  const settingsPath = join(repo, ".claude", "settings.json");
+  if (existsSync(settingsPath)) {
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    assert.ok(!("hooks" in settings), "setup-unity が settings.json へ hook を登録している");
+  }
   const skill = readFileSync(join(repo, SKILL_DIR, "SKILL.md"), "utf8");
   assert.match(skill, /^hooks:/m, "SKILL.md に hook 登録が無い");
   assert.match(skill, /guard\.mjs/, "hook が guard.mjs を指していない");
