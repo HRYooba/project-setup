@@ -9,8 +9,9 @@ description: >
   撒き、プロジェクト本体へ Roslyn analyzer と整合性検査の GitHub Actions を置く。
   Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れ、CLI の詳細は
   公式 unity-cli skill を `--local` で入れて任せる。レイヤードアーキテクチャ規約
-  （architecture / class-catalog）の導入有無だけを実行時に AskUserQuestion で確認する。
-version: 3.7.0
+  （architecture / class-catalog）の導入有無と、レビュー対象を `Assets/App/` に絞るかを実行時に
+  AskUserQuestion で確認する。
+version: 3.8.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -74,6 +75,7 @@ cat <target>/ProjectSettings/ProjectVersion.txt   # Editor 版（6.0 LTS 以降�
     縮退動作になることを伝える（テスト実行は `unity test` で完走する）
   - **再実行時の現在値**: `.claude/rules/architecture.md` の有無（architecture モード導入済みか）
   - `Assets/App/` の有無
+  - `.claude/hooks/review-config.json` の有無と `reviewTargets` の現在値（無い＝setup-github 未実行）
 
 - **セットアップ質問**: 下表の項目を **AskUserQuestion 1 回にまとめて必ず確認**する。ユーザーからオプションフラグは受け取らない（依頼文に書かれていても、再実行でも質問は省略しない）。回答から Claude が apply.mjs のフラグを組み立てる。**再実行時は現在値を「現在のまま維持」として推奨選択肢の先頭に置く**。質問の直前に、上で調べた現状（CLI の版数・Editor 到達性・Editor 版・現在値・Assets/App の有無）を本文テキストで提示する
 
@@ -81,15 +83,16 @@ cat <target>/ProjectSettings/ProjectVersion.txt   # Editor 版（6.0 LTS 以降�
 |:---|:---|:---|
 | アーキテクチャ規約 | レイヤードアーキテクチャ規約（architecture / class-catalog + レイヤー前提の各規約差し替え）を入れるか | 入れる / 入れない。導入済みリポジトリで「入れない」が選ばれた場合は、巻き戻しに `.claude/rules/architecture.md` / `class-catalog.md` の手動削除が必要な旨を伝えて意思を再確認する（apply.mjs は導入済みなら自動継承するため） |
 | Assets/App（無い場合のみ） | 規約は `Assets/App/` 前提。無いまま続行するか（新規プロジェクトならこれから作ればよい。既存の別ルート構成なら導入後に規約か構成のどちらかを合わせる必要がある） | 続行 / 中止 |
+| レビュー対象フォルダ | レビュー対象を `Assets/App/` に絞るか。**Copilot 自動アサインと `/code-review` / `/security-review` の両方に効く**（外部アセットの一括導入 PR にレビューが付かなくなる）。`review-config.json` が無い場合は setup-github 未実行なので、この質問は出さず、先に setup-github を走らせる必要がある旨を伝える | 絞る（推奨）/ 絞らない |
 
-- 回答 → フラグ変換: アーキテクチャ「入れる」= `--architecture`。analyzer と CI は常時配布なのでフラグは無い
+- 回答 → フラグ変換: アーキテクチャ「入れる」= `--architecture`。レビュー対象「絞る」= `--review-target` / 「絞らない」= `--no-review-target`（どちらも `review-config.json` の `reviewTargets` を書き換える。質問を出さなかった＝config が無い場合はどちらも渡さない）。analyzer と CI は常時配布なのでフラグは無い
 
 ### Step 2: インストール実行
 
 以下を実行する（`{target}` は導入先。省略時はカレント）:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/setup-unity/apply.mjs" {target} [--architecture]
+node "${CLAUDE_PLUGIN_ROOT}/skills/setup-unity/apply.mjs" {target} [--architecture] [--review-target | --no-review-target]
 ```
 
 apply.mjs が次を行う:
