@@ -349,11 +349,12 @@ test("Unity 操作の方針は CLAUDE.md の 2 行だけ（CLI の写しを持�
   assert.match(md, /Unity CLI 経由で行う/, "CLI 経由の方針が消えている");
   assert.match(md, /\.prefab.*手編集しない/, "手編集の禁止が消えている");
 
-  // テストと lint は **Assets/App/ のホワイトリスト**。外部アセットの置き場は数え上げ
+  // テストと lint は **アプリ本体のホワイトリスト**。外部アセットの置き場は数え上げ
   // られないので、除外リストにすると漏れが直せない失敗・指摘になって返ってくる
-  // （analyzer と CI で同じ結論に至っている）。
+  // （analyzer と CI で同じ結論に至っている）。実値は配備時に --app-root が決めるので、
+  // テンプレ側で見るのはトークンの有無。
   for (const line of md.split(/\r?\n/).filter((l) => /^- \*\*(テスト|lint)\*\*/.test(l))) {
-    assert.match(line, /Assets\/App\//, `Assets/App/ に絞られていない: ${line}`);
+    assert.match(line, /\{\{APP_ROOT\}\}/, `アプリ本体の置き場に絞られていない: ${line}`);
   }
   assert.ok(
     !existsSync(
@@ -375,7 +376,7 @@ test("lint-unity の description は自分で起動する条件を書いてい�
   const front = skill.slice(0, skill.indexOf("\n---", 4));
   assert.match(front, /PR を作る前に/, "PR 前に回す条件が description に無い");
   assert.match(front, /依頼を待たずに/, "自分で起動する指示が description に無い");
-  assert.match(front, /Assets\/App\//, "対象が Assets/App/ に絞られていない");
+  assert.match(front, /\{\{APP_ROOT\}\}/, "対象がアプリ本体の置き場に絞られていない");
 });
 
 test("配布 Markdown が指す rules の節は実在する（消した節への参照を残さない）", () => {

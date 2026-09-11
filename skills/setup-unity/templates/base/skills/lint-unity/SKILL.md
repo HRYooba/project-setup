@@ -1,12 +1,12 @@
 ---
 name: lint-unity
 description: >
-  `Assets/App/` 配下のアセット・シーン・Prefab・マテリアル・asmdef を変更したら、PR を作る前に
+  `{{APP_ROOT}}` 配下のアセット・シーン・Prefab・マテリアル・asmdef を変更したら、PR を作る前に
   **ユーザーの依頼を待たずに実行する**。Unity のアセット命名・ヒエラルキー・シーン構成・
   Prefab 整合性・フォルダ構成・SerializeField 参照・asmdef 依存・マテリアルが規約に沿っているかを
   検査してレポートする。範囲は `--scene <名前>` / `--prefabs` / `--assets <パス>` / `--all` で絞れる。
 version: 3.0.0
-paths: Assets/App/**
+paths: {{APP_ROOT}}**
 context: fork
 agent: unity-linter
 ---
@@ -17,7 +17,7 @@ agent: unity-linter
 
 チェック項目と severity は `references/checklist.md` が正。ここは流れだけを定義する。
 
-**対象は `Assets/App/` 配下だけ。** 外部アセットの置き場（`Assets/ThirdParty/`
+**対象は `{{APP_ROOT}}` 配下だけ。** 外部アセットの置き場（`Assets/ThirdParty/`
 `Assets/Plugins/` `Packages/`）は数え上げられないので、除外リストは作らない。
 プロジェクト整合性（`unity projects verify`）は見ない — CI が担う。
 
@@ -28,9 +28,9 @@ agent: unity-linter
 
 ```
 Bash: unity pipeline list --format json
-Bash: git diff --name-only origin/<default>...HEAD -- 'Assets/App'
-Bash: git diff --name-only HEAD -- 'Assets/App'
-Bash: git ls-files --others --exclude-standard -- 'Assets/App'
+Bash: git diff --name-only origin/<default>...HEAD -- '{{APP_ROOT}}'
+Bash: git diff --name-only HEAD -- '{{APP_ROOT}}'
+Bash: git ls-files --others --exclude-standard -- '{{APP_ROOT}}'
 ```
 
 - 到達性は `data.instances[].pipelineServer.isReachable` で決める。**exit code で決めない**
@@ -56,7 +56,7 @@ A/C/F/G/J、`--assets` → A/E/J、`--all` → 全カテゴリ。
 
 ## Step 2: データを取る
 
-**検査するのは Step 1 で検出したファイルだけ。** `Assets/App/` 全体を毎回走査しない
+**検査するのは Step 1 で検出したファイルだけ。** `{{APP_ROOT}}` 全体を毎回走査しない
 （差分に無い違反を報告しても、その PR では直せない）。カテゴリごとの対象はこうなる。
 
 | カテゴリ | 見る範囲 |

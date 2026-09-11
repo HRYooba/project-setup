@@ -1,0 +1,7 @@
+# setup-unity が生成する。手で編集しない（再実行で上書きされる）。
+# 値は setup-unity の --app-root。UnityCodingStandards.Analyzers がここを読み、
+# この 1 行の配下だけを解析する。
+#
+# .editorconfig / .globalconfig を使わないのは、Unity がそれらを C# コンパイラへ
+# 渡さないため。設定を analyzer へ届ける経路が他に無い。
+{{APP_ROOT}}
