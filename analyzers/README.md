@@ -23,6 +23,11 @@
 規則 ID の一覧は `src/UnityCodingStandards.Analyzers/AnalyzerReleases.Unshipped.md` が正本。
 新しい ID をそこへ書き忘れると `RS2008` でビルドが落ちる（一覧が腐らない）。
 
+**解析対象ルートは配備先ごとに選べる。** 既定は `Assets/App/`。setup-unity の `--app-root`
+が `Assets/Analyzers/analyzable-root.txt` を 1 行で書き、`AnalysisScope` がそれを読む。
+**`.editorconfig` / `.globalconfig` を使わないのは上のとおり Unity がコンパイラへ渡さないため**で、
+他に値を届ける経路が無い（ファイルが無い・壊れている場合は既定へ倒す）。
+
 **設定ファイル（`.ruleset` / `.globalconfig`）は配らない。** 既定 severity は Warning 固定。
 Error にすると Unity が Safe Mode へ落ち、命名違反だけで Editor が作業不能になるため、
 配布物としては持たない。

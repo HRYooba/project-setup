@@ -8,7 +8,8 @@
 // Unity 操作の手段は Unity CLI に固定。配備先に OBSOLETE_PATHS のファイルがあれば取り除く。
 // 冪等（再実行安全）。
 //
-// 使い方: node apply.mjs [target-dir] [--architecture] [--review-target | --no-review-target]
+// 使い方: node apply.mjs [target-dir] [--architecture] [--app-root=<パス>]
+//                          [--review-target | --no-review-target]
 //         (target-dir 省略時は cwd)
 //
 // 依存なし（Node 標準のみ / Node 16.7+ の fs.cpSync を使用）。
@@ -66,6 +67,8 @@ const OBSOLETE_PATHS = [
 
 const rawArgs = process.argv.slice(2);
 const KNOWN_FLAGS = new Set(["--architecture", "--review-target", "--no-review-target"]);
+// 値を取るフラグ（`--name=value` 形式のみ受ける）。
+const KNOWN_VALUE_FLAGS = new Set(["--app-root"]);
 const args = [];
 // 廃止したフラグ。配備先の sync-setup-state.json に記録が残っていることがあり、テンプレ同期は
 // それをそのまま渡してくる。ここでエラー終了すると同期が永久に失敗するため、注意を出して捨てて
@@ -87,10 +90,12 @@ for (let i = 0; i < rawArgs.length; i++) {
     args.push(a);
   }
 }
-const unknownFlags = args.filter((a) => a.startsWith("--") && !KNOWN_FLAGS.has(a));
+const unknownFlags = args.filter(
+  (a) => a.startsWith("--") && !KNOWN_FLAGS.has(a) && !KNOWN_VALUE_FLAGS.has(a.split("=")[0])
+);
 if (unknownFlags.length) {
   console.error(
-    `不明なオプション: ${unknownFlags.join(" ")}（使用可能: --architecture / --review-target / --no-review-target）`
+    `不明なオプション: ${unknownFlags.join(" ")}（使用可能: --architecture / --app-root=<パス> / --review-target / --no-review-target）`
   );
   process.exit(1);
 }
@@ -102,6 +107,31 @@ const dropsReviewTarget = args.includes("--no-review-target");
 if (wantsReviewTarget && dropsReviewTarget) {
   console.error("--review-target と --no-review-target は同時に指定できません。");
   process.exit(1);
+}
+
+// アプリ本体の置き場。規約（folder-structure / lint-unity / analyzer）の適用範囲そのもので、
+// テンプレートの `{{APP_ROOT}}` へ差し込む唯一の値。既定は Assets/App/。
+//
+// Unity がコンパイルへ載せるのは Assets/ と Packages/ の下だけで、規約が対象にするのは前者。
+// analyzer 側のマーカー探索も Assets/ セグメントを起点にするため、ここで Assets/ 配下に限る
+// （外すと analyzer だけ黙って既定へ倒れ、lint と食い違う）。
+const APP_ROOT_TOKEN = "{{APP_ROOT}}";
+const DEFAULT_APP_ROOT = "Assets/App/";
+const appRootArg = args.find((a) => a.split("=")[0] === "--app-root");
+const appRoot = normalizeAppRoot(appRootArg ? appRootArg.slice("--app-root=".length) : DEFAULT_APP_ROOT);
+
+function normalizeAppRoot(raw) {
+  const t = String(raw).replace(/\\/g, "/").replace(/^\.\//, "").replace(/^\/+/, "").replace(/\/+$/, "").trim();
+  if (!t) {
+    console.error("--app-root に空のパスは指定できません。");
+    process.exit(1);
+  }
+  if (!/^Assets(\/|$)/i.test(t)) {
+    console.error(`--app-root は Assets/ 配下を指定してください（指定値: ${t}）。`);
+    console.error("  Unity がコンパイルへ載せるのは Assets/ と Packages/ の下だけで、規約が対象にするのは前者です。");
+    process.exit(1);
+  }
+  return `${t}/`;
 }
 const targetArg = args.find((a) => !a.startsWith("--"));
 const target = targetArg ? targetArg : process.cwd();
@@ -164,6 +194,26 @@ for (const layer of layers) {
   }
 }
 
+// テンプレートは `{{APP_ROOT}}` を埋め込んだ形で持ち、配置の直後に実値へ差し替える。
+// 配備先ごとの値をテンプレ本体へ焼き込まないための一手（値を持つのは --app-root だけ）。
+// **rules の突き合わせより前に**やること。置換前の内容と現物を比べると、置き場を変えた
+// 配備先が毎回「要マージ」になる。
+substituteInTree(claudeDir);
+
+/** ディレクトリ配下の Markdown と txt の `{{APP_ROOT}}` を実値へ置き換える。 */
+function substituteInTree(dir) {
+  for (const f of walk(dir)) {
+    if (!/\.(md|txt)$/i.test(f)) continue;
+    const before = readFileSync(f, "utf8");
+    if (!before.includes(APP_ROOT_TOKEN)) continue;
+    writeFileSync(f, substituteAppRoot(before), "utf8");
+  }
+}
+
+function substituteAppRoot(text) {
+  return text.split(APP_ROOT_TOKEN).join(appRoot);
+}
+
 // 取り除く対象は、下の rules 突き合わせより先に消す必要がある（残っていると
 // 「テンプレに無い rules」として要マージ側に回り、消えないまま常時コンテキストに残る）。
 const removedLegacy = [];
@@ -217,7 +267,7 @@ for (const f of readdirSync(rulesDir).filter((n) => n.endsWith(".md"))) {
 // 置換で追いかける書き方はしない（文面を変えるたびに移行コードが増える＝腐る）。
 const claudeMdPath = join(claudeDir, "CLAUDE.md");
 const claudeMdSrc = join(here, "templates", "claude-md.md");
-const claudeMdSection = readFileSync(claudeMdSrc, "utf8");
+const claudeMdSection = substituteAppRoot(readFileSync(claudeMdSrc, "utf8"));
 
 // テンプレは「節」を配るので全文一致では判定できない。節の非空行がすべて配備先にあれば
 // 反映済みとみなす。判定基準がテンプレ本体から導出されるので、別途マーカー文字列を維持
@@ -237,7 +287,12 @@ if (!existsSync(claudeMdPath)) {
 } else if (sectionApplied(readFileSync(claudeMdPath, "utf8"), claudeMdSection)) {
   claudeMdState = "変更なし";
 } else {
-  needsMerge.push({ label: ".claude/CLAUDE.md", dst: claudeMdPath, src: claudeMdSrc });
+  // 置換前のテンプレを渡すと、統合する Claude が `{{APP_ROOT}}` をそのまま書き写す。
+  needsMerge.push({
+    label: ".claude/CLAUDE.md",
+    dst: claudeMdPath,
+    src: stageTemplate("claude-md.md", claudeMdSection),
+  });
   claudeMdState = "要マージ";
 }
 
@@ -356,6 +411,10 @@ const bundledCliSkillState = disableBundledUnityCliSkill();
 // 配備先が育てる余地のあるファイルはここに無い ＝ マージ判定が要らない）。
 const projectStates = [];
 cpSync(projectTemplate, target, { recursive: true });
+// Assets/Analyzers/analyzable-root.txt が analyzer へ --app-root を届ける唯一の経路。
+// .editorconfig / .globalconfig は Unity が C# コンパイラへ渡さないため使えない
+// （analyzers/README.md が正本）。README.md ともども置換が要る。
+substituteInTree(join(target, "Assets", "Analyzers"));
 for (const f of walk(projectTemplate)) {
   projectStates.push(`${relative(projectTemplate, f).split(sep).join("/")}: 配置`);
 }
@@ -368,7 +427,8 @@ projectStates.sort();
 //   - .claude/CLAUDE.md の /code-review / /security-review 指示 → コマンドの対象範囲
 // ファイルが無い（= setup-github 未実行）ときは**作らない**。config だけあっても読み手が
 // 居ないので効かず、あとで setup-github が「温存」と解釈して質問の既定値まで汚す。
-const REVIEW_TARGET = "Assets/App/";
+// レビュー対象は規約の適用範囲と同じ。別々に持つと「lint は見るのにレビューは見ない」ズレが出る。
+const REVIEW_TARGET = appRoot;
 const reviewConfigPath = join(claudeDir, "hooks", "review-config.json");
 
 function updateReviewTargets() {
@@ -420,6 +480,8 @@ const skillVersion = readOwnSkillVersion();
 if (skillVersion) {
   const syncFlags = [];
   if (useArchitecture) syncFlags.push("--architecture");
+  // 既定と同じ値は書かない。既定を変えたときに、保存フラグが古い既定へ固定するのを避ける。
+  if (appRoot !== DEFAULT_APP_ROOT) syncFlags.push(`--app-root=${appRoot}`);
   // レビュー対象の宣言は「触らない」も状態なので、指定があったときだけ記録する。
   // 記録しないと次のテンプレ同期が無指定で走り、配備先の設定は温存される（＝現状維持）。
   if (wantsReviewTarget) syncFlags.push("--review-target");
@@ -478,6 +540,7 @@ console.log(`モード: ${useArchitecture ? "architecture（レイヤードア�
 if (architectureInherited) {
   console.log("注意: 導入済みの architecture 規約を検出したため、--architecture 指定なしでも architecture モードで適用しました（巻き戻り防止）。");
 }
+console.log(`アプリ本体の置き場（--app-root）: ${appRoot}${appRoot === DEFAULT_APP_ROOT ? "（既定）" : ""}`);
 console.log(`レビュー対象フォルダ（review-config.json の reviewTargets）: ${reviewTargetState}`);
 console.log("Unity 操作: Unity CLI（方針は CLAUDE.md、使い方は unity-cli skill）");
 console.log(`公式 unity-cli skill: ${unityCliSkillState}`);
@@ -519,16 +582,16 @@ if (needsMerge.length) {
 if (syncState) console.log(`状態ファイル(sync-setup-state.json): ${syncState}`);
 // 展開範囲外を「無い」と読まない。テンプレ同期は sparse-checkout の worktree の中で apply を
 // 走らせる（Unity リポを全展開すると Windows の MAX_PATH に当たるため）。その worktree に
-// Assets/App は無いので、この検査は**必ず**「存在しません」と言う。sync-run はこの注意行を
+// アプリ本体のフォルダは無いので、この検査は**必ず**「存在しません」と言う。sync-run はこの注意行を
 // PR 本文へ転記するので、毎回の同期 PR が嘘を載せることになる（警告を無視する習慣がつく）。
 //
 // 展開範囲は sync-run.mjs が決めるので、部分展開かどうかも呼び手しか知らない。
 // フラグではなく環境変数で受け取る: これは「その実行の性質」であって、状態ファイルへ保存して
 // 再現すべき構成ではない（保存フラグに混ざると、次の適用が理由もなく検査を飛ばす）。
 if (process.env.SYNC_SETUP_SPARSE_WORKTREE === "1") {
-  console.log("注意: 作業ツリーが部分展開のため、Assets/App/ の存在確認は省略しました。");
-} else if (!existsSync(join(target, "Assets", "App"))) {
-  console.log("注意: Assets/App/ が存在しません。規約はアプリ本体を Assets/App/ 配下に置く前提です。");
+  console.log(`注意: 作業ツリーが部分展開のため、${appRoot} の存在確認は省略しました。`);
+} else if (!existsSync(join(target, ...appRoot.replace(/\/$/, "").split("/")))) {
+  console.log(`注意: ${appRoot} が存在しません。規約はアプリ本体を ${appRoot} 配下に置く前提です。`);
 }
 
 function walk(dir) {
