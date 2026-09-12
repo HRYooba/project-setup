@@ -6,3 +6,6 @@ analyzers/**/obj/
 
 # unity test のレポート（検証時に cwd へ落ちる。--output の既定が cwd 相対）
 test-results.xml
+
+# plugin eval の実行結果（npm run eval のたびに増える。正本は実行そのもの）
+evals/results/

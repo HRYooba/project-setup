@@ -125,3 +125,29 @@ node --test "tests/*.test.mjs"
 Node 側のテストは「ソースを変えて `npm run build:analyzer` を流し忘れていないか」しか見ない。
 
 CI（`.github/workflows/test.yml`）が PR ごとに両方を実行する。
+
+## eval（skill が引かれるかを検査する）
+
+`npm run test` が見るのは apply.mjs 等の中身、`npm run validate` が見るのは manifest の構造で、
+どちらも**「ユーザーのその一言でこの skill が引かれるか」は見ていない**。配布 skill は
+SKILL.md の `description` に書いた発火条件で引かれる設計なので、そこを触った変更はこれまで
+目視だけで通っていた。その層を機械で採るのが `claude plugin eval`:
+
+```
+npm run eval
+```
+
+- ケースは `evals/<ケース名>/`（`prompt.md` ＋ `graders/*.md`）。配布 skill ごとに、その skill を
+  引くはずの一言を 1 ケース置く。**ケースの正本は `evals/` 配下**、実行内容（対象・閾値・上限）の
+  正本は `package.json` の `scripts.eval`。
+- grader は `tool_used: Skill` だけ。**skill を完遂させず、引かれたかどうかだけを見る**。各ケースは
+  `allowed_tools: [Skill]` と最小の `max_turns` で走るため、skill が実作業（Bash / Write）へ進む前に
+  打ち切られる — 「最大ターン到達」は想定どおりの終わり方で、失敗ではない。
+- plugin 無しの baseline arm も走り、**Δ（with − without）** が出る。発火が description のおかげで
+  あって、プロンプトに skill 名が書いてあったからではないことは、この差で分かる。
+- **自分の credential で claude の子プロセスを走らせる有料実行**。費用の上限は `scripts.eval` で
+  切ってある。同じ理由で `--trust-plugin` も入れてある（このリポ自身の plugin を、このリポの
+  npm script から無人で走らせるため）。
+- **CI では走らせていない**。`.github/workflows/test.yml` は lint / test / validate（と analyzer の
+  dotnet test）だけで、eval はローカル専用。credential とコストの運用を決めたうえで別途足す。
+  実行結果が落ちる `evals/results/` は gitignore。
