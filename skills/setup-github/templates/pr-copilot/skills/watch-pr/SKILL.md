@@ -5,7 +5,7 @@ description: >
   レビュー対象外（コード変更なし等）なので自発的に起動しない — 起動すると 30 分の空監視になる。
   1 PR につき 1 回のみ。Monitor で PR のレビューと CI チェックを監視し、両方が出揃ってから
   指摘または CI の失敗があれば resolve-pr を起動する。PR 番号または URL を指定。
-version: 1.7.0
+version: 1.8.0
 argument-hint: [PR番号 or URL]
 ---
 
@@ -68,21 +68,36 @@ PR 作成後に外から返ってくる非同期の結果は 2 系統ある。**
 ## Step 2: Monitor セットアップ
 
 以下のポーリングスクリプトを Monitor ツールで起動する。
-`{owner}`, `{repo}`, `{pr}`, `{start_time}` は Step 1 で取得した値に置換すること。
+`{owner}`, `{repo}`, `{pr}`, `{start_time}` は Step 1 で取得した値に置換する。
+`{attempt}` は初回起動なので `1` を入れる。
 
 ```
 Monitor(
-  description: "PR #{pr} レビュー・CI 監視",
-  persistent: true,
-  timeout_ms: 1000,
+  description: "PR #{pr} レビュー・CI 監視 ({attempt}/5)",
+  timeout_ms: 420000,
   command: <下記スクリプト>
 )
 ```
 
-`persistent: true` でも `timeout_ms` は必須で、**`1000` 未満は書かない**（値は無視されるが
-スキーマ検証が先に走る。`1` を渡していた間は毎回 Invalid tool parameters で落ちていた）。
-監視上限はスクリプト内の `max_checks=60`（30 秒 × 60 = 30 分）。
-**CI が Editor を起動するプロジェクトでは 10〜30 分かかる**ので縮めない。
+**Monitor の watch は必ず deadline を持つ。無期限にするオプションは無い。**
+`timeout_ms` に達すると watch は kill され、Claude へ「再 arm せよ」という通知が届く。
+deadline の上限は **30 分**、**単発 `-p` 実行では 10 分**
+（パラメータ名と上限の正本は Monitor ツール自身の説明文。ここへ写さない）。
+
+したがって 30 分を 1 回の watch で張ることはできない。**6 分の watch を最大 5 回つなぐ**:
+
+| 値 | 意味 |
+|:---|:---|
+| スクリプトの `max_checks=12` | 30 秒 × 12 = **watch 1 回あたり 6 分** |
+| `timeout_ms: 420000` | 7 分。スクリプトの 6 分より長いので**通常はスクリプトが自分で終わる**（deadline kill は `gh` が固まったときの保険）。`-p` の上限 10 分より短いので**通常実行と `-p` で同じ値がそのまま使える** |
+| スクリプトの `max_attempts=5` | 6 分 × 5 = **合計 30 分**。**CI が Editor を起動するプロジェクトでは 10〜30 分かかる**ので縮めない |
+
+**再 arm しても「1 PR につき 1 回のみ」は崩れない。** 再 arm は同じ監視の続きであって、
+resolve-pr を複数回起動することではない。resolve-pr の起動は Step 3 で 1 度だけ。
+
+**再 arm で状態を引き継ぐ必要は無い。** `review` / `checks` は毎回 API から `start_time` 起点で
+判定し直すので、`start_time` さえ変えなければ前の watch で検出済みのレビューもそのまま再現される。
+watch をまたいで引き継ぐのは `{attempt}` だけ。
 
 ### ポーリングスクリプト
 
@@ -91,7 +106,9 @@ owner="{owner}"
 repo="{repo}"
 pr="{pr}"
 start_time="{start_time}"
-max_checks=60
+attempt={attempt}
+max_attempts=5
+max_checks=12
 check=0
 
 review_state="none"    # none / detected / no_comments
@@ -99,7 +116,7 @@ checks_state="pending" # pending / pass / fail / none
 
 while [ $check -lt $max_checks ]; do
   check=$((check + 1))
-  echo "check $check/$max_checks review=$review_state checks=$checks_state" >&2
+  echo "attempt $attempt/$max_attempts check $check/$max_checks review=$review_state checks=$checks_state" >&2
 
   # --- レビュー ---
   if [ "$review_state" = "none" ]; then
@@ -137,16 +154,41 @@ while [ $check -lt $max_checks ]; do
   sleep 30
 done
 
-echo "TIMEOUT|pr=$pr|review=$review_state|checks=$checks_state"
+if [ "$attempt" -lt "$max_attempts" ]; then
+  echo "CONTINUE|pr=$pr|review=$review_state|checks=$checks_state|next_attempt=$((attempt + 1))"
+else
+  echo "TIMEOUT|pr=$pr|review=$review_state|checks=$checks_state"
+fi
 ```
 
-セットアップ完了後、「PR #{pr} のレビュー・CI 監視を開始しました」と出力する。
+**初回（`{attempt}` が `1`）のときだけ**「PR #{pr} のレビュー・CI 監視を開始しました」と出力する。
+再 arm では何も出力しない（同じ監視の続きであって、新しい監視ではない）。
+
+### 再 arm の手順
+
+スクリプトは打ち切るとき、次にどうするかを自分で最終行に出す。**残り回数を頭で数えない。**
+
+| スクリプトの最終行 | 対応 |
+|:---|:---|
+| `RESULT` 行 | 両系統が出揃った。**Step 3 へ** |
+| `CONTINUE` 行（`next_attempt=N` 付き） | **同じスクリプトを `{attempt}` = N に差し替えて再 arm する**。`{start_time}` は初回の値のまま変えない |
+| `TIMEOUT` 行 | 5 回を使い切った。**Step 3 へ**（打ち切りとして扱う） |
+
+`timeout_ms` の deadline が先に来て、上のどれも出ないまま watch が終わった場合
+（Monitor から再 arm を促す通知だけが届く）は `CONTINUE` と同じ扱いにし、
+`{attempt}` を 1 つ進めて再 arm する。ただし `{attempt}` が既に `5` なら `TIMEOUT` と同じ扱いで Step 3 へ。
+
+**これ以上は再 arm しない。** 合計 5 回（30 分）が全体の打ち切り条件で、
+到達したら監視を終える。延長したくなったら `max_attempts` を上げるのであって、
+表の外で追加の watch を張らない。
 
 ---
 
 ## Step 3: 結果に応じた対応
 
-Step 1 で両方が出揃っていた場合は、Monitor を経由せずここへ来る。
+ここへ来るのは 3 経路ある: Step 1 で両方が出揃っていた（Monitor を経由しない）／
+`RESULT` 行を受け取った／`TIMEOUT` 行（＝再 arm 5 回を使い切った）を受け取った。
+`CONTINUE` 行はここへ来ない — Step 2 の再 arm に戻る。
 
 | review | checks | 対応 |
 |:---|:---|:---|
@@ -155,8 +197,9 @@ Step 1 で両方が出揃っていた場合は、Monitor を経由せずここ�
 | `no_comments` | `pass` / `none` | 「レビュー完了・CI 通過、対応不要」と報告して終了 |
 
 `TIMEOUT` の場合は、その時点の `review` / `checks` の値をそのまま報告して終了する
-（`fail` が確定していれば resolve-pr を起動してよい）。
-Monitor の終了通知（stream ended）は無視する。
+（`fail` が確定していれば resolve-pr を起動してよい）。ここでさらに再 arm はしない。
+Monitor の終了通知は、`RESULT` / `TIMEOUT` を受け取った後に届いたものだけ無視する
+（監視はもう終わっている）。それ以外の終了通知は Step 2 の再 arm 表に従う。
 
 ### resolve-pr の起動方法
 
