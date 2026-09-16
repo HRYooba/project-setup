@@ -4,7 +4,7 @@ description: >
   現在の Unity プロジェクトに開発規約一式を導入するセットアップコマンド。ユーザーが
   「Unityセットアップ」「setup-unity」「Unity規約を導入」「このプロジェクトにUnity開発ルールを入れて」
   などと依頼したときに使用する。`.claude/` へ rules（folder-structure / hierarchy /
-  asset-naming / coding-standards）、CLAUDE.md（Unity 操作の方針と、テスト / lint を PR 前に
+  asset-naming / coding-standards）、CLAUDE.md（Unity 操作の方針と、コンパイル確認 / テスト / lint を
   回すタイミング）、skills（lint-unity / unity-parallel）、agents（unity-linter / unity-worker）を
   撒き、プロジェクト本体へ Roslyn analyzer と整合性検査の GitHub Actions を置く。
   公式 unity プラグイン（unity-cli を含む skills / commands / agents）も上流から引いて
@@ -13,7 +13,7 @@ description: >
   Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れる。アプリ本体の置き場（既定 `Assets/App/`）、
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無、レビュー対象を
   そこへ絞るかを実行時に AskUserQuestion で確認する。
-version: 3.11.0
+version: 3.12.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -22,7 +22,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 このコマンドは、対象 Unity プロジェクトに次を**冪等に**インストールする（再実行安全）:
 
 1. **rules** — `folder-structure.md` / `hierarchy.md` / `asset-naming.md` / `coding-standards.md`（**規約の機械チェック**・命名・非同期・Reactive・DI・ドキュメントコメント・エラーハンドリング）
-2. **CLAUDE.md** — Unity 操作の方針 2 行（CLI 経由 / シリアライズファイルを手編集しない）と、テスト・lint を PR 前に回すタイミング。**Unity CLI の rules は配らない**（使い方は下記 8 が配る `unity-cli` skill が持つ）
+2. **CLAUDE.md** — Unity 操作の方針（CLI 経由 / シリアライズファイルを手編集しない）、`.cs` 変更後のコンパイル確認と `UCS` の読み方、テスト・lint を PR 前に回すタイミング。**Unity CLI の rules は配らない**（使い方は下記 8 が配る `unity-cli` skill が持つ）
 3. **lint-unity** — アセット・シーン・Prefab のルール準拠チェック（skill + `unity-linter` agent + チェックリスト）
 4. **unity-parallel** — git worktree で複数の `unity-worker` を並列に動かしつつ、1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す（skill + `lane.mjs`（貸し出し管理）+ `guard.mjs`（PreToolUse hook）+ `unity-worker` agent + `references/protocol.md`）。**この skill は自身の frontmatter で hook を登録する** — 呼び出したセッションでだけ有効になり、`settings.json` には触れない
 5. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
