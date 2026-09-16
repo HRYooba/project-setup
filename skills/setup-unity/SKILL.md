@@ -11,7 +11,7 @@ description: >
   公式 unity-cli skill を `--local` で入れて任せる。アプリ本体の置き場（既定 `Assets/App/`）、
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無、レビュー対象を
   そこへ絞るかを実行時に AskUserQuestion で確認する。
-version: 3.9.0
+version: 3.10.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
