@@ -1,46 +1,83 @@
 #!/bin/sh
-# 保護ブランチ（default branch + develop）への直 push を拒否する pre-push hook。
+# 保護ブランチへの直 push 拒否と、Git LFS の実体アップロードを 1 本で担う pre-push hook。
 # setup-github が配布する。有効化は clone ごとに必要:
 #   git config core.hooksPath .githooks
 # （Claude Code 利用者は .claude/settings.json の SessionStart hook が自動で設定する）
+#
+# LFS をここへ取り込んでいる理由: hook は 1 つの名前につき 1 ファイルしか置けない。
+# core.hooksPath を .githooks に向けている間、git-lfs は自前の pre-push をここへ置こうとして
+# 「Hook already exists」で撤退する（= LFS の実体が上がらないまま push が成功する）。
+# そのため git-lfs 公式が案内する merge 方式（git lfs update --manual）でこちらから呼ぶ。
+#   - `git lfs install` は不要。実行して上のエラーが出るのは正常な状態。
+#   - `git lfs update --force` は打たないこと。この hook ごと上書きされ、保護が消える。
 #
 # - 保護ブランチは実行時に検出する: origin/HEAD の指す default branch + develop
 #   （repo ごとの hardcode をしない。master 運用や develop 無しにも自動対応）
 # - リモートに存在しないブランチの初回 push（repo 初期化時の main 作成等）は許可
 # - 緊急時のスキップ: git push --no-verify
 
-# default branch を検出（origin/HEAD → 無ければ main/master へフォールバック）
-default_branch=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
-if [ -z "$default_branch" ]; then
-  for b in main master; do
-    if git show-ref --verify --quiet "refs/remotes/origin/$b" || git show-ref --verify --quiet "refs/heads/$b"; then
-      default_branch=$b
-      break
-    fi
-  done
+# setup-github の --no-pre-push を選ぶと apply.mjs がこの値を 0 に書き換える。
+# LFS 連鎖は保護の有無と別物なので、0 でも下の LFS 処理は走る。
+BRANCH_PROTECTION=1
+
+# stdin には push 対象の ref 行が流れてくる。一度読むと消えるため、保護判定と
+# git lfs pre-push の両方へ渡せるよう退避する。直接 read すると LFS 側が空を受け取り、
+# 送るものが無いと判断して何もせず成功する（ポインタだけが GitHub へ届く）。
+refs=$(mktemp) || exit 1
+trap 'rm -f "$refs"' EXIT
+cat > "$refs"
+
+# ---- 1. 保護ブランチへの直 push を拒否 ----
+if [ "$BRANCH_PROTECTION" = "1" ]; then
+  # default branch を検出（origin/HEAD → 無ければ main/master へフォールバック）
+  default_branch=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+  if [ -z "$default_branch" ]; then
+    for b in main master; do
+      if git show-ref --verify --quiet "refs/remotes/origin/$b" || git show-ref --verify --quiet "refs/heads/$b"; then
+        default_branch=$b
+        break
+      fi
+    done
+  fi
+
+  # 検出失敗はフェイルオープン（default branch が保護されない）になるため、気付けるよう警告する
+  if [ -z "$default_branch" ]; then
+    echo "pre-push: warning: default branch を特定できませんでした（保護対象が develop のみになっています）。'git remote set-head origin --auto' を実行してください。" >&2
+  fi
+
+  protected="$default_branch develop"
+
+  zero=0000000000000000000000000000000000000000
+
+  # 退避した stdin: <local ref> <local sha> <remote ref> <remote sha> が push 対象ごとに 1 行
+  while read -r local_ref local_sha remote_ref remote_sha; do
+    branch=${remote_ref#refs/heads/}
+    [ "$branch" = "$remote_ref" ] && continue # ブランチ以外（タグ等）は対象外
+    [ "$remote_sha" = "$zero" ] && continue   # リモート新規作成（初回 push）は許可
+    for p in $protected; do
+      [ -z "$p" ] && continue
+      if [ "$branch" = "$p" ]; then
+        echo "pre-push: '$branch' への直 push は禁止されています。作業ブランチから PR を作成してください。" >&2
+        exit 1
+      fi
+    done
+  done < "$refs"
 fi
 
-# 検出失敗はフェイルオープン（default branch が保護されない）になるため、気付けるよう警告する
-if [ -z "$default_branch" ]; then
-  echo "pre-push: warning: default branch を特定できませんでした（保護対象が develop のみになっています）。'git remote set-head origin --auto' を実行してください。" >&2
+# ---- 2. Git LFS の実体アップロード ----
+# 対象が 1 つも無ければ git lfs pre-push 自身が何もせず終わる。ここで「このリポは LFS を
+# 使っているか」を判定しない（判定表を持つと .gitattributes の変更から遅れて腐る）。
+if command -v git-lfs >/dev/null 2>&1; then
+  git lfs pre-push "$@" < "$refs"
+  exit $?
 fi
 
-protected="$default_branch develop"
-
-zero=0000000000000000000000000000000000000000
-
-# stdin: <local ref> <local sha> <remote ref> <remote sha> が push 対象ごとに 1 行
-while read -r local_ref local_sha remote_ref remote_sha; do
-  branch=${remote_ref#refs/heads/}
-  [ "$branch" = "$remote_ref" ] && continue # ブランチ以外（タグ等）は対象外
-  [ "$remote_sha" = "$zero" ] && continue   # リモート新規作成（初回 push）は許可
-  for p in $protected; do
-    [ -z "$p" ] && continue
-    if [ "$branch" = "$p" ]; then
-      echo "pre-push: '$branch' への直 push は禁止されています。作業ブランチから PR を作成してください。" >&2
-      exit 1
-    fi
-  done
-done
+# git-lfs が無いのに LFS 管理ファイルがある構成は、ポインタだけが push されて
+# clone 側が 404 で落ちる。push が成功したように見えてしまうため、ここで止める。
+if git grep -q 'filter=lfs' -- '.gitattributes' '*/.gitattributes' 2>/dev/null; then
+  echo "pre-push: このリポジトリは Git LFS を使っていますが git-lfs が見つかりません。" >&2
+  echo "pre-push: このまま push すると実体が上がらず、clone 側で checkout が失敗します。git-lfs を導入してください。" >&2
+  exit 2
+fi
 
 exit 0
