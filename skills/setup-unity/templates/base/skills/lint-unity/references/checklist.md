@@ -32,7 +32,7 @@
 - A10: **WARNING** — VisualEffect (`.vfx`) のファイル名が `VFX_` プレフィックスを持っているか
 - A11: **WARNING** — Timeline (`.playable`) のファイル名が `TL_` プレフィックスを持っているか
 - A12: **WARNING** — プレフィックス以降の名称が `PascalCase` か
-- A13: **INFO** — 複数ある同種アセットに連番サフィックス (`_01`, `_02`) が付いているか
+- A13: **INFO** — 検出したアセットと同じフォルダ内に同種アセットが複数あるとき、連番サフィックス (`_01`, `_02`) が付いているか
 
 ### プレフィックスマッピング
 
@@ -89,7 +89,6 @@ asset-naming.md を編集し、必要ならこの対応表と上の A 項目を�
   - Materials → `{{APP_ROOT}}Materials/`
   - Animations → `{{APP_ROOT}}Animations/`
 - E2: **WARNING** — Scripts フォルダ内にスクリプト以外のファイルが混入していないか
-- E3: **INFO** — 空フォルダが残っていないか
 
 ## [F] Prefab Integrity (Prefab 整合性) — Editor: 必須
 
@@ -126,4 +125,3 @@ asset-naming.md を編集し、必要ならこの対応表と上の A 項目を�
 - J1: **ERROR** — Renderer の Material が `Missing` になっていないか
 - J2: **ERROR** — Material のシェーダーが `Hidden/InternalErrorShader` (ピンク) になっていないか
 - J3: **WARNING** — Material のテクスチャスロットに Missing テクスチャがないか
-- J4: **INFO** — 未使用の Material がプロジェクトに残っていないか
