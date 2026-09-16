@@ -5,7 +5,7 @@ description: >
   テンプレ更新を検知した hook が最初のプロンプトへ差し込んだとき、およびユーザーが「sync-setup」
   「テンプレ同期」「テンプレを最新に追随」などと依頼したときに使う。
   記録版と現行の skill 版を比較し、更新があれば使い捨て worktree の中で保存フラグから
-  apply.mjs を再適用し、要マージの Markdown を統合してから commit → push → 同期 PR を
+  apply.mjs を再適用し、要マージのファイルを統合してから commit → push → 同期 PR を
   作成する（merge はしない）。重複 PR 防止・試行上限・作業ツリー分離はコード担保。
 version: 1.7.0
 argument-hint: "[対象ディレクトリ（省略時はカレント）]"
@@ -17,11 +17,11 @@ project-setup のテンプレート更新に対象リポジトリを追随させ
 `sync-run.mjs` にあり、重複 PR 防止・試行上限・merge 禁止・作業ツリー分離を**コードで担保**する。
 
 **このスキルはユーザーのセッションで走る。** 裏で別プロセスの Claude には走らせない。
-進行も判断も会話に出るのが正しい状態で、要マージ .md の統合で矛盾が出たらその場で聞ける。
+進行も判断も会話に出るのが正しい状態で、要マージの統合で矛盾が出たらその場で聞ける。
 
-実行は `--phase=apply` → **要マージの Markdown を統合** → `--phase=publish` の 3 段。
-`apply.mjs` は `rules/*.md` と `CLAUDE.md` を書かず「要マージ」として報告するだけなので、
-commit まで一息に走らせると .md の更新が反映されないまま PR が出る。Claude の判断を要するのは
+実行は `--phase=apply` → **要マージのファイルを統合** → `--phase=publish` の 3 段。
+`apply.mjs` は配備先が育てる前提のファイルを書かず「要マージ」として報告するだけなので、
+commit まで一息に走らせるとその更新が反映されないまま PR が出る。Claude の判断を要するのは
 この統合工程だけで、それ以外（ガード・worktree・commit・PR）はすべてコード側で完結する。
 
 ## 前提
@@ -65,11 +65,11 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/sync-setup/sync-run.mjs" {target} --phase=app
 
 途中で終了した（「同期不要」「既に同期 PR が存在」「試行上限」）場合は、その旨を伝えて終了する。
 
-### Step 2.5: 要マージの Markdown を統合する
+### Step 2.5: 要マージのファイルを統合する
 
-apply フェーズの出力に「要マージ」節があれば、`${CLAUDE_PLUGIN_ROOT}/skills/md-merge-contract.md`
+apply フェーズの出力に「要マージ」節があれば、`${CLAUDE_PLUGIN_ROOT}/skills/merge-contract.md`
 を Read し、そこに書かれた手順と判断基準に従って各ファイルを統合する。**この工程を飛ばすと
-テンプレの .md 更新が届かないまま PR が出る。**「要マージ」節が無ければ何もしない。
+テンプレ更新が届かないまま PR が出る。**「要マージ」節が無ければ何もしない。
 
 対象は **worktree 側のパス**（apply の出力に載っている）。対象リポジトリの作業ツリーを編集しない。
 

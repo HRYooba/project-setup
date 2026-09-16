@@ -598,16 +598,53 @@ const pluginOverridesState = disablePluginSkills(
 // ---- Unity プロジェクト本体へ配るもの（.claude/ の外）----
 // Roslyn analyzer は Assets 配下にあり RoslynAnalyzer ラベルの付いた DLL だけが csc へ渡るため、
 // 置き場所と .meta が動作条件そのものになる。PR ゲートの workflow は .github/ へ。
-// どちらもビルド成果物・配布物なので無条件に上書きする（設定ファイルは配らないので、
-// 配備先が育てる余地のあるファイルはここに無い ＝ マージ判定が要らない）。
+// analyzer 一式と verify スクリプトはビルド成果物・配布物なので無条件に上書きする。
+//
+// **workflow だけは rules/*.md と同じ要マージ扱いにする。** CI の走らせ方には配備先の事情が
+// 乗る（LFS を引くか・トリガーするブランチ・runner）のに、verify スクリプトにおける
+// .github/unity-verify.config.json のような逃がし場所が無く、YAML を直接書き換える以外に
+// 手が無い。無条件に上書きすると、その改変が同期のたびに黙って巻き戻る。
+const PROJECT_MERGE_PATHS = [".github/workflows/unity-ci.yml"];
+for (const rel of PROJECT_MERGE_PATHS) {
+  if (existsSync(join(projectTemplate, ...rel.split("/")))) continue;
+  console.error(`PROJECT_MERGE_PATHS がテンプレに無いパスを指しています: ${rel}`);
+  process.exit(1);
+}
+
 const projectStates = [];
+// 適用前の現物。cpSync が無条件に上書きするので、比較用にここで退避しておく。
+const projectBefore = new Map();
+for (const rel of PROJECT_MERGE_PATHS) {
+  const p = join(target, ...rel.split("/"));
+  if (existsSync(p)) projectBefore.set(rel, readFileSync(p, "utf8"));
+}
+
 cpSync(projectTemplate, target, { recursive: true });
 // Assets/Analyzers/analyzable-root.txt が analyzer へ --app-root を届ける唯一の経路。
 // .editorconfig / .globalconfig は Unity が C# コンパイラへ渡さないため使えない
 // （analyzers/README.md が正本）。README.md ともども置換が要る。
 substituteInTree(join(target, "Assets", "Analyzers"));
+
+// この時点の現物 ＝ テンプレが最終的に書きたい内容。退避分と差があるものだけ書き戻す。
+const projectMergeStates = new Map();
+for (const rel of PROJECT_MERGE_PATHS) {
+  const p = join(target, ...rel.split("/"));
+  const wanted = readFileSync(p, "utf8");
+  const before = projectBefore.get(rel);
+  if (before === undefined) {
+    projectMergeStates.set(rel, "配置");
+  } else if (before === wanted) {
+    projectMergeStates.set(rel, "変更なし");
+  } else {
+    writeFileSync(p, before, "utf8"); // apply.mjs は書かない（現物を維持する）
+    needsMerge.push({ label: rel, dst: p, src: stageTemplate(rel.split("/").join("-"), wanted) });
+    projectMergeStates.set(rel, "要マージ");
+  }
+}
+
 for (const f of walk(projectTemplate)) {
-  projectStates.push(`${relative(projectTemplate, f).split(sep).join("/")}: 配置`);
+  const rel = relative(projectTemplate, f).split(sep).join("/");
+  projectStates.push(`${rel}: ${projectMergeStates.get(rel) ?? "配置"}`);
 }
 projectStates.sort();
 

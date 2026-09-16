@@ -688,3 +688,50 @@ test("settings.json が壊れていても導入は完走する", () => {
   assert.match(out, /見送りました（settings\.json が不正な JSON です/);
   assert.equal(readFileSync(p, "utf8"), "{ broken");
 });
+
+// CI の走らせ方には配備先の事情が乗る（LFS を引くか・トリガー・runner）。無条件に上書きすると
+// その改変が同期のたびに黙って巻き戻り、配備先は理由の説明がないまま同じ修正を繰り返す。
+test("配備先が書き換えた workflow は上書きせず要マージにする", () => {
+  const target = unityProject();
+  runApply(target);
+
+  const p = join(target, WORKFLOW);
+  const edited = readFileSync(p, "utf8").replace("lfs: false", "lfs: true");
+  writeFileSync(p, edited, "utf8");
+
+  const out = runApply(target);
+  assert.equal(readFileSync(p, "utf8"), edited, "配備先の改変が巻き戻された");
+  assert.match(out, /\.github\/workflows\/unity-ci\.yml: 要マージ/);
+  assert.match(out, /要マージ（/);
+});
+
+// 差が無いのに要マージへ回すと、毎回の同期 PR が人の判断を要求する（警告が無視される）。
+test("workflow が同じなら要マージにしない", () => {
+  const target = unityProject();
+  runApply(target);
+  const out = runApply(target);
+  assert.match(out, /\.github\/workflows\/unity-ci\.yml: 変更なし/);
+  assert.doesNotMatch(out, /要マージ（/);
+});
+
+// verify スクリプトは抑止リストを .github/unity-verify.config.json へ逃がしてあるので、
+// 本体を書き換える理由が無い。配布物として上書きし、検査ロジックの修正を全配備先へ届ける。
+test("verify スクリプトの改変は上書きで戻る", () => {
+  const target = unityProject();
+  runApply(target);
+
+  const p = join(target, ".github", "scripts", "unity-verify.mjs");
+  writeFileSync(p, "// 配備先の改変\n", "utf8");
+
+  const out = runApply(target);
+  assert.notEqual(readFileSync(p, "utf8"), "// 配備先の改変\n", "上書きされていない");
+  assert.doesNotMatch(out, /要マージ（/);
+});
+
+// この検査が読むのは .meta と GUID と conflict marker で、LFS の実体は要らない。実体を引くと
+// 毎 PR で LFS の帯域（課金対象）をアセットの総量だけ消費する。戻すなら意図的な決定として戻す。
+test("checkout は LFS の実体を引かない", () => {
+  const workflow = readFileSync(join(templateRoot, WORKFLOW), "utf8");
+  assert.match(workflow, /^\s*lfs: false$/m, "checkout が LFS の実体を引く形になっている");
+  assert.doesNotMatch(workflow, /^\s*lfs: true$/m);
+});

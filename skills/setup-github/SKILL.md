@@ -106,7 +106,7 @@ gh repo edit {nameWithOwner} --delete-branch-on-merge=false   # 無効へ戻す
 
 ### Step 2.6: 要マージの Markdown を統合する
 
-apply.mjs の出力に「要マージ」節があれば、`${CLAUDE_PLUGIN_ROOT}/skills/md-merge-contract.md`
+apply.mjs の出力に「要マージ」節があれば、`${CLAUDE_PLUGIN_ROOT}/skills/merge-contract.md`
 を Read し、そこに書かれた手順と判断基準に従って各ファイルを統合する。**この工程を飛ばすと
 テンプレ更新がその配備先に届かない。**「要マージ」節が無ければ何もしない。
 
