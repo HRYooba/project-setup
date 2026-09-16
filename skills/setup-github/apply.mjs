@@ -2,10 +2,15 @@
 //
 // 対象プロジェクトに GitHub 開発フロー一式を撒く。冪等（再実行安全）。
 //
-//   base（常時。ただし pre-push は既定 ON で --no-pre-push で外せる）:
-//     - .githooks/pre-push（保護ブランチへの直 push 拒否。全ツール対象・実行時にブランチ検出。
-//       既定 ON。--no-pre-push で opt-out。配備済みの場合は削除して選択を貫徹し、撒く githook が
-//       他に無ければ core.hooksPath も解除する）
+//   base（常時）:
+//     - .githooks/（core.hooksPath の指す hook 一式。中身は templates/base/githooks から導出）
+//       - pre-push: 保護ブランチへの直 push 拒否（実行時にブランチ検出）＋ Git LFS の実体
+//         アップロード。--no-pre-push を選ぶと保護部分だけ BRANCH_PROTECTION=0 で止め、
+//         LFS 連鎖は残す（ファイルごと消すと LFS が黙って壊れるため削除はしない）
+//       - post-checkout / post-commit / post-merge: Git LFS への委譲のみ
+//       LFS を取り込んでいる理由: core.hooksPath を .githooks へ向けると git-lfs は自前の
+//       hook をここへ置こうとし、既存ファイルがあると撤退する。結果ポインタだけが push され、
+//       clone 側が 404 で落ちる。git-lfs 公式が案内する merge 方式でこちらから呼ぶ
 //     - .claude/hooks/lib/reviewable-files.mjs + review-config.json（Copilot 自動アサインの
 //       対象判定に使う）
 //     - .claude/rules/git-conventions.md と .claude/CLAUDE.md（前者は templates/base/rules、
@@ -33,9 +38,10 @@
 //   (target-dir 省略時は cwd)
 //   --pr-copilot: PR 自動レビュー一式を入れる。省略しても配備済み（after-pr-create.mjs が
 //     ある）なら自動継承する（base のみ再実行で pr-copilot が黙って剥がれる巻き戻りを防ぐ）。
-//   --no-pre-push: ブランチ保護 pre-push を入れない（既定は入れる）。配備済みなら削除する。
-//     自動継承はしない（既定 ON なのでフラグ無し再実行で入り直す。opt-out の維持は sync-state の
-//     記録フラグ経由でテンプレ同期の再適用へ引き継がれる）。
+//   --no-pre-push: ブランチ保護を入れない（既定は入れる）。pre-push は BRANCH_PROTECTION=0 で
+//     配備され、Git LFS 連鎖だけが残る（ファイルは消さない）。自動継承はしない（既定 ON なので
+//     フラグ無し再実行で入り直す。opt-out の維持は sync-state の記録フラグ経由でテンプレ同期の
+//     再適用へ引き継がれる）。
 //   --review-targets: レビュー対象フォルダ（カンマ区切り）。配備先の
 //     .claude/hooks/review-config.json へ書き込む（reviewable-files.mjs がこれを読む）。
 //     ここに無いフォルダのコードは Copilot アサインの対象外（ベンダーコード導入
@@ -50,7 +56,7 @@
 // 完結する（外部モジュールを import しない＝単体コピーで動く）。
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { consolidateSyncState } from "../sync-setup/state.mjs";
@@ -74,10 +80,15 @@ if (unknownFlags.length) {
   );
   process.exit(1);
 }
-// ブランチ保護 pre-push は既定 ON。--no-pre-push で opt-out する（配備済みなら削除して選択を貫徹）。
+// ブランチ保護は既定 ON。--no-pre-push で opt-out する（pre-push は残し BRANCH_PROTECTION=0 にする）。
 // pr-copilot と違い自動継承はしない（既定 ON なのでフラグ無し再実行で常に入り直す。opt-out を
 // 維持したいときは sync-state に記録された --no-pre-push がテンプレ同期の再適用へ引き継がれる）。
 const prePush = !args.includes("--no-pre-push");
+// 撒く githook の一覧はテンプレートディレクトリから導出する（手で並べると
+// templates/base/githooks へファイルを足したときに黙ってズレる）。
+const GITHOOK_FILES = readdirSync(join(templatesDir, "base", "githooks"))
+  .sort()
+  .map((f) => `.githooks/${f}`);
 // pr-copilot は明示指定 or 配備済み（after-pr-create.mjs がある）なら自動継承する。
 // base のみで再実行すると lib だけ最新化され、それを import する pr-copilot hook が
 // 更新されないまま残ってバージョンスキュー（import エラー等）を起こすため、剥がさない。
@@ -330,15 +341,25 @@ writeFileSync(
 );
 copied.push(".claude/hooks/review-config.json");
 
-// ブランチ保護 pre-push（既定 ON）。opt-out（--no-pre-push）時は配備済みファイルを削除する。
-// 削除の stage は Step 6 の git ブロックで行う（コミットに乗せるため）。
+// .githooks/ は常に配る。Git LFS が使う 4 hook（pre-push / post-checkout / post-commit /
+// post-merge）が入っているため、ブランチ保護の opt-out で配備ごと止めてはいけない。
+// core.hooksPath を .githooks へ向けている間、git-lfs は自前の hook をここへ置こうとして
+// 既存ファイルがあると撤退する（= LFS の実体が上がらないまま push が成功する）。
+// --no-pre-push のときは pre-push を消さず、BRANCH_PROTECTION を 0 にして保護部分だけ止める。
+cpSync(join(templatesDir, "base", "githooks"), join(target, ".githooks"), { recursive: true });
+copied.push(...GITHOOK_FILES);
 const prePushDst = join(target, ".githooks", "pre-push");
-if (prePush) {
-  cpSync(join(templatesDir, "base", "githooks"), join(target, ".githooks"), { recursive: true });
-  copied.push(".githooks/pre-push");
-} else if (existsSync(prePushDst)) {
-  rmSync(prePushDst);
-  removed.push(".githooks/pre-push（ブランチ保護 opt-out）");
+if (!prePush) {
+  const before = readFileSync(prePushDst, "utf8");
+  const after = before.replace(/^BRANCH_PROTECTION=1$/m, "BRANCH_PROTECTION=0");
+  if (after === before) {
+    warnings.push(
+      ".githooks/pre-push のブランチ保護を無効化できませんでした（テンプレートに BRANCH_PROTECTION=1 の行が見つかりません）"
+    );
+  } else {
+    writeFileSync(prePushDst, after);
+    removed.push(".githooks/pre-push のブランチ保護（--no-pre-push。LFS 連鎖は有効のまま）");
+  }
 }
 
 // .githooks/ 配下（pre-push / pr-copilot の pre-commit 等）を撒く構成のときだけ、
@@ -589,28 +610,20 @@ if (settingsReadable) {
     owns: (cmd) => cmd.includes("code-review-effort-nudge.mjs"),
   });
 
-  // core.hooksPath 自動設定は「撒く githook がある」構成でだけ登録する。pre-push を opt-out し
-  // pr-copilot も入れない構成では .githooks/ が空になるため、自分が撒いた設定 hook を登録解除する
-  // （空 dir を指す無意味な hook を残さない。他ツールの core.hooksPath 設定には触れない）。
-  if (prePush || prCopilot) {
-    register("SessionStart", {
-      label: "core.hooksPath",
-      // 完全一致のみ「自分」とみなす。core.hooksPath を含む別コマンド（ユーザーの独自設定）は
-      // conflicts で検出して上書きせずスキップする。
-      owns: (cmd) => cmd.trim() === "git config core.hooksPath .githooks",
-      conflicts: (cmd) => cmd.includes("core.hooksPath"),
-      conflictWarn:
-        "SessionStart に既存の core.hooksPath 設定 hook があるため上書きしませんでした。手動で .githooks への設定を確認してください",
-      entry: {
-        hooks: [{ type: "command", command: "git config core.hooksPath .githooks", timeout: 10 }],
-      },
-    });
-  } else {
-    deregister("SessionStart", {
-      label: "core.hooksPath",
-      owns: (cmd) => cmd.trim() === "git config core.hooksPath .githooks",
-    });
-  }
+  // .githooks/ には常に LFS 連鎖 hook が入るため、core.hooksPath の自動設定も常に登録する
+  // （ブランチ保護を opt-out しても hook 自体は撒かれる）。
+  register("SessionStart", {
+    label: "core.hooksPath",
+    // 完全一致のみ「自分」とみなす。core.hooksPath を含む別コマンド（ユーザーの独自設定）は
+    // conflicts で検出して上書きせずスキップする。
+    owns: (cmd) => cmd.trim() === "git config core.hooksPath .githooks",
+    conflicts: (cmd) => cmd.includes("core.hooksPath"),
+    conflictWarn:
+      "SessionStart に既存の core.hooksPath 設定 hook があるため上書きしませんでした。手動で .githooks への設定を確認してください",
+    entry: {
+      hooks: [{ type: "command", command: "git config core.hooksPath .githooks", timeout: 10 }],
+    },
+  });
 
   register("SessionStart", {
     label: "sync-setup-check.mjs",
@@ -714,29 +727,14 @@ if (skillVersion) {
 // ---- 6. git 操作: 実行者の clone へ即時 opt-in + pre-push の exec bit ----
 const gitStates = [];
 if (git("rev-parse", "--is-inside-work-tree") === "true") {
-  if (prePush || prCopilot) {
-    gitStates.push(
-      git("config", "core.hooksPath", ".githooks") !== null
-        ? "core.hooksPath=.githooks を設定しました（この clone で git hook が有効）"
-        : "core.hooksPath の設定に失敗しました"
-    );
-  } else {
-    // 撒く githook が無い構成: 自分が設定した .githooks 指定だけ外す（他値・未設定は触らない）。
-    const cur = git("config", "core.hooksPath");
-    if (cur === ".githooks") {
-      gitStates.push(
-        git("config", "--unset", "core.hooksPath") !== null
-          ? "core.hooksPath（.githooks）を解除しました（撒く git hook が無いため）"
-          : "core.hooksPath の解除に失敗しました"
-      );
-    }
-  }
+  gitStates.push(
+    git("config", "core.hooksPath", ".githooks") !== null
+      ? "core.hooksPath=.githooks を設定しました（この clone で git hook が有効）"
+      : "core.hooksPath の設定に失敗しました"
+  );
   // mac/linux の clone で hook が実行可能になるよう、撒いた hook に index の exec bit を立てる。
   // 副作用として対象 hook が stage される。
-  const hookFiles = [
-    ...(prePush ? [".githooks/pre-push"] : []),
-    ...(prCopilot ? [".githooks/pre-commit"] : []),
-  ];
+  const hookFiles = [...GITHOOK_FILES, ...(prCopilot ? [".githooks/pre-commit"] : [])];
   for (const hf of hookFiles) {
     if (git("add", hf) !== null && git("update-index", "--chmod=+x", hf) !== null) {
       gitStates.push(`${hf} に exec bit を付与しました（stage されています）`);
@@ -766,7 +764,9 @@ console.log(`インストール先: ${claudeDir}`);
 console.log(
   `モード: base${prCopilot ? " + pr-copilot" : ""}${prCopilotInherited ? "（pr-copilot は配備済みを自動継承）" : ""}`
 );
-console.log(`ブランチ保護 pre-push: ${prePush ? "有効" : "無効（--no-pre-push）"}`);
+console.log(
+  `ブランチ保護: ${prePush ? "有効" : "無効（--no-pre-push。pre-push は LFS 連鎖のため残す）"}`
+);
 console.log(
   `レビュー対象フォルダ: ${
     effectiveTargets.length

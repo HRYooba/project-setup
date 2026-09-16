@@ -1,0 +1,14 @@
+#!/bin/sh
+# Git LFS の post-merge を呼ぶだけの hook。setup-github が配布する。
+#
+# core.hooksPath を .githooks に向けている間、git-lfs は自前の hook をここへ置こうとして
+# 既存ファイルがあると撤退する。所有者が git-lfs と setup-github で混ざらないよう、
+# LFS が使う 4 つ（pre-push / post-checkout / post-commit / post-merge）は
+# すべてテンプレート側で持ち、中身を git-lfs へ委譲する。
+#   - `git lfs install` は不要。「Hook already exists」が出るのは正常な状態。
+#   - `git lfs update --force` は打たないこと（pre-push のブランチ保護ごと消える）。
+#
+# git-lfs が入っていない環境では何もしない（LFS 未使用のリポジトリでも無害）。
+# LFS を使っているのに git-lfs が無い場合は pre-push 側で検出して止める。
+command -v git-lfs >/dev/null 2>&1 || exit 0
+git lfs post-merge "$@"

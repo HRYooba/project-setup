@@ -323,18 +323,43 @@ test("setup-unity: このスキルが配らないファイルは再適用で取�
   assert.ok(!existsSync(join(target, ".claude", "references")), "空になった references が残っている");
 });
 
-test("--no-pre-push 初回: pre-push を配らず core.hooksPath も登録しない", () => {
+const LFS_HOOKS = ["post-checkout", "post-commit", "post-merge"];
+
+test("LFS 用 hook は常に配られ、git lfs へ委譲する", () => {
+  const target = tempDir("apply-test-");
+  runApply(target);
+
+  for (const h of LFS_HOOKS) {
+    const body = readFileSync(join(target, ".githooks", h), "utf8");
+    assert.ok(body.includes(`git lfs ${h} "$@"`), `${h} が git lfs を呼んでいない`);
+    assert.ok(body.includes("command -v git-lfs"), `${h} に git-lfs 不在時のガードが無い`);
+  }
+
+  // pre-push は保護と LFS を 1 本で担う。stdin を退避しないと LFS 側が空を受け取り、
+  // 実体を送らないまま成功する（= ポインタだけが push される）。
+  const prePush = readFileSync(join(target, ".githooks", "pre-push"), "utf8");
+  assert.ok(prePush.includes(`git lfs pre-push "$@" < "$refs"`), "pre-push が LFS へ連鎖していない");
+  assert.ok(prePush.includes(`cat > "$refs"`), "pre-push が stdin を退避していない");
+  assert.ok(prePush.includes(`done < "$refs"`), "保護判定が退避した stdin を読んでいない");
+});
+
+test("--no-pre-push 初回: pre-push は残り保護だけ無効。LFS hook と core.hooksPath は入る", () => {
   const target = tempDir("apply-test-");
   const out = runApply(target, ["--no-pre-push"]);
-  assert.match(out, /ブランチ保護 pre-push: 無効/);
+  assert.match(out, /ブランチ保護: 無効/);
 
-  assert.ok(!existsSync(join(target, ".githooks", "pre-push")), "pre-push が配置されている");
+  // ファイルごと消すと LFS 連鎖まで道連れになるため、pre-push は残す。
+  const prePush = readFileSync(join(target, ".githooks", "pre-push"), "utf8");
+  assert.match(prePush, /^BRANCH_PROTECTION=0$/m, "ブランチ保護が無効化されていない");
+  assert.match(prePush, /git lfs pre-push/, "LFS 連鎖まで消えている");
+  for (const h of LFS_HOOKS) {
+    assert.ok(existsSync(join(target, ".githooks", h)), `${h} が配置されていない`);
+  }
 
-  // SessionStart は sync-setup-check のみ（core.hooksPath は撒く git hook が無いので登録しない）。
+  // .githooks/ には常に LFS hook があるので core.hooksPath も常に要る。
   const settings = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
-  const ss = settings.hooks.SessionStart ?? [];
-  const cmds = ss.flatMap((g) => (g.hooks ?? []).map((h) => h.command));
-  assert.ok(!cmds.some((c) => c.includes("core.hooksPath")), "core.hooksPath が登録されている");
+  const cmds = (settings.hooks.SessionStart ?? []).flatMap((g) => (g.hooks ?? []).map((h) => h.command));
+  assert.ok(cmds.some((c) => c.includes("core.hooksPath")), "core.hooksPath が登録されていない");
   assert.ok(cmds.some((c) => c.includes("sync-setup-check.mjs")), "sync-setup-check が登録されていない");
 
   // sync-state に --no-pre-push が記録され、無人再適用へ引き継がれる。
@@ -342,29 +367,29 @@ test("--no-pre-push 初回: pre-push を配らず core.hooksPath も登録しな
   assert.ok(sync["setup-github"].flags.includes("--no-pre-push"), "flags に --no-pre-push が無い");
 });
 
-test("既定で入れた pre-push は --no-pre-push 再実行で削除され core.hooksPath も解除される", () => {
+test("既定で入れた保護は --no-pre-push 再実行で無効化され、再々実行で戻る", () => {
   const target = tempDir("apply-test-");
   runApply(target); // 既定 ON
-  assert.ok(existsSync(join(target, ".githooks", "pre-push")), "初回で pre-push が入らない");
-  const s1 = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
-  assert.equal(s1.hooks.SessionStart.length, 2); // core.hooksPath + sync-setup-check
+  const p1 = join(target, ".githooks", "pre-push");
+  assert.match(readFileSync(p1, "utf8"), /^BRANCH_PROTECTION=1$/m, "初回で保護が有効になっていない");
 
-  const out = runApply(target, ["--no-pre-push"]);
-  assert.match(out, /core\.hooksPath\): deregistered/);
+  runApply(target, ["--no-pre-push"]);
+  assert.match(readFileSync(p1, "utf8"), /^BRANCH_PROTECTION=0$/m, "opt-out で無効化されていない");
 
-  assert.ok(!existsSync(join(target, ".githooks", "pre-push")), "opt-out 再実行で pre-push が消えていない");
-  const s2 = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
-  const cmds = (s2.hooks.SessionStart ?? []).flatMap((g) => (g.hooks ?? []).map((h) => h.command));
-  assert.ok(!cmds.some((c) => c.includes("core.hooksPath")), "core.hooksPath が解除されていない");
-  assert.ok(cmds.some((c) => c.includes("sync-setup-check.mjs")), "sync-setup-check まで巻き添えで消えた");
+  // 既定 ON なのでフラグ無し再実行で入り直す（テンプレの再コピーで 1 に戻る）。
+  runApply(target);
+  assert.match(readFileSync(p1, "utf8"), /^BRANCH_PROTECTION=1$/m, "フラグ無し再実行で保護が戻らない");
 });
 
-test("--no-pre-push でも pr-copilot があれば core.hooksPath は登録される（pre-commit のため）", () => {
+test("--no-pre-push + pr-copilot: pre-commit と LFS hook が共存する", () => {
   const target = tempDir("apply-test-");
   runApply(target, ["--no-pre-push", "--pr-copilot"]);
 
-  assert.ok(!existsSync(join(target, ".githooks", "pre-push")), "pre-push が入っている");
+  assert.match(readFileSync(join(target, ".githooks", "pre-push"), "utf8"), /^BRANCH_PROTECTION=0$/m);
   assert.ok(existsSync(join(target, ".githooks", "pre-commit")), "pr-copilot の pre-commit が入っていない");
+  for (const h of LFS_HOOKS) {
+    assert.ok(existsSync(join(target, ".githooks", h)), `${h} が配置されていない`);
+  }
 
   const settings = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
   const cmds = settings.hooks.SessionStart.flatMap((g) => (g.hooks ?? []).map((h) => h.command));
