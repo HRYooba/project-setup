@@ -36,8 +36,12 @@ jobs:
     steps:
       # LFS の実体は引かない。この検査が読むのは .meta と GUID、そして conflict marker で、
       # どれも LFS 追跡外かポインタのテキストに出る（LFS 管理のアセットが衝突しても、
-      # マーカーが載るのはポインタ側）。実体を引くと、毎 PR で LFS の帯域（課金対象）を
-      # アセットの総量だけ消費する。実体が要る検査を足すときだけ lfs: true にする。
+      # マーカーが載るのはポインタ側）。引けば毎 PR でアセット総量ぶんの転送が走り、
+      # GitHub LFS ならその帯域は課金対象になる。
+      #
+      # **実体が要るなら lfs: true ではなく、checkout の後に `git lfs pull` を足す。**
+      # checkout の LFS 取得は .lfsconfig を読まない（actions/checkout#365）。自前の LFS
+      # サーバーを指しているリポジトリでは、既定の GitHub LFS を見に行って落ちる。
       - uses: actions/checkout@v7
         with:
           lfs: false
