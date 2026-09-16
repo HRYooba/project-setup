@@ -104,6 +104,18 @@ PR が作られた場合は「merge はしていないので、内容を確認�
   更新で setup-github だけの配備先まで drift 扱いになり、状態ファイルの版を進めるだけの PR が
   出る。規則の正本は `skills/sync-setup/skill-version.mjs`（配備先の hook は import できない
   ため同じ規則を自前で持つ。変えるときは両方）
+- **setup-unity だけもう 1 つ物差しを持つ**: 配った公式 unity プラグインの sha（記録は
+  `unityPlugin.sha`）と、このマシンの marketplace が pin している sha。Unity 側が更新されると
+  skill 版は動かないままこちらだけが変わるので、これが無いと上流の更新は永久に届かない。
+  marketplace は Claude Code が自動更新するローカルの clone なので、比較にネットワークは要らない
+  （hook が「ファイルを読むだけ」である設計を保てる）
+  - **sha には大小が無いので不一致で発火する。** 版のようにアップグレード方向へ絞れない以上、
+    marketplace の更新が遅れているマシンが新しい配備先を巻き戻す PR を出す余地は残る
+    （merge しないので人のレビューで止まる）
+  - **試行上限の鍵へ sha を足す**。足さないと上流だけが更新された同期は毎回同じ鍵になり、
+    回数が溜まって上限に当たった時点でその配備先へは何も届かなくなる
+  - marketplace を 1 つも登録していないマシンでは pin が読めず、**この判定は働かない**
+    （比べる現行値がそこに無い）。`/setup-unity` がその旨を警告する
 - skill 版は手で上げる数字なので、bump 忘れは更新がどの配備先にも**黙って**届かなくなる。
   これは `scripts/check-skill-version-bump.mjs` が PR で落とす（`templates/**` か `apply.mjs` が
   変わったのに版が動いていなければ CI が赤くなる）
