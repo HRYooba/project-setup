@@ -3,7 +3,7 @@
 // この値は 4 箇所へ効く。1 箇所でも取りこぼすと「lint は見るのに analyzer は見ない」
 // といった無音の食い違いになる（どれもエラーを出さずにすり抜ける）:
 //   - .claude/rules/folder-structure.md        規約の文面
-//   - .claude/skills/lint-unity/SKILL.md       paths: と走査コマンド
+//   - .claude/skills/lint-unity/SKILL.md       検査範囲の文面と走査コマンド
 //   - Assets/Analyzers/analyzable-root.txt     Roslyn analyzer の解析対象
 //   - .claude/hooks/review-config.json         レビュー対象（--review-target 指定時）
 //
@@ -82,7 +82,7 @@ test("既定は Assets/App/（無指定でも従来どおり）", () => {
   const out = runApply(target);
   assert.match(out, /アプリ本体の置き場（--app-root）: Assets\/App\/（既定）/);
   assert.equal(markerValue(target), "Assets/App/");
-  assert.match(read(target, ".claude", "skills", "lint-unity", "SKILL.md"), /^paths: Assets\/App\/\*\*$/m);
+  assert.match(read(target, ".claude", "skills", "lint-unity", "SKILL.md"), /対象は `Assets\/App\/` 配下だけ/);
 });
 
 test("指定すると規約の適用範囲が 4 箇所とも揃う", () => {
@@ -92,7 +92,11 @@ test("指定すると規約の適用範囲が 4 箇所とも揃う", () => {
   assert.equal(markerValue(target), "Assets/Game/");
 
   const lint = read(target, ".claude", "skills", "lint-unity", "SKILL.md");
-  assert.match(lint, /^paths: Assets\/Game\/\*\*$/m);
+  assert.match(lint, /対象は `Assets\/Game\/` 配下だけ/);
+  // paths: は Read / Write / Edit でしか発火せず、Bash で読み書きするセッションでは
+  // skill 一覧に一度も載らない。この skill は「変更したら依頼を待たず走る」ものなので
+  // 遅延ロードと両立しない。復活させない。
+  assert.doesNotMatch(lint, /^paths:/m);
   assert.match(lint, /git diff --name-only[^']* -- 'Assets\/Game\/'/);
 
   assert.match(read(target, ".claude", "rules", "folder-structure.md"), /Assets\/Game\//);

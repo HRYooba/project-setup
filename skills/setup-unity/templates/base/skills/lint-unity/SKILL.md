@@ -5,8 +5,7 @@ description: >
   **ユーザーの依頼を待たずに実行する**。Unity のアセット命名・ヒエラルキー・シーン構成・
   Prefab 整合性・フォルダ構成・SerializeField 参照・asmdef 依存・マテリアルが規約に沿っているかを
   検査してレポートする。範囲は `--scene <名前>` / `--prefabs` / `--assets <パス>` / `--all` で絞れる。
-version: 3.1.0
-paths: {{APP_ROOT}}**
+version: 3.2.0
 context: fork
 agent: unity-linter
 ---
