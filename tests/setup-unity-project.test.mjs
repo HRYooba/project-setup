@@ -283,58 +283,261 @@ test("verify ラッパーは判定不能を成功にしない", () => {
 ${res.stdout}${res.stderr}`);
 });
 
-test("公式 unity-cli skill は配備先へ入れ、unity が無くても導入は止まらない", () => {
-  // CLI の詳細（コマンド一覧・フラグ・exit code・ログの場所）は我々が写さず、CLI 自身が
-  // 配る版を `--local` で入れる。写しを持つと CLI を上げるたびに黙ってズレる。
-  // ただし CLI 未導入の配備先でも配置は決定的に完了させる（ここで落ちると導入が止まる）。
+test("git が無くても導入は止まらない（見送りを報告して続行する）", () => {
+  // 上流プラグインの取得は git に依存する唯一の箇所。オフラインや git 未導入の配備先でも
+  // 規約一式の配置は決定的に完了させる（ここで落ちると導入そのものが止まる）。
   const target = unityProject();
   const res = spawnSync(process.execPath, [APPLY_UNITY, target], {
     encoding: "utf8",
-    env: { ...process.env, PATH: "", Path: "" }, // unity を見つけられない環境を作る
+    env: { ...process.env, PATH: "", Path: "" }, // git を見つけられない環境を作る
   });
 
-  assert.equal(res.status, 0, `unity が無いだけで落ちた: ${res.stderr}\n${res.stdout}`);
-  assert.match(res.stdout, /公式 unity-cli skill: 見送りました/, "見送りが報告されていない");
+  assert.equal(res.status, 0, `git が無いだけで落ちた: ${res.stderr}\n${res.stdout}`);
+  assert.match(res.stdout, /公式 unity プラグイン: 見送りました/, "見送りが報告されていない");
   assert.ok(
     existsSync(join(target, ".claude", "rules", "coding-standards.md")),
     "見送りの後に配置が中断している"
   );
 });
 
-test("公式 unity-cli skill は出所の CLI 版を記録し、一致していれば触らない", () => {
-  // skill の中身は撃ったマシンの CLI に従う。記録が無いと、古い CLI のマシンがテンプレ同期を
-  // 走らせたときに skill が黙って古い版へ戻る。記録が git に乗れば同期 PR の差分として見える。
+test("unity-cli skill は上流版をそのまま配る（CLI 埋め込み版で上書きしない）", () => {
+  // CLI 埋め込み版（`unity skill install`）は上流より古いことが実測で分かっている
+  // （CLI 1.0.0-beta.9 の埋め込み版は CHANGELOG が beta.8 止まりで references も 1 本少ない）。
+  // 加えて CLI 経由だと「同期を回した人のマシンの CLI 版」が配布物になり、中身がマシンごとに揺れる。
+  const target = unityProject();
+  runApply(target);
+  const state = JSON.parse(readFileSync(join(target, ".claude", "sync-setup-state.json"), "utf8"));
+  if (!state["setup-unity"].unityPlugin) return; // clone できない環境では検証しない
+
+  assert.ok(
+    state["setup-unity"].unityPlugin.placed.skills.includes("unity-cli"),
+    "unity-cli を上流から配っていない"
+  );
+  assert.equal(
+    state["setup-unity"].unityCli,
+    undefined,
+    "CLI 経由の配布はやめたのに unityCli を記録している"
+  );
+});
+
+// marketplace.json（Claude Code がローカルへ置く clone の中身）を偽装する。
+// pin した sha を書いた 1 件だけ持つディレクトリを返す。
+function fakeMarketplaces(sha) {
+  const root = tempDir("marketplaces-");
+  writeFile(
+    join(root, "fake", ".claude-plugin", "marketplace.json"),
+    JSON.stringify({
+      plugins: [
+        {
+          name: "unity",
+          source: { source: "url", url: "https://github.com/Unity-Technologies/unity-agent-plugin.git", sha },
+        },
+      ],
+    })
+  );
+  return root;
+}
+
+test("配る sha は marketplace が pin した値に従う（HEAD ではなく）", () => {
+  // 検知（記録 ↔ ローカルの現行値）と配布が同じ値を見ないと、pin と HEAD がズレている間ずっと
+  // drift 扱いになり、同期 PR が出続ける。
+  const repo = fakeUpstream((root) => {
+    writeFile(join(root, "skills", "demo", "SKILL.md"), "---\nname: demo\n---\n");
+  });
+  const oldSha = spawnSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  // pin より後に上流が進んだ状況を作る。
+  writeFile(join(repo, "skills", "added-later", "SKILL.md"), "---\nname: added-later\n---\n");
+  for (const a of [["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "later"]]) {
+    assert.equal(spawnSync("git", ["-C", repo, ...a], { encoding: "utf8" }).status, 0);
+  }
+
+  const target = unityProject();
+  runApply(target, [], {
+    SETUP_UNITY_PLUGIN_REPO: repo,
+    SETUP_UNITY_MARKETPLACES_DIR: fakeMarketplaces(oldSha),
+  });
+  const plugin = JSON.parse(
+    readFileSync(join(target, ".claude", "sync-setup-state.json"), "utf8")
+  )["setup-unity"].unityPlugin;
+
+  assert.equal(plugin.sha, oldSha, "pin ではなく HEAD を配っている");
+  assert.ok(
+    !existsSync(join(target, ".claude", "skills", "added-later")),
+    "pin より後の commit の skill を配っている"
+  );
+});
+
+test("marketplace の pin が読めなくても配置は完了する", () => {
+  // pin はあれば従う値であって、前提ではない。読めないだけで導入が止まると、
+  // marketplace を登録していないマシンで setup-unity が使えなくなる。
+  const target = unityProject();
+  const out = runApply(target, [], { SETUP_UNITY_MARKETPLACES_DIR: tempDir("empty-marketplaces-") });
+
+  assert.match(out, /公式 unity プラグイン: (導入しました|導入済み|見送りました)/);
+});
+
+test("公式 unity プラグインの skills は直置きされ、出所の sha を記録する", () => {
+  // プラグインとして入れると実体は ~/.claude/plugins/cache/ へ行き、そこから読まれる。
+  // 配備先のリポジトリを正本にするには直置きしかない。
   const target = unityProject();
   const first = runApply(target);
-  const statePath = join(target, ".claude", "sync-setup-state.json");
-  const recorded = JSON.parse(readFileSync(statePath, "utf8"))["setup-unity"].unityCli;
+  const state = JSON.parse(readFileSync(join(target, ".claude", "sync-setup-state.json"), "utf8"));
+  const plugin = state["setup-unity"].unityPlugin;
 
-  // この環境に unity が無ければ記録もされない。そのときは「見送り」だけを確かめる。
-  if (!recorded) {
-    assert.match(first, /公式 unity-cli skill: 見送りました/);
+  // clone できない環境（git 無し・オフライン）では見送られる。そこまでは確かめない。
+  if (!plugin) {
+    assert.match(first, /公式 unity プラグインの skills: 見送りました/);
     return;
   }
-  assert.match(first, /公式 unity-cli skill: 導入しました/);
 
-  // 版が一致していれば入れ直さない（同期のたびに配布物が揺れないこと）。
-  assert.match(runApply(target), /公式 unity-cli skill: 導入済み（CLI .+ と一致）/);
+  assert.match(plugin.sha, /^[0-9a-f]{40}$/, "sha を記録していない");
+  assert.ok(plugin.placed.skills.length > 0, "配った skill 名を記録していない");
+  const skillsDir = join(target, ".claude", "skills");
+  for (const n of plugin.placed.skills) {
+    assert.ok(existsSync(join(skillsDir, n, "SKILL.md")), `記録した ${n} が配備先に無い`);
+  }
+  // 再配布にはライセンス表記が付いて回る。
+  assert.ok(
+    existsSync(join(skillsDir, "UNITY-AGENT-PLUGIN-LICENSE.md")),
+    "LICENSE を配っていない"
+  );
 
-  // 記録を古い版に書き換えると入れ直す。
+  // プラグイン経由で同じ skill が並ぶと、どちらを引くか決まらない。名指しで伏せる。
+  const overrides = JSON.parse(
+    readFileSync(join(target, ".claude", "settings.json"), "utf8")
+  ).skillOverrides;
+  for (const n of plugin.placed.skills) {
+    assert.equal(overrides[`unity:${n}`], "off", `unity:${n} を伏せていない`);
+  }
+
+  // sha が一致していれば触らない（同期のたびに配布物が揺れないこと）。
+  assert.match(runApply(target), /公式 unity プラグイン: 導入済み（.+ と一致）/);
+});
+
+test("上流から消えた skill は配備先からも消え、伏せる設定も取り下げる", () => {
+  // 記録が無いと、取り残された skill が常時コンテキストへ載り続ける（誰も検出できない）。
+  const target = unityProject();
+  runApply(target);
+  const statePath = join(target, ".claude", "sync-setup-state.json");
+  const settingsPath = join(target, ".claude", "settings.json");
   const state = JSON.parse(readFileSync(statePath, "utf8"));
-  state["setup-unity"].unityCli = "0.0.0-stale";
-  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n", "utf8");
-  assert.match(runApply(target), /公式 unity-cli skill: 入れ直しました（記録 0\.0\.0-stale →/);
+  if (!state["setup-unity"].unityPlugin) return; // clone できない環境では検証しない
 
-  // unity が無い環境でも記録を消さない（消すと次の適用が食い違いを検出できない）。
-  const res = spawnSync(process.execPath, [APPLY_UNITY, target], {
-    encoding: "utf8",
-    env: { ...process.env, PATH: "", Path: "" },
+  // 「前回は配ったが上流にはもう無い」skill を作る。
+  const ghost = "ghost-skill";
+  state["setup-unity"].unityPlugin.placed.skills.push(ghost);
+  state["setup-unity"].unityPlugin.sha = "0".repeat(40);
+  writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n", "utf8");
+  mkdirSync(join(target, ".claude", "skills", ghost), { recursive: true });
+  writeFileSync(join(target, ".claude", "skills", ghost, "SKILL.md"), "---\n", "utf8");
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  settings.skillOverrides[`unity:${ghost}`] = "off";
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
+
+  runApply(target);
+
+  assert.ok(
+    !existsSync(join(target, ".claude", "skills", ghost)),
+    "上流から消えた skill が配備先に残った"
+  );
+  assert.ok(
+    !(`unity:${ghost}` in JSON.parse(readFileSync(settingsPath, "utf8")).skillOverrides),
+    "上流から消えた skill の off が残った"
+  );
+});
+
+// 上流の構成が変わった場合の挙動は、本物の上流に hooks/ が生えるのを待てない。
+// 偽の上流を立てて SETUP_UNITY_PLUGIN_REPO で差し替える。
+function fakeUpstream(build) {
+  const repo = tempDir("unity-upstream-");
+  build(repo);
+  const run = (...a) => {
+    const r = spawnSync("git", ["-C", repo, ...a], { encoding: "utf8" });
+    assert.equal(r.status, 0, `git ${a[0]} 失敗: ${r.stderr}`);
+  };
+  run("init", "-q", ".");
+  run("add", "-A");
+  run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init");
+  return repo;
+}
+
+function writeFile(p, body) {
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(p, body, "utf8");
+}
+
+test("上流が直置きで再現できない構成要素を足したら、黙って無視せず報告する", () => {
+  // これが無いと、上流が hook や MCP を足した更新は「入ったつもりで入っていない」状態になる。
+  // エラーも差分も出ないので誰も気づけない。
+  const repo = fakeUpstream((root) => {
+    writeFile(join(root, "skills", "demo", "SKILL.md"), "---\nname: demo\n---\n");
+    writeFile(join(root, "hooks", "hooks.json"), "{}\n");
+    writeFile(join(root, ".mcp.json"), "{}\n");
+    writeFile(join(root, "brand-new-kind", "x.txt"), "x\n");
+    writeFile(join(root, "LICENSE.md"), "LICENSE\n");
   });
-  assert.equal(res.status, 0, `unity が無いだけで落ちた: ${res.stderr}`);
+  const out = runApply(unityProject(), [], { SETUP_UNITY_PLUGIN_REPO: repo });
+
+  assert.match(out, /警告: 上流に直置きでは再現できない構成要素があります.*hooks/);
+  assert.match(out, /\.mcp\.json/, "MCP 定義を報告していない");
+  assert.match(out, /警告: 上流に扱いを決めていない要素があります.*brand-new-kind/);
+});
+
+test("上流が commands / agents を足したら配る", () => {
+  // skills 決め打ちだと、上流が構成要素を増やしたときに黙って落ちる。
+  const repo = fakeUpstream((root) => {
+    writeFile(join(root, "skills", "demo", "SKILL.md"), "---\nname: demo\n---\n");
+    writeFile(join(root, "commands", "do-thing.md"), "# do\n");
+    writeFile(join(root, "agents", "helper.md"), "# helper\n");
+  });
+  const target = unityProject();
+  runApply(target, [], { SETUP_UNITY_PLUGIN_REPO: repo });
+
+  assert.ok(existsSync(join(target, ".claude", "commands", "do-thing.md")), "command を配っていない");
+  assert.ok(existsSync(join(target, ".claude", "agents", "helper.md")), "agent を配っていない");
+});
+
+test("上流の配布物が setup-unity 自前のものと同名なら、上書きせず報告する", () => {
+  // 黙って潰すと unity-worker や lint-unity が別物へ差し替わる。どちらを採るかは人の判断。
+  const repo = fakeUpstream((root) => {
+    writeFile(join(root, "skills", "demo", "SKILL.md"), "---\nname: demo\n---\n");
+    writeFile(join(root, "skills", "lint-unity", "SKILL.md"), "---\nname: hijacked\n---\n");
+    writeFile(join(root, "agents", "unity-worker.md"), "# hijacked\n");
+  });
+  const target = unityProject();
+  const out = runApply(target, [], { SETUP_UNITY_PLUGIN_REPO: repo });
+
+  assert.match(out, /警告: 上流の配布物が setup-unity 自前のものと同名です/);
+  assert.doesNotMatch(
+    readFileSync(join(target, ".claude", "skills", "lint-unity", "SKILL.md"), "utf8"),
+    /hijacked/,
+    "自前の lint-unity が上流に潰された"
+  );
+  assert.doesNotMatch(
+    readFileSync(join(target, ".claude", "agents", "unity-worker.md"), "utf8"),
+    /hijacked/,
+    "自前の unity-worker が上流に潰された"
+  );
+});
+
+test("配備先が自分で置いた skillOverrides は奪わない", () => {
+  // "on" を明示した配備先は、重複を承知で両方見たいという意思表示。黙って戻すと
+  // 理由の分からない挙動になる。
+  const target = unityProject();
+  runApply(target);
+  const settingsPath = join(target, ".claude", "settings.json");
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const name = Object.keys(settings.skillOverrides)[0];
+  if (!name) return; // clone できない環境では検証しない
+  settings.skillOverrides[name] = "on";
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
+
+  runApply(target);
+
   assert.equal(
-    JSON.parse(readFileSync(statePath, "utf8"))["setup-unity"].unityCli,
-    recorded,
-    "unity が無い実行で CLI 版の記録が消えた"
+    JSON.parse(readFileSync(settingsPath, "utf8")).skillOverrides[name],
+    "on",
+    `配備先が明示した ${name} を上書きした`
   );
 });
 

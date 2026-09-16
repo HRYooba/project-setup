@@ -21,7 +21,7 @@
 //   - 状態ファイルが無いプロジェクト（未セットアップ or バックフィル前）は対象外 → null。
 //   - SYNC_SETUP_DISABLE=1 で黙らせられる（避難口）。
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 /* global process, Buffer */
@@ -117,6 +117,31 @@ function readCurrentPlugin() {
 
 const SKILL_KEYS = ["setup-github", "setup-unity"];
 
+// このマシンに登録済みの marketplace が公式 unity プラグインに対して pin している sha。
+// 読めなければ null。marketplace は Claude Code が自動更新するローカルの clone なので、
+// ここを見る限りネットワークは要らない（この lib はファイルを読むだけ、という設計を保つ）。
+//
+// setup-unity の apply.mjs も配るときに同じ値を見る。両辺が揃っていないと、pin と配布物が
+// ズレている間ずっと drift 扱いになる。
+// 正本はプラグイン側の skills/sync-setup/skill-version.mjs（この lib は配備先へ単体コピー
+// される制約上 import できないので、意図的な重複。変えるときは両方を揃える）。
+function pinnedUnityPluginSha() {
+  const root =
+    process.env.SETUP_UNITY_MARKETPLACES_DIR || join(homedir(), ".claude", "plugins", "marketplaces");
+  if (!existsSync(root)) return null;
+  for (const name of readdirSync(root)) {
+    const p = join(root, name, ".claude-plugin", "marketplace.json");
+    if (!existsSync(p)) continue;
+    const j = readJson(p);
+    const entry = (j?.plugins ?? []).find(
+      (x) => x?.name === "unity" && typeof x?.source?.url === "string" && /unity-agent-plugin/.test(x.source.url)
+    );
+    const sha = entry?.source?.sha;
+    if (typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha)) return sha;
+  }
+  return null;
+}
+
 // `skills/<skill>/SKILL.md` の frontmatter から version を読む。読めなければ null。
 // 本文の `version:` 行を拾わないよう、先頭の `---` で囲まれた塊だけを見る。
 function readSkillVersion(installPath, skillKey) {
@@ -134,13 +159,20 @@ function readSkillVersion(installPath, skillKey) {
 
 // 1 skill 分の判定。drift していれば { from, to, basis }、していなければ null。
 // 正本は skills/sync-setup/skill-version.mjs の decideDrift（意図的な重複）。
-function decideDrift(rec, curSkillVersion, curPluginVersion) {
+function decideDrift(rec, curSkillVersion, curPluginVersion, curUnitySha) {
   if (!rec || typeof rec !== "object") return null;
   if (rec.skillVersion) {
     if (!curSkillVersion) return null; // 現行 skill 版が読めない＝プラグインが居ない
-    return cmpVer(curSkillVersion, rec.skillVersion) > 0
-      ? { from: rec.skillVersion, to: curSkillVersion, basis: "skill" }
-      : null;
+    if (cmpVer(curSkillVersion, rec.skillVersion) > 0) {
+      return { from: rec.skillVersion, to: curSkillVersion, basis: "skill" };
+    }
+    // skill 版が同じでも、上流 unity プラグインの pin が動いていれば追随する。
+    // sha には大小が無いので不一致で発火する（向きで絞れない。詳細は正本のコメント）。
+    const recSha = rec.unityPlugin?.sha;
+    if (curUnitySha && typeof recSha === "string" && recSha !== curUnitySha) {
+      return { from: recSha.slice(0, 7), to: curUnitySha.slice(0, 7), basis: "unity-plugin", unitySha: curUnitySha };
+    }
+    return null;
   }
   // 旧配備先。実際に比べた値（プラグイン版）を from / to に入れる。
   if (!rec.version || !curPluginVersion) return null;
@@ -148,6 +180,9 @@ function decideDrift(rec, curSkillVersion, curPluginVersion) {
     ? { from: rec.version, to: curPluginVersion, basis: "plugin" }
     : null;
 }
+
+// 人へ出す 1 件ぶんの表記。unity-plugin は sha なので `v` を付けない。
+const label = (d) => (d.basis === "unity-plugin" ? `${d.skill} 公式 unity プラグイン ${d.from}→${d.to}` : `${d.skill} v${d.from}→v${d.to}`);
 
 // ドリフトがあれば { currentVersion, drifted, summary } を返す。無ければ null。
 export function detectDrift(projectDir) {
@@ -161,7 +196,12 @@ export function detectDrift(projectDir) {
 
   const drifted = [];
   for (const k of SKILL_KEYS) {
-    const d = decideDrift(state[k], readSkillVersion(plugin.installPath, k), plugin.version);
+    const d = decideDrift(
+      state[k],
+      readSkillVersion(plugin.installPath, k),
+      plugin.version,
+      k === "setup-unity" ? pinnedUnityPluginSha() : null
+    );
     if (!d) continue;
     drifted.push({ skill: k, ...d, flags: Array.isArray(state[k].flags) ? state[k].flags : [] });
   }
@@ -170,6 +210,6 @@ export function detectDrift(projectDir) {
   return {
     currentVersion: plugin.version,
     drifted,
-    summary: drifted.map((d) => `${d.skill} v${d.from}→v${d.to}`).join(" / "),
+    summary: drifted.map(label).join(" / "),
   };
 }

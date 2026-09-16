@@ -279,6 +279,89 @@ test("hook: 片方のスキルだけドリフトしていればそのスキル�
   assert.doesNotMatch(out.systemMessage, /setup-github v/);
 });
 
+// ---- 公式 unity プラグインの更新検知 ----
+// skill 版は動かないまま上流だけ更新される経路。比較の両辺をローカルファイルで揃えるため、
+// 現行値は「このマシンの marketplace が pin した sha」を見る（ネットワークを叩かない）。
+function fakeMarketplaces(sha) {
+  const root = tempDir("sync-marketplaces-");
+  const dir = join(root, "any-name", ".claude-plugin");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "marketplace.json"),
+    JSON.stringify({
+      plugins: [
+        {
+          name: "unity",
+          source: { source: "url", url: "https://github.com/Unity-Technologies/unity-agent-plugin.git", sha },
+        },
+      ],
+    }),
+    "utf8"
+  );
+  return root;
+}
+
+const SHA_A = "a".repeat(40);
+const SHA_B = "b".repeat(40);
+
+test("hook: skill 版が同じでも上流 unity プラグインが更新されていれば知らせる", () => {
+  const target = tempDir("sync-unity-sha-");
+  const installPath = fakePluginRoot({ "setup-unity": "3.11.0" });
+  writeState(target, {
+    "setup-unity": { skillVersion: "3.11.0", flags: [], unityPlugin: { sha: SHA_A, placed: { skills: [] } } },
+  });
+
+  const out = JSON.parse(
+    runSyncHook(target, "1.3.0", { installPath, env: { SETUP_UNITY_MARKETPLACES_DIR: fakeMarketplaces(SHA_B) } })
+  );
+  assert.match(out.systemMessage, /setup-unity/);
+  assert.match(out.systemMessage, /公式 unity プラグイン aaaaaaa→bbbbbbb/, "上流 sha の変化を出していない");
+});
+
+test("hook: 上流 unity プラグインの sha が一致していれば黙る", () => {
+  const target = tempDir("sync-unity-same-");
+  const installPath = fakePluginRoot({ "setup-unity": "3.11.0" });
+  writeState(target, {
+    "setup-unity": { skillVersion: "3.11.0", flags: [], unityPlugin: { sha: SHA_A, placed: { skills: [] } } },
+  });
+
+  assert.equal(
+    runSyncHook(target, "1.3.0", { installPath, env: { SETUP_UNITY_MARKETPLACES_DIR: fakeMarketplaces(SHA_A) } }),
+    ""
+  );
+});
+
+test("hook: marketplace が無ければ上流の判定はしない（skill 版だけで判断する）", () => {
+  // pin が読めないマシンでは比べる現行値が無い。ここで発火させると毎回ドリフト扱いになる。
+  const target = tempDir("sync-unity-nopin-");
+  const installPath = fakePluginRoot({ "setup-unity": "3.11.0" });
+  writeState(target, {
+    "setup-unity": { skillVersion: "3.11.0", flags: [], unityPlugin: { sha: SHA_A, placed: { skills: [] } } },
+  });
+
+  assert.equal(
+    runSyncHook(target, "1.3.0", {
+      installPath,
+      env: { SETUP_UNITY_MARKETPLACES_DIR: join(tempDir("sync-empty-"), "missing") },
+    }),
+    ""
+  );
+});
+
+test("hook: skill 版のドリフトがあれば、そちらを優先して出す", () => {
+  // 再適用は apply.mjs がまとめて行うので、報告はどちらか 1 つでよい。
+  const target = tempDir("sync-unity-both-");
+  const installPath = fakePluginRoot({ "setup-unity": "3.12.0" });
+  writeState(target, {
+    "setup-unity": { skillVersion: "3.11.0", flags: [], unityPlugin: { sha: SHA_A, placed: { skills: [] } } },
+  });
+
+  const out = JSON.parse(
+    runSyncHook(target, "1.3.0", { installPath, env: { SETUP_UNITY_MARKETPLACES_DIR: fakeMarketplaces(SHA_B) } })
+  );
+  assert.match(out.systemMessage, /setup-unity v3\.11\.0→v3\.12\.0/);
+});
+
 test("hook: SYNC_SETUP_DISABLE=1 なら黙る（避難口）", () => {
   const target = tempDir("sync-disable-");
   writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });

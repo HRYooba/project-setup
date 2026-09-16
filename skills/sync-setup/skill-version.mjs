@@ -15,11 +15,42 @@
 //
 // 依存なし（Node 標準のみ）。
 
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
+/* global process */
 
 // 追随の対象になる skill。状態ファイルのキーでもある。
 export const SKILL_KEYS = ["setup-github", "setup-unity"];
+
+// このマシンに登録済みの marketplace が公式 unity プラグインに対して pin している sha。
+// 読めなければ null。
+//
+// marketplace は Claude Code が自動更新するローカルの clone なので、**ネットワークを叩かずに
+// 「上流の現行値」が手に入る**。setup-unity の apply.mjs も配るときに同じ値を見る — 両辺が
+// 揃っていないと、pin と配布物がズレている間ずっと drift 扱いになる。
+//
+// marketplace 名は環境依存（公式は claude-plugins-official だが別名で登録されうる）なので、
+// 名前で決め打ちせず unity エントリを持つものを探す。
+export function pinnedUnityPluginSha(home = homedir()) {
+  const root = process.env.SETUP_UNITY_MARKETPLACES_DIR || join(home, ".claude", "plugins", "marketplaces");
+  if (!existsSync(root)) return null;
+  for (const name of readdirSync(root)) {
+    const p = join(root, name, ".claude-plugin", "marketplace.json");
+    if (!existsSync(p)) continue;
+    try {
+      const j = JSON.parse(readFileSync(p, "utf8").replace(/^\uFEFF/, ""));
+      const entry = (j?.plugins ?? []).find(
+        (x) => x?.name === "unity" && typeof x?.source?.url === "string" && /unity-agent-plugin/.test(x.source.url)
+      );
+      const sha = entry?.source?.sha;
+      if (typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha)) return sha;
+    } catch {
+      // 壊れた marketplace.json は飛ばす（他の marketplace で読めるかもしれない）
+    }
+  }
+  return null;
+}
 
 // "1.2.0" 同士を数値比較。a > b で正。パースできない値（"unknown" 等）は 0 扱い。
 export function cmpVer(a, b) {
@@ -63,15 +94,29 @@ export function readSkillVersion(pluginRoot, skillKey) {
 //              from / to はこのとき**プラグイン版**になる（実際に比べた値を人へ出すため。
 //              skill 版を混ぜて出すと「v2.6.3→v1.27.0」と後退したように見える）。
 //
-// 発火はアップグレード方向のみ（現行版 > 記録版）。複数マシンで版がずれていても、古い版の
-// マシンが新しい版で同期済みのプロジェクトを巻き戻す churn を防ぐ。
-export function decideDrift(rec, curSkillVersion, curPluginVersion) {
+//   "unity-plugin" … setup-unity が配る公式 unity プラグインの sha が、このマシンの marketplace が
+//              pin している値と食い違う。skill 版は動かないまま上流だけ更新される経路がこれ。
+//
+// 版の比較は**アップグレード方向のみ**発火する（現行版 > 記録版）。複数マシンで版がずれていても、
+// 古い版のマシンが新しい版で同期済みのプロジェクトを巻き戻す churn を防ぐ。
+//
+// **sha にはこの向きが無いので "unity-plugin" は不一致で発火する。** marketplace の更新が遅れている
+// マシンが新しい配備先を巻き戻す PR を出す余地は残る（同期は PR までで merge しないので人の
+// レビューで止まる。attempt key に sha を含めて試行回数だけは分離する）。
+export function decideDrift(rec, curSkillVersion, curPluginVersion, curUnitySha) {
   if (!rec || typeof rec !== "object") return null;
   if (rec.skillVersion) {
     if (!curSkillVersion) return null; // 現行 skill 版が読めない＝プラグインが居ない。何もしない
-    return cmpVer(curSkillVersion, rec.skillVersion) > 0
-      ? { from: rec.skillVersion, to: curSkillVersion, basis: "skill" }
-      : null;
+    if (cmpVer(curSkillVersion, rec.skillVersion) > 0) {
+      return { from: rec.skillVersion, to: curSkillVersion, basis: "skill" };
+    }
+    // skill 版が同じでも上流プラグインが動いていれば追随する。再適用は apply.mjs がまとめて
+    // 行うので、drift の報告はどちらか 1 つでよい（skill 版の方を先に出す）。
+    const recSha = rec.unityPlugin?.sha;
+    if (curUnitySha && typeof recSha === "string" && recSha !== curUnitySha) {
+      return { from: recSha.slice(0, 7), to: curUnitySha.slice(0, 7), basis: "unity-plugin", unitySha: curUnitySha };
+    }
+    return null;
   }
   if (!rec.version || !curPluginVersion) return null;
   return cmpVer(curPluginVersion, rec.version) > 0

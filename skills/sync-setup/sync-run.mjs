@@ -50,7 +50,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { decideDrift, readSkillVersion, SKILL_KEYS } from "./skill-version.mjs";
+import { decideDrift, pinnedUnityPluginSha, readSkillVersion, SKILL_KEYS } from "./skill-version.mjs";
 import { readSyncState, stateFiles } from "./state.mjs";
 /* global process, console */
 
@@ -184,7 +184,8 @@ const notesPath = process.env.SYNC_SETUP_NOTES_MD || join(dataDir, "notes", `${r
 const repoId = git(target, "remote", "get-url", "origin") || target;
 let attemptKey = `${repoId}@v${currentVersion}`;
 const attempts = readJson(attemptsPath) || {};
-const attemptCount = Number.isFinite(attempts[attemptKey]) ? attempts[attemptKey] : 0;
+// 回数の読み取りはキーが確定した後（drift 判定が上流 sha をキーへ足す）。
+let attemptCount = 0;
 
 // ---- drift 判定 ----
 // publish フェーズでは apply が済んでいて状態ファイルが新版に書き換わっているため、
@@ -198,7 +199,14 @@ if (phase === "publish") {
   // apply と publish の間にプラグインが自動更新されると鍵が食い違い、成果の入った worktree ごと
   // やり直しになる（しかも空振りの試行が 1 回記録される）。worktree の中身は apply 時の版の
   // テンプレで作られているので、その版として publish するのが正しい。
-  const planValid = plan && Array.isArray(plan.drifted) && plan.version && plan.key === `${repoId}@v${plan.version}`;
+  // 鍵は「リポジトリ@版」に、上流 unity プラグインの sha が付くことがある（apply 側で付ける）。
+  // 完全一致で照合すると、その同期の publish が必ず「計画が見つかりません」で落ちる。
+  const planBase = plan && plan.version ? `${repoId}@v${plan.version}` : null;
+  const planValid =
+    plan &&
+    Array.isArray(plan.drifted) &&
+    planBase &&
+    (plan.key === planBase || String(plan.key).startsWith(`${planBase}+`));
   if (!planValid) {
     fail(
       `同期計画が見つかりません（${planPath}）。先に --phase=apply を実行してください。\n` +
@@ -213,8 +221,10 @@ if (phase === "publish") {
     );
     currentVersion = plan.version;
     branch = plan.branch || `chore/sync-setup-v${currentVersion}`;
-    attemptKey = plan.key;
   }
+  // 鍵は常に計画側を採る。版が同じでも apply が上流 sha を足していることがあり、
+  // ここで作り直すと試行回数が別の鍵へ記録される。
+  attemptKey = plan.key;
   drifted = plan.drifted;
   carriedWarnings = Array.isArray(plan.warnings) ? plan.warnings : [];
   planWorktree = plan.worktree || null;
@@ -240,15 +250,26 @@ if (phase === "publish") {
   // drift 扱いになり、状態ファイルの版を進めるだけの PR が出る。規則の正本は skill-version.mjs。
   drifted = [];
   for (const k of SKILL_KEYS) {
-    const d = decideDrift(state[k], readSkillVersion(installPath, k), currentVersion);
+    const d = decideDrift(
+      state[k],
+      readSkillVersion(installPath, k),
+      currentVersion,
+      k === "setup-unity" ? pinnedUnityPluginSha() : null
+    );
     if (!d) continue;
     drifted.push({ skill: k, ...d, flags: Array.isArray(state[k].flags) ? state[k].flags : [] });
   }
   if (drifted.length === 0) {
-    console.log(`同期不要: 記録版と現行の skill 版に差がありません（プラグイン v${currentVersion}）。`);
+    console.log(`同期不要: 記録版と現行の skill 版・上流 sha に差がありません（プラグイン v${currentVersion}）。`);
     process.exit(0);
   }
+  // **試行上限のキーへ上流 sha を混ぜる。** 既定のキーはプラグイン版だけで作るので、上流 unity
+  // プラグインだけが更新された同期は毎回同じキーになる。回数が溜まって上限に当たると、以後
+  // その配備先へは何も届かなくなる。
+  const unityDrift = drifted.find((d) => d.basis === "unity-plugin");
+  if (unityDrift) attemptKey = `${attemptKey}+unity@${unityDrift.unitySha.slice(0, 7)}`;
 }
+attemptCount = Number.isFinite(attempts[attemptKey]) ? attempts[attemptKey] : 0;
 
 function describePlan() {
   console.log(`同期計画:`);
@@ -257,7 +278,8 @@ function describePlan() {
   console.log(`  ブランチ: ${branch}`);
   console.log(`  試行回数: ${attemptCount}/${maxAttempts}`);
   for (const d of drifted) {
-    console.log(`  - ${d.skill}: v${d.from} → v${d.to}（flags: ${d.flags.join(" ") || "なし"}）`);
+    const ver = d.basis === "unity-plugin" ? `公式 unity プラグイン ${d.from} → ${d.to}` : `v${d.from} → v${d.to}`;
+    console.log(`  - ${d.skill}: ${ver}（flags: ${d.flags.join(" ") || "なし"}）`);
   }
 }
 
@@ -448,7 +470,10 @@ if (!staged) {
   rmSync(planPath, { force: true });
   process.exit(0);
 }
-const summary = drifted.map((d) => `${d.skill} v${d.from}→v${d.to}`).join(" / ");
+// unity-plugin は sha なので `v` を付けない（hook 側の label と同じ規則）。
+const summary = drifted
+  .map((d) => (d.basis === "unity-plugin" ? `${d.skill} 公式 unity プラグイン ${d.from}→${d.to}` : `${d.skill} v${d.from}→v${d.to}`))
+  .join(" / ");
 // .md 統合でテンプレと現物が矛盾し、その場で決め切らなかったとき Claude が sync-notes.md に
 // 書き残す（md-merge-contract.md 参照）。判断の材料を PR 本文へ持ち上げてレビューの場に出す。
 // 読んだら消す（次回の PR に古いメモを持ち越さない）。
@@ -459,7 +484,7 @@ if (existsSync(notesPath)) {
 }
 const body =
   `project-setup テンプレートの更新に自動追随する PR です（\`/sync-setup\`）。\n\n` +
-  `## 同期内容\n\n${drifted.map((d) => `- ${d.skill}: v${d.from} → v${d.to}${d.basis === "plugin" ? "（skill 版が未記録のためプラグイン版で比較）" : ""}（flags: ${d.flags.join(" ") || "なし"}）`).join("\n")}\n\n` +
+  `## 同期内容\n\n${drifted.map((d) => `- ${d.skill}: ${d.basis === "unity-plugin" ? `公式 unity プラグイン ${d.from} → ${d.to}` : `v${d.from} → v${d.to}`}${d.basis === "plugin" ? "（skill 版が未記録のためプラグイン版で比較）" : ""}（flags: ${d.flags.join(" ") || "なし"}）`).join("\n")}\n\n` +
   (carriedNotes ? `## 要確認（テンプレと現物が矛盾）\n\n${carriedNotes}\n\n` : "") +
   (carriedWarnings.length ? `## apply.mjs の警告\n\n${carriedWarnings.join("\n\n")}\n` : "警告はありません。\n");
 const commitMsg = `chore: テンプレ同期 v${currentVersion}\n\n${summary}`;
