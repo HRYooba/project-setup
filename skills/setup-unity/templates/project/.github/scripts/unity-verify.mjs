@@ -25,7 +25,7 @@ import { pathToFileURL } from "node:url";
 /* global process, console */
 
 // 配備先が抑止したいバンドル拡張子を書くファイル。テンプレに含まれないので
-// テンプレ同期に踏まれない（workflow やこのスクリプトを書き換えても同期で戻る）。
+// テンプレ同期に踏まれない（このスクリプト自体を書き換えても同期で戻る）。
 //   { "extraBundleExtensions": [".xcframework", ".bundle"] }
 const CONFIG_PATH = ".github/unity-verify.config.json";
 

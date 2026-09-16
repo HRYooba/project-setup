@@ -13,7 +13,7 @@ description: >
   Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れる。アプリ本体の置き場（既定 `Assets/App/`）、
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無、レビュー対象を
   そこへ絞るかを実行時に AskUserQuestion で確認する。
-version: 3.13.0
+version: 3.14.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -123,13 +123,14 @@ apply.mjs が次を行う:
   どれもビルド成果物・配布物なので上書きする（**設定ファイルは配らない**ので、配備先が育てる
   ファイルがここに無い ＝ マージ判定が要らない）
 - `.claude/rules/*.md` と `.claude/CLAUDE.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。CLAUDE.md は節を配るので全文一致では判定できず、**節の非空行がすべて配備先にあれば反映済み**とみなす（判定基準がテンプレ本体から導出されるので、別途マーカーを維持しなくてよい）
+- `.github/workflows/unity-ci.yml` も**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持して「要マージ」として報告する。CI の走らせ方は配備先の事情（LFS を引くか・トリガー・runner）を抱えるため、黙って巻き戻さない。`.github/` の他の配布物（`scripts/unity-verify.mjs` / `actions/setup-unity-cli/action.yml`）と `Assets/Analyzers/**` は無条件に上書きする
 - 公式 unity プラグインを上流から clone（marketplace が pin した sha へ checkout）し、`skills/` `commands/` `agents/` の全件と `LICENSE.md` を `{target}/.claude/` 配下へ配置する（上記 8）
 - `{target}/.claude/settings.json` の `skillOverrides` へ、配った skill 名ぶんの `"unity:<name>": "off"` をマージする（他キーは温存。既に値があれば触らない。settings.json が不正な JSON なら見送って続行する）
 - `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時の skill 版 = この SKILL.md の `version:`、有効フラグ = `--architecture`、`unityPlugin` = 配った sha と各種名）をマージ記録する（setup-github のキーは温存）。**settings.json へ書くのは `skillOverrides` だけで、hook は配らない**（上記 9）。ドリフト検知の hook（SessionStart の `sync-setup-check.mjs` と UserPromptSubmit の `sync-setup-prompt.mjs`）は setup-github が配り、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
 
 ### Step 2.5: 要マージのファイルを統合する
 
-apply.mjs の出力に「要マージ」節があれば、`${CLAUDE_PLUGIN_ROOT}/skills/md-merge-contract.md`
+apply.mjs の出力に「要マージ」節があれば、`${CLAUDE_PLUGIN_ROOT}/skills/merge-contract.md`
 を Read し、そこに書かれた手順と判断基準に従って各ファイルを統合する。**この工程を飛ばすと
 テンプレ更新がその配備先に届かない。**「要マージ」節が無ければ何もしない。
 

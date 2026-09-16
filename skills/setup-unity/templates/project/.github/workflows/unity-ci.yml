@@ -34,9 +34,13 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
+      # LFS の実体は引かない。この検査が読むのは .meta と GUID、そして conflict marker で、
+      # どれも LFS 追跡外かポインタのテキストに出る（LFS 管理のアセットが衝突しても、
+      # マーカーが載るのはポインタ側）。実体を引くと、毎 PR で LFS の帯域（課金対象）を
+      # アセットの総量だけ消費する。実体が要る検査を足すときだけ lfs: true にする。
       - uses: actions/checkout@v7
         with:
-          lfs: true
+          lfs: false
       - uses: ./.github/actions/setup-unity-cli
       # --strict で warning も落とす。META_MISSING / META_ORPHAN / GUID_DUPLICATE /
       # CONFLICT_MARKERS はどれもマージ事故の残骸で、放置するとビルドが壊れる。

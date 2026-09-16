@@ -1,7 +1,7 @@
 // テンプレート同期の実行本体。
 //
 // SessionStart hook（sync-setup-check.mjs）は検知して知らせるだけに徹し、実際の同期は
-// **ユーザーのセッションにいる Claude** が `/sync-setup` を実行して行う。要マージ .md の統合は
+// **ユーザーのセッションにいる Claude** が `/sync-setup` を実行して行う。要マージファイルの統合は
 // LLM の判断を含む工程なので、進行も判断も見えている場所で走らせる。
 //
 // このスクリプトが「コードで担保」すること（SKILL.md の指示文には委ねない）:
@@ -20,11 +20,11 @@
 // できないため、あちらは同じ規則を自前で持つ。挙動を変えるときは両方を揃える
 //（decideDrift / SKILL.md の version の読み方 / installed_plugins.json の読み方）。
 //
-// 実行は 2 フェーズに分かれる。間に「Claude が .md をマージする」工程が挟まるため。
-// apply.mjs は rules/*.md と CLAUDE.md を書かず「要マージ」として報告するだけなので、
-// commit まで一息に走らせると .md 更新が反映されないまま PR が出る。
+// 実行は 2 フェーズに分かれる。間に「Claude がマージする」工程が挟まるため。
+// apply.mjs は配備先が育てる前提のファイルを書かず「要マージ」として報告するだけなので、
+// commit まで一息に走らせるとその更新が反映されないまま PR が出る。
 //   --phase=apply   … 重複チェック → 試行上限 → worktree 作成 → apply 再適用（ここで停止）
-//   〈この間に SKILL 手順で Claude が worktree 内の要マージ .md を統合する〉
+//   〈この間に SKILL 手順で Claude が worktree 内の要マージファイルを統合する〉
 //   --phase=publish … commit → push → PR 作成（merge はしない）→ worktree 撤去
 // フェーズ間の引き継ぎ（同期計画・警告・worktree パス）は attempts と同じデータディレクトリの
 // sync-plan.json に置く。対象リポジトリ内に置くと git add -A で PR に混入するため。
@@ -130,7 +130,7 @@ const phase = phaseArg ? phaseArg.slice("--phase=".length) : null;
 if (!dryRun && !["apply", "publish"].includes(phase)) {
   fail(
     "--phase=apply または --phase=publish が必要です。\n" +
-      "  apply   … ブランチ作成とテンプレ再適用（この後 Claude が要マージの .md を統合する）\n" +
+      "  apply   … ブランチ作成とテンプレ再適用（この後 Claude が要マージのファイルを統合する）\n" +
       "  publish … commit / push / PR 作成\n" +
       "計画だけ見たいときは --dry-run。"
   );
@@ -178,7 +178,7 @@ const attemptsPath = process.env.SYNC_SETUP_ATTEMPTS_JSON || join(dataDir, "sync
 // plan は鍵の照合で気づけるものの publish が落ちて apply からやり直し（試行回数を 1 消費）、
 // notes は照合手段が無いので**別リポジトリの矛盾メモが黙って PR 本文へ載る**。
 const planPath = process.env.SYNC_SETUP_PLAN_JSON || join(dataDir, "plans", `${repoKey(target)}.json`);
-// .md 統合で矛盾が出たとき Claude が書き残すメモ。publish が PR 本文へ転記して消す。
+// 統合で矛盾が出たとき Claude が書き残すメモ。publish が PR 本文へ転記して消す。
 // 場所は apply が出力する（ドキュメントに literal を書くと、この式が動いたとき黙って嘘になる）。
 const notesPath = process.env.SYNC_SETUP_NOTES_MD || join(dataDir, "notes", `${repoKey(target)}.md`);
 const repoId = git(target, "remote", "get-url", "origin") || target;
@@ -298,7 +298,7 @@ function gh(cwd, ...a) {
 
 // ============================ apply フェーズ ============================
 // ガード → ブランチ作成 → テンプレ再適用まで。commit はしない。
-// apply.mjs は rules/*.md と CLAUDE.md を書かず「要マージ」として報告するので、
+// apply.mjs は配備先が育てる前提のファイルを書かず「要マージ」として報告するので、
 // この後 SKILL 手順で Claude がそれらを統合してから publish フェーズへ進む。
 if (phase === "apply") {
   // ---- 試行上限ガード（コード担保）----
@@ -430,8 +430,8 @@ if (phase === "apply") {
   console.log("  対象リポジトリの作業ツリーとブランチには触れていません。編集はこの worktree の中で行ってください。");
   console.log(
     anyNeedsMerge
-      ? "要マージの .md があります。worktree 内のファイルを統合してから publish フェーズへ進んでください。"
-      : "要マージの .md はありません。そのまま publish フェーズへ進めます。"
+      ? "要マージのファイルがあります。worktree 内のファイルを統合してから publish フェーズへ進んでください。"
+      : "要マージのファイルはありません。そのまま publish フェーズへ進めます。"
   );
   if (anyNeedsMerge) {
     mkdirSync(dirname(notesPath), { recursive: true });
@@ -474,8 +474,8 @@ if (!staged) {
 const summary = drifted
   .map((d) => (d.basis === "unity-plugin" ? `${d.skill} 公式 unity プラグイン ${d.from}→${d.to}` : `${d.skill} v${d.from}→v${d.to}`))
   .join(" / ");
-// .md 統合でテンプレと現物が矛盾し、その場で決め切らなかったとき Claude が sync-notes.md に
-// 書き残す（md-merge-contract.md 参照）。判断の材料を PR 本文へ持ち上げてレビューの場に出す。
+// 統合でテンプレと現物が矛盾し、その場で決め切らなかったとき Claude が sync-notes.md に
+// 書き残す（merge-contract.md 参照）。判断の材料を PR 本文へ持ち上げてレビューの場に出す。
 // 読んだら消す（次回の PR に古いメモを持ち越さない）。
 let carriedNotes = "";
 if (existsSync(notesPath)) {
