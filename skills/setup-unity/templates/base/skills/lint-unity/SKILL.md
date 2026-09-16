@@ -5,7 +5,7 @@ description: >
   **ユーザーの依頼を待たずに実行する**。Unity のアセット命名・ヒエラルキー・シーン構成・
   Prefab 整合性・フォルダ構成・SerializeField 参照・asmdef 依存・マテリアルが規約に沿っているかを
   検査してレポートする。範囲は `--scene <名前>` / `--prefabs` / `--assets <パス>` / `--all` で絞れる。
-version: 3.0.0
+version: 3.1.0
 paths: {{APP_ROOT}}**
 context: fork
 agent: unity-linter
@@ -28,8 +28,8 @@ agent: unity-linter
 
 ```
 Bash: unity pipeline list --format json
-Bash: git diff --name-only origin/<default>...HEAD -- '{{APP_ROOT}}'
-Bash: git diff --name-only HEAD -- '{{APP_ROOT}}'
+Bash: git diff --name-only --diff-filter=d origin/<default>...HEAD -- '{{APP_ROOT}}'
+Bash: git diff --name-only --diff-filter=d HEAD -- '{{APP_ROOT}}'
 Bash: git ls-files --others --exclude-standard -- '{{APP_ROOT}}'
 ```
 
@@ -41,16 +41,16 @@ Bash: git ls-files --others --exclude-standard -- '{{APP_ROOT}}'
 
 | 拡張子 | カテゴリ |
 |---|---|
-| `.unity` | B, C, D, G, I, J |
-| `.prefab` | A, C, F, G, J |
+| `.unity` | B, C, D, E, G, I, J |
+| `.prefab` | A, C, E, F, G, J |
 | `.mat` | A, E, J |
 | `.asset`/`.anim`/`.controller`/`.shadergraph`/`.shader`/`.hlsl`/`.vfx`/`.renderTexture`/`.playable` | A, E |
 | `.png`/`.jpg`/`.tga`/`.exr` | A, E |
 | `.wav`/`.mp3`/`.ogg` | A, E |
 | `.asmdef` | H |
 
-引数で範囲を指定されたとき: `--scene` → B/C/D/G/I/J、`--prefabs` と `.prefab` パス →
-A/C/F/G/J、`--assets` → A/E/J、`--all` → 全カテゴリ。
+引数で範囲を指定されたとき: `--scene` → B/C/D/E/G/I/J、`--prefabs` と `.prefab` パス →
+A/C/E/F/G/J、`--assets` → A/E/J、`--all` → 全カテゴリ。
 
 対象が無ければ「対象なし」で終わる。
 
@@ -68,6 +68,9 @@ A/C/F/G/J、`--assets` → A/E/J、`--all` → 全カテゴリ。
 | [H] asmdef | 循環検出にはグラフ全体が要るので全 asmdef を読む。**報告は検出した asmdef に関わるものだけ** |
 
 全体を見たいときは `--all` を明示的に渡す。
+
+**差分に現れない違反は検査項目に置かない。** 「未使用アセット」「空フォルダ」のような
+プロジェクト全体の走査でしか判定できない項目は checklist から外してある。
 
 [E] [H] とファイル名で判定できる [A] は `Glob` / `Read` で完結する。残り（[B] [C] [D] [F]
 [G] [I] [J]）は live Editor が要るので、到達できないなら飛ばす。

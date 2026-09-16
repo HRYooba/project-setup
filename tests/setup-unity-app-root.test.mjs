@@ -93,7 +93,7 @@ test("指定すると規約の適用範囲が 4 箇所とも揃う", () => {
 
   const lint = read(target, ".claude", "skills", "lint-unity", "SKILL.md");
   assert.match(lint, /^paths: Assets\/Game\/\*\*$/m);
-  assert.match(lint, /git diff --name-only HEAD -- 'Assets\/Game\/'/);
+  assert.match(lint, /git diff --name-only[^']* -- 'Assets\/Game\/'/);
 
   assert.match(read(target, ".claude", "rules", "folder-structure.md"), /Assets\/Game\//);
 
