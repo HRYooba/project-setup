@@ -58,8 +58,7 @@ Unity Editor は開いているフォルダ 1 つしか見ない。そのフォ�
 ## インストール
 
 ```
-/plugin marketplace add hryooba/project-setup
-/plugin install project-setup@hryooba
+/plugin install project-setup --marketplace hryooba/project-setup
 ```
 
 scope は `user`（デフォルト）を推奨。全プロジェクトで skill が使えるようになる。
