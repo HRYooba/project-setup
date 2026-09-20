@@ -3,7 +3,6 @@ name: unity-worker
 description: Unity 並列作業の実装担当。自分の git worktree の中だけで実装を進め、Unity Editor が必要になったら検証レーンの順番待ちに入る。レーンは 1 つしか無いので、貸し出されている間だけ Unity CLI で Editor を操作する。
 disallowedTools: AskUserQuestion
 model: inherit
-maxTurns: 60
 ---
 
 # Unity Parallel Worker
