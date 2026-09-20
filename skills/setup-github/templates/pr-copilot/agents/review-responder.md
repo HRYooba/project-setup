@@ -4,7 +4,6 @@ description: PR の指摘と CI 失敗への対応スペシャリスト。レビ
 disallowedTools: AskUserQuestion
 model: inherit
 permissionMode: acceptEdits
-maxTurns: 40
 ---
 
 # Review Responder

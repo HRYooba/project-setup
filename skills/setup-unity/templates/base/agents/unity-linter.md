@@ -4,7 +4,6 @@ description: Unity アセット・シーン・Prefab のルール準拠チェッ
 disallowedTools: Write, Edit, AskUserQuestion
 model: sonnet
 effort: medium
-maxTurns: 25
 ---
 
 # Unity Asset & Scene Lint Specialist
