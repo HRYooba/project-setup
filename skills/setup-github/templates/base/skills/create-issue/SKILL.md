@@ -5,7 +5,7 @@ description: >
   「タスク化」「Issueにして」）に使う。会話やプランの内容から GitHub Issue を作成する。
   引数なしなら直前の会話から起こし、`/create-issue タイトル` で明示指定もできる。
   外向きの成果物を作るので、依頼されていないのに起票しない。
-version: 0.5.0
+version: 0.5.1
 allowed-tools: Bash(gh *), AskUserQuestion
 references:
   - references/templates.md
@@ -14,10 +14,8 @@ references:
 # Create Issue
 
 会話コンテキストからGitHub Issueを作成する。
-
-## CRITICAL
-
-- **プランモードに入らないこと**。`EnterPlanMode` を使用せず、直接ワークフローを実行する。
+プランモード（`EnterPlanMode`）には入らず、このワークフローを直接実行する。
+方針は Step 1 の対話で決めるので、別に計画を立てる段は要らない。
 
 ## ワークフロー
 
