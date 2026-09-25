@@ -16,8 +16,8 @@
 
 | 種別 | 命名 | 責務 | 作成基準・契約 |
 |:-----|:-----|:-----|:---------------|
-| UseCase | 動詞 + 名詞 + `UseCase`、公開エントリは原則 `ExecuteAsync` 1 つ | 単一のアプリケーションコマンド（検証・実行・結果解釈） | 下記「UseCase 作成基準」を満たす場合のみ作成。**他の UseCase を呼ばない** |
-| Orchestrator | `*Orchestrator` | 複数 UseCase の逐次実行・分岐・補償（rollback） | 下記「Orchestrator 規約」参照 |
+| UseCase | 動詞 + 名詞 + `UseCase`、公開エントリは原則 `ExecuteAsync` 1 つ | 単一のアプリケーションコマンド（検証・実行・結果解釈） | 状態を変える操作（command）にだけ作る。読み取りは UseCase にしない。**他の UseCase / Orchestrator を呼ばない** |
+| Orchestrator | `*Orchestrator` | 複数 UseCase の逐次実行・分岐・補償（rollback） | 2 つ以上の UseCase の合成か、補償が要るときだけ作る。持つのは順序・分岐・補償のみ（検証・結果解釈は UseCase）。Orchestrator 同士は呼ばない |
 | State | `*State` + `IReadOnly*State` | runtime current value の保持・公開 | Presentation へは `IReadOnly*State` のみ DI 登録する。`_isDisposed` ガード必須 |
 | Repository | `I*Repository` | 集約ルートの永続化 port | 集約ルートごとに 1 つ。テーブル・Entity ごとに作らない。current value を保持しない（保持は State） |
 | Store | `I*Store` | 集約ルート以外（設定値・キャッシュ等）の永続化の load / save port | current value を保持しない（保持は State）。永続化結果と State の整合は UseCase / Orchestrator が担う |
@@ -27,37 +27,6 @@
 | Handle | `*Handle` | ライフサイクル管理付き asset 保持 | DTO の asset 禁止規定の**明示的例外**。`IDisposable` 必須で、Dispose は 1 回だけ。Dispose 後に実体が解放されるか（参照カウント等で生存するか）は型名に出さない。保持する asset を書き換えない・`Destroy` しない |
 | Options | `*Options` | 起動時確定の immutable 設定値 | `SettingsAsset.ToOptions()` で生成。値域 clamp は Options 側に置く（SettingsAsset と二重実装しない） |
 | Preferences | `*Preferences` | ユーザーが UI から変更し永続化する個人設定値 | `Settings` と呼ばない（asset / Options と混同するため） |
-
-### UseCase 作成基準
-
-状態を変える操作（command）はすべて UseCase にする。ローカル設定の変更も含む。
-読み取り（query）は UseCase にしない（下記「Presenter が Service を直接利用してよい範囲」）。
-
-### Orchestrator 規約
-
-「UseCase 同士は呼べない」制約を保ったまま複合フローを実現する唯一の合成点。
-
-1. 依存方向は **Orchestrator → UseCase の一方向のみ**。UseCase は Orchestrator を知らない。
-   Orchestrator 同士も呼ばない。呼び出しグラフは
-   「Presentation → Orchestrator → UseCase → Service」の深さ固定 DAG に保つ
-2. 持つのは**逐次実行・分岐・補償（rollback）・トランザクション境界のみ**。
-   ビジネス検証・結果解釈は各 UseCase 内に置く
-3. **作成基準**: 2 つ以上の UseCase の合成、または補償フローを持つ場合のみ。
-   1 UseCase しか呼ばないなら作らない
-4. Presentation は UseCase / Orchestrator のどちらも呼んでよい（合成が要るときだけ Orchestrator）
-
-### エラー契約
-
-- 失敗しうる操作は `OperationResult`（エラー型をジェネリクスで型付けしたもの）を返す。
-  例外は「呼び出し側にバグがある」場合（引数契約違反等）のみ
-- port（Service / Repository / Store）のエラー契約も OperationResult 返しに統一する（例外伝播契約を作らない）
-- **UI 表示文言は Presentation の責務**。Application / Infrastructure は ErrorCode を返し、
-  `ErrorMessage` はログ・診断用の開発者向け文言（英語）に限定する
-- context 境界をまたぐエラーは受け側 context の ErrorCode へ変換してから返す
-  （他 context の enum をそのまま漏らさない）
-- キャンセルは `ct.ThrowIfCancellationRequested()` + 呼び出し側 `catch (OperationCanceledException)` に統一。
-  OCE を握りつぶさない（Poller のループ脱出での黙殺のみ許容）。
-  catch フィルタは `when (ex is not OperationCanceledException)` 形式に統一
 
 ## Presentation
 
@@ -84,20 +53,8 @@
 | SDK adapter | SDK 名 prefix（例: `Vivox*` / `Fusion*` / `UnityAudio*`） | 外部 SDK の port 実装 | 1 クラス 1 port が原則。複数 port を 1 クラスで実装しない |
 | Cache | `*Cache` | runtime cache（LRU 等） | 同形のキャッシュを型別にコピーしない（generic 化する） |
 | DTO | `*Dto` | backend 契約のミラー | 公開ファイルで定義する（private nested にしない） |
-| Listener | `*Listener` | 外部からの push（SDK イベント・通知）を受けて UseCase を呼ぶ入口 | 下記「Listener / Poller」参照 |
-| Poller | `*Poller` | 外部を定期取得して UseCase を呼ぶ入口 | 下記「Listener / Poller」参照 |
-
-### Listener / Poller
-
-外部サービス側から来る入力の受け口。利用者側から来る入力を受ける Presenter / Manager と対になる。
-
-| 種別 | lifecycle |
-|:-----|:----------|
-| Listener | `Start()` + `IDisposable`。`CompositeDisposable` で購読管理、`_isStarted` で多重 Start ガード |
-| Poller | `RunLoopAsync(CancellationToken)`。lifecycle は ct 任せ。共通基底（`PollerBase`）を継承 |
-
-- 受けた入力は UseCase / Orchestrator へ渡すだけ。State を直接書かない
-- 業務ルール（フィルタ・集計ポリシー）を書かない（UseCase または純関数へ）
+| Listener | `*Listener` | 外部からの push（SDK イベント・通知）を受けて UseCase を呼ぶ入口 | `Start()` + `IDisposable`。State を直接書かない |
+| Poller | `*Poller` | 外部を定期取得して UseCase を呼ぶ入口 | `RunLoopAsync(CancellationToken)`。共通基底 `PollerBase` を継承。State を直接書かない。ループ脱出時の OperationCanceledException の黙殺のみ許容 |
 
 ## Composition
 
