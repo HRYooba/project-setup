@@ -21,7 +21,6 @@
 | State | `*State` + `IReadOnly*State` | runtime current value の保持・公開 | Presentation へは `IReadOnly*State` のみ DI 登録する。`_isDisposed` ガード必須 |
 | Store | `I*Store` | 永続化の load / save port | current value を保持しない（保持は State）。永続化結果と State の整合は UseCase / Orchestrator が担う |
 | Service | `I*Service` | 外部サービスへの port | 1 interface 1 責務。責務が混ざったら分割する |
-| Synchronizer | `*Synchronizer` | Service ↔ State の同期配線 | 下記「Synchronizer」参照 |
 | ErrorCode | `*ErrorCode` | context ごとの失敗分岐 enum | **`None = 0` を必ず持つ**（成功時の `OperationResult.ErrorCode` は `default(TError)` = 0 値になるため、0 を実エラーに割り当てると成功結果が実エラー値を保持してしまう）。`None` を `Failure` に渡さない。共通メンバー名は `NetworkError` / `ServerError` / `InvalidResponse` / `Unknown` に統一 |
 | DTO | 名詞（`Dto` サフィックスを**付けない**。Infrastructure の backend ミラー DTO と区別するため） | 層間データ運搬 | `readonly struct` または `record`。mutable にしない。Unity asset 参照を持たない（必要なら asset key / ID を持ち、ロードは asset service に分離する）。MonoBehaviour / Component 参照を持たない。コンストラクタで null → `string.Empty` 正規化 |
 | Lease / Handle | `*Lease` / `*Handle` | ライフサイクル管理付き asset 保持。**Lease** = 共有リソースの貸与（Dispose で「返却」し参照カウント等で元リソースは生存しうる）、**Handle** = 個別に確保した実体への参照（Dispose で対象そのものを解放） | DTO の asset 禁止規定の**明示的例外**。`IDisposable` 必須、Dispose 契約を doc に明記 |
@@ -56,19 +55,8 @@
 - context 境界をまたぐエラーは受け側 context の ErrorCode へ変換してから返す
   （他 context の enum をそのまま漏らさない）
 - キャンセルは `ct.ThrowIfCancellationRequested()` + 呼び出し側 `catch (OperationCanceledException)` に統一。
-  OCE を握りつぶさない（Synchronizer のループ脱出での黙殺のみ許容）。
+  OCE を握りつぶさない（Poller のループ脱出での黙殺のみ許容）。
   catch フィルタは `when (ex is not OperationCanceledException)` 形式に統一
-
-### Synchronizer
-
-Service ↔ State の同期配線専用クラス。次の 2 形態のみ:
-
-| 形態 | lifecycle | 用途 |
-|:-----|:----------|:-----|
-| push 購読型 | `Start()` + `IDisposable`。`CompositeDisposable` で購読管理、`_isStarted` で多重 Start ガード | Service のイベント / Observable を State へ反映 |
-| poll 型 | `RunLoopAsync(CancellationToken)`。lifecycle は ct 任せ。共通基底（`PollingSynchronizerBase`）を継承 | 周期フェッチで State を更新 |
-
-業務ルール（フィルタ・集計ポリシー）を Synchronizer に書かない（State または純関数へ）。
 
 ## Presentation
 
@@ -95,6 +83,20 @@ Service ↔ State の同期配線専用クラス。次の 2 形態のみ:
 | SDK adapter | SDK 名 prefix（例: `Vivox*` / `Fusion*` / `UnityAudio*`） | 外部 SDK の port 実装 | 1 クラス 1 port が原則。複数 port を 1 クラスで実装しない |
 | Cache | `*Cache` | runtime cache（LRU 等） | 同形のキャッシュを型別にコピーしない（generic 化する） |
 | DTO | `*Dto` | backend 契約のミラー | 公開ファイルで定義する（private nested にしない） |
+| Listener | `*Listener` | 外部からの push（SDK イベント・通知）を受けて UseCase を呼ぶ入口 | 下記「Listener / Poller」参照 |
+| Poller | `*Poller` | 外部を定期取得して UseCase を呼ぶ入口 | 下記「Listener / Poller」参照 |
+
+### Listener / Poller
+
+外部サービス側から来る入力の受け口。利用者側から来る入力を受ける Presenter / Manager と対になる。
+
+| 種別 | lifecycle |
+|:-----|:----------|
+| Listener | `Start()` + `IDisposable`。`CompositeDisposable` で購読管理、`_isStarted` で多重 Start ガード |
+| Poller | `RunLoopAsync(CancellationToken)`。lifecycle は ct 任せ。共通基底（`PollerBase`）を継承 |
+
+- 受けた入力は UseCase / Orchestrator へ渡すだけ。State を直接書かない
+- 業務ルール（フィルタ・集計ポリシー）を書かない（UseCase または純関数へ）
 
 ## Composition
 
@@ -102,7 +104,7 @@ Service ↔ State の同期配線専用クラス。次の 2 形態のみ:
 |:-----|:-----|:-----|:---------------|
 | LifetimeScope | `*LifetimeScope` | scope 単位の配線 | 配線のみ。実装ロジック・起動時副作用（外部ツール設定等）を持たない |
 | Installer | `*Installer` | 機能単位の DI 登録分割 | 複数 scope から使い回す、または差し替える単位のときに分ける。1 つの LifetimeScope からしか呼ばれず差し替えもしないなら分けない |
-| EntryPoint | `*EntryPoint` | DI コンテナの lifecycle（`IStartable` / `IAsyncStartable` / `IDisposable`）に載せる起動・停止 adapter | plain class。`Composition/EntryPoints/` に置く。起動対象（Synchronizer 等）に lifecycle 依存を持ち込まないために存在するので、**自身は業務ロジックを持たず起動・停止のみ**。CancellationTokenSource の生成・cancel と多重 Dispose ガードを担う |
+| EntryPoint | `*EntryPoint` | DI コンテナの lifecycle（`IStartable` / `IAsyncStartable` / `IDisposable`）に載せる起動・停止 adapter | plain class。`Composition/EntryPoints/` に置く。起動対象（Listener / Poller 等）に lifecycle 依存を持ち込まないために存在するので、**自身は業務ロジックを持たず起動・停止のみ**。CancellationTokenSource の生成・cancel と多重 Dispose ガードを担う |
 | SettingsAsset | `*SettingsAsset` | Unity Inspector で編集する ScriptableObject | 必ず `ToOptions()` を持つ。`CreateAssetMenu` のメニュー名・order は既存と衝突させない |
 
 ## Shared
