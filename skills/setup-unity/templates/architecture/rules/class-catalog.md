@@ -23,21 +23,14 @@
 | Service | `I*Service` | 外部サービスへの port | 1 interface 1 責務。責務が混ざったら分割する |
 | Synchronizer | `*Synchronizer` | Service ↔ State の同期配線 | 下記「Synchronizer」参照 |
 | ErrorCode | `*ErrorCode` | context ごとの失敗分岐 enum | **`None = 0` を必ず持つ**（成功時の `OperationResult.ErrorCode` は `default(TError)` = 0 値になるため、0 を実エラーに割り当てると成功結果が実エラー値を保持してしまう）。`None` を `Failure` に渡さない。共通メンバー名は `NetworkError` / `ServerError` / `InvalidResponse` / `Unknown` に統一 |
-| DTO | 名詞（`Dto` サフィックスを**付けない**。Infrastructure の backend ミラー DTO と区別するため） | 層間データ運搬 | `readonly struct` または `record`。mutable にしない。Unity asset 参照を持たない。コンストラクタで null → `string.Empty` 正規化 |
+| DTO | 名詞（`Dto` サフィックスを**付けない**。Infrastructure の backend ミラー DTO と区別するため） | 層間データ運搬 | `readonly struct` または `record`。mutable にしない。Unity asset 参照を持たない（必要なら asset key / ID を持ち、ロードは asset service に分離する）。MonoBehaviour / Component 参照を持たない。コンストラクタで null → `string.Empty` 正規化 |
 | Lease / Handle | `*Lease` / `*Handle` | ライフサイクル管理付き asset 保持。**Lease** = 共有リソースの貸与（Dispose で「返却」し参照カウント等で元リソースは生存しうる）、**Handle** = 個別に確保した実体への参照（Dispose で対象そのものを解放） | DTO の asset 禁止規定の**明示的例外**。`IDisposable` 必須、Dispose 契約を doc に明記 |
 | Options | `*Options` | 起動時確定の immutable 設定値 | `SettingsAsset.ToOptions()` で生成。値域 clamp は Options 側に置く（SettingsAsset と二重実装しない） |
 
 ### UseCase 作成基準
 
-以下の**いずれか**を満たす操作のみ UseCase にする:
-
-1. 複数依存（Service / Store / State）の協調が必要
-2. バリデーション + 外部操作の組み合わせ
-3. 失敗処理・結果解釈・共有状態更新を伴う
-
-読み取り専用のフェッチは Presenter → Service 直接呼び出しを正とし、
-パススルー UseCase を作らない。mutable State の隠蔽だけが目的の書き込み転送 facade は
-許容するが、新設時は本当に必要か再考する。
+状態を変える操作（command）はすべて UseCase にする。ローカル設定の変更も含む。
+読み取り（query）は UseCase にしない（下記「Presenter が Service を直接利用してよい範囲」）。
 
 ### Orchestrator 規約
 
@@ -76,13 +69,6 @@ Service ↔ State の同期配線専用クラス。次の 2 形態のみ:
 
 業務ルール（フィルタ・集計ポリシー）を Synchronizer に書かない（State または純関数へ）。
 
-## Domain
-
-| 種別 | 命名 | 責務 | 作成基準・契約 |
-|:-----|:-----|:-----|:---------------|
-| 業務分類 | 名詞（enum） | 業務概念の分類 | **enum であることは Domain 配置の根拠にならない**。配置は層の判定基準が決める |
-| 値オブジェクト | 名詞（readonly struct / record） | 業務概念の不変条件・導出 | 同上 |
-
 ## Presentation
 
 | 種別 | 命名 | 責務 | 作成基準・契約 |
@@ -96,9 +82,8 @@ Service ↔ State の同期配線専用クラス。次の 2 形態のみ:
 
 ### Presenter が Service を直接利用してよい範囲
 
-状態購読（`IReadOnly*State`）、読み取り専用フェッチ、ローカル設定（即時・可逆・共有状態なし）、
-アセット取得、毎フレームのランタイム制御。
-検証・失敗処理・共有状態更新を伴う操作は UseCase / Orchestrator 経由。
+読み取り（状態購読 `IReadOnly*State`・フェッチ・アセット取得）と、毎フレームのランタイム制御。
+状態を変える操作は UseCase / Orchestrator 経由。
 
 ## Infrastructure
 

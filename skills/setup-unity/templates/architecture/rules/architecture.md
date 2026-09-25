@@ -2,37 +2,18 @@
 
 # アーキテクチャ構成
 
-Unity の実用向けレイヤードアーキテクチャ。依存方向は外→内の一方向。
+クリーンアーキテクチャを Unity 向けに 6 層へ割ったもの。一般論と異なる点だけを書く。
 
 ## レイヤー定義
 
 | 層 | 責務 |
 |:---|:-----|
-| **Presentation** | 画面・入力・演出。UI（Model / View / Presenter）と Gameplay（UI 以外のランタイム制御）から成る |
-| **Application** | アプリケーション固有のビジネスルール。port（interface）を介して外部依存を扱い、ユースケースの目的を達成する。UI・外部サービス具象に依存しない |
-| **Domain** | 業務概念そのものの性質。下記「Domain 配置の判定基準」を満たすもののみを置く |
-| **Infrastructure** | Application / Domain の port の具象実装。業務ルールは持たない |
-| **Composition** | DI 登録・初期化順序・エントリーポイント（Composition Root）。全層参照可、配線目的のみ。SettingsAsset → Options 変換もこの層 |
-| **Shared** | ビジネス意味を持たない技術的ユーティリティ（全層から参照可）。ログ出力等の暗黙の副作用を持たない |
-
-## 層配置の判定基準
-
-型・フィールドの所属層は「**外側の層だけの変更が、内側の層の変更を強制するか**」で判定する。
-強制するならその型・フィールドは内側にあってはならない（＝漏れ）。内外の順は下記「依存ルール」
-表の参照方向に従う（参照する側が外）。
-
-- **型ではなくフィールド単位で当てる**。1 つの型の中で判定が割れる（業務条件のフィールドは
-  正当、外部 API の方式を表すフィールドは漏れ、が同居しうる）
-- **落ちたら誤配置が確定する。通っても正しいとは限らない**（十分条件であって必要条件ではない）。
-  通った型はレイヤー定義の責務に照らして個別に判断する
-
-## Domain 配置の判定基準
-
-「その分類・規則が、**特定のユースケース・画面・外部契約から独立に、業務概念そのものの性質として
-成り立つか**」で判定する。Yes なら Domain、No なら Application。
-
-- Application に置くもの（Domain ではない）: コマンドの入力検証（文字数制限等、サーバー API 契約のミラー）、
-  サーバー仕様が意味論を所有する判定ロジック、UI 挙動のポリシー（未読集計等）、演出のポリシー
+| **Presentation** | UI（Model / View / Presenter）と Gameplay（UI 以外のランタイム制御） |
+| **Application** | ユースケース層 |
+| **Domain** | エンティティ層 |
+| **Infrastructure** | Application の port の具象実装 |
+| **Composition** | DI 登録・初期化順序・エントリーポイント（Composition Root）。配線目的のみ。SettingsAsset → Options 変換もこの層 |
+| **Shared** | ビジネス意味を持たない技術的ユーティリティ。ログ出力等の暗黙の副作用を持たない |
 
 ## 依存ルール
 
@@ -41,33 +22,14 @@ Unity の実用向けレイヤードアーキテクチャ。依存方向は外�
 | Shared | なし |
 | Domain | Shared |
 | Application | Domain, Shared |
-| Presentation | Application, Shared（Domain enum を UI 分岐で直接扱う明確な理由がある場合に限り Domain も可） |
+| Presentation | Application, Domain, Shared |
 | Infrastructure | Application, Domain, Shared |
 | Composition | 全層 |
 
-- 禁止の代表例: `Application → Infrastructure 具象`、`Presentation → Infrastructure 具象`、
-  `Presentation → Domain の値オブジェクト`（enum 例外を除く）、`Domain → 他の全層`
-- Presentation は外部 SDK（ネットワーク / アバター等のサードパーティ）を直接参照してよい
-- asmdef の references はこの表に従う。
-
-## Interface の配置基準（依存性逆転）
-
-Interface は使用する側の層に配置する。
-
-- port（外部サービス・永続化の契約）は Application に置く（`I*Service` / `I*Store`）
-- Repository Interface（ドメインオブジェクトの永続化契約）は Domain に置く
+asmdef の references はこの表に従う。
 
 ## MonoBehaviour 制約
 
 MonoBehaviour の継承は **Presentation / Shared / Composition のみ許可**。
 Domain / Application / Infrastructure では使用しない。
 Unity API（UnityEngine, UniTask, R3 等）はどの層でも使用可。
-
-## 層間のデータ受け渡し
-
-- Presentation → Application 間のメソッド引数・戻り値には、プリミティブ型・UnityEngine の値型
-  （`Vector3`, `Quaternion` 等）・DTO を使用する
-- MonoBehaviour / Component 参照（`Collider`, `Transform`, `GameObject` 等）を直接 Application 層に渡さない
-- Application の **DTO**（純データ運搬型）には `Texture2D` `Sprite` `GameObject` `AudioClip` `Material` などの
-  concrete Unity asset 参照を保持しない。必要な場合は asset key / ID を渡し、実際のロードは asset service に分離する
-- 例外: **Lease / Handle 型**（Dispose によるライフサイクル管理を伴う asset 保持型）は asset 参照を保持してよい
