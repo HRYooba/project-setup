@@ -150,3 +150,9 @@ summary で参照する型が上位レイヤーに属するなら、そもそも
 
 どちらに分類したかはコメントでなく構造で表現する: fail-soft のデフォルト値生成・警告ログは
 Composition の共通登録ヘルパーに集約し、fail-fast は素直に throw する（ヘルパーを介さない）。
+
+失敗の返し方:
+
+- 失敗しうる操作は（port を含め）エラー型付きの Result 型を返す。例外は呼び出し側のバグ（引数契約違反等）のみ
+- エラーに添える文言はログ用の開発者向け（英語）に限る。UI 表示文言は Presentation が持つ
+- catch フィルタは `when (ex is not OperationCanceledException)` に統一する
