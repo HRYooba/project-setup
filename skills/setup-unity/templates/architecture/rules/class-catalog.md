@@ -35,7 +35,7 @@
 | Model | `*Model` | プレゼンテーション状態の ReactiveProperty 保持 + 自身の整合性ロジック（値域制約・導出・状態遷移） | 素通し setter だけの Model にしない。表示判定・フィルタ等の純粋ロジックは Presenter でなく Model へ |
 | View | `*View` | UXML 参照・表示反映・入力の受け口 | UIDocument を持つ **MonoBehaviour**。**DI 依存を持たない受動的部品**。Presenter からメソッドを呼ばれ、入力を Observable で公開する |
 | Presenter | `*Presenter` | Model / View と Application の橋渡し | plain class + `IStartable`（または `IAsyncStartable`）+ `IDisposable` が原則。MonoBehaviour にするのは SerializeField / Unity イベント関数が必須の場合のみ |
-| Manager | `*Manager` | View を持たない非同期ワークフローの進行制御（scene load/unload、dialog 待ち、loading overlay 等） | plain class。Application 呼び出しは境界タイミング（開始・終了・イベント発生時）に限定し、毎フレーム呼び出しは避ける |
+| Manager | `*Manager` | UI 以外の進行制御（scene load/unload、ゲーム進行等）と Application の橋渡し。UI は Presenter が持つ | plain class。Application 呼び出しは境界タイミング（開始・終了・イベント発生時）に限定し、毎フレーム呼び出しは避ける |
 | Provider | `*Provider` | Presentation 向けの asset・データ供給と解放管理 | Handle の取得・保持・解放を一元管理する |
 | Binder | `*Binder` | UXML 部分木と状態の接続部品（dialog / リスト / スライダー行等） | View の内部部品。View と同じ受動性を保つ |
 
