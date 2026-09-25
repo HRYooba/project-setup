@@ -12,7 +12,7 @@
 | **Application** | ユースケース層 |
 | **Domain** | エンティティ層 |
 | **Infrastructure** | Application の port の具象実装 |
-| **Composition** | DI 登録・初期化順序・エントリーポイント（Composition Root）。配線目的のみ。SettingsAsset → Options 変換もこの層 |
+| **Composition** | DI 登録・初期化順序・エントリーポイント（Composition Root）と SettingsAsset |
 | **Shared** | ビジネス意味を持たない技術的ユーティリティ。ログ出力等の暗黙の副作用を持たない |
 
 ## 依存ルール
