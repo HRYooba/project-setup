@@ -48,9 +48,7 @@
 
 | 種別 | 命名 | 責務 | 作成基準・契約 |
 |:-----|:-----|:-----|:---------------|
-| HTTP adapter | `Http*Service` | backend API port の実装 | レスポンス解釈（deserialize・エラー分類）は adapter 間で共通化し、各 adapter に複製しない |
-| 永続化 adapter | 媒体 prefix + `*Repository` / `*Store`（例: `File*Store`） | Repository / Store port の実装 | |
-| SDK adapter | SDK 名 prefix | 外部 SDK の port 実装 | 1 クラス 1 port が原則。複数 port を 1 クラスで実装しない |
+| Adapter | 技術 prefix + port 名（例: `Http*Service` / `File*Store`） | Repository / Store / Service port の実装 | 1 クラス 1 port。複数 port を 1 クラスで実装しない |
 | Cache | `*Cache` | runtime cache（LRU 等） | 同形のキャッシュを型別にコピーしない（generic 化する） |
 | DTO | `*Dto` | backend 契約のミラー | 公開ファイルで定義する（private nested にしない） |
 | Listener | `*Listener` | 外部からの push（SDK イベント・通知）を受けて UseCase を呼ぶ入口 | `Start()` + `IDisposable`。State を直接書かない |
