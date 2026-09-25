@@ -22,7 +22,7 @@
 | Shared | なし |
 | Domain | Shared |
 | Application | Domain, Shared |
-| Presentation | Application, Domain, Shared |
+| Presentation | Application, Shared（Domain は enum のみ可） |
 | Infrastructure | Application, Domain, Shared |
 | Composition | 全層 |
 
