@@ -45,7 +45,7 @@
 |:-----|:-----|:-----|:---------------|
 | Adapter | 技術 prefix + port 名（例: `Http*Service` / `File*Store`） | Repository / Store / Service port の実装 | |
 | Cache | `*Cache` | runtime cache（LRU 等） | |
-| DTO | `*Dto` | backend 契約のミラー | 公開ファイルで定義する（private nested にしない） |
+| DTO | `*Dto` | backend 契約のミラー | |
 | Listener | `*Listener` | 外部からの push（SDK イベント・通知）を受けて UseCase を呼ぶ入口 | `Start()` + `IDisposable`。State を直接書かない |
 | Poller | `*Poller` | 外部を定期取得して UseCase を呼ぶ入口 | `RunLoopAsync(CancellationToken)`。State を直接書かない。ループ脱出時の OperationCanceledException の黙殺のみ許容 |
 
