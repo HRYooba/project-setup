@@ -26,6 +26,7 @@
 | DTO | 名詞（`Dto` サフィックスを**付けない**。Infrastructure の backend ミラー DTO と区別するため） | 層間データ運搬 | `readonly struct` または `record`。mutable にしない。Unity asset 参照を持たない（必要なら asset key / ID を持ち、ロードは asset service に分離する）。MonoBehaviour / Component 参照を持たない。コンストラクタで null → `string.Empty` 正規化 |
 | Lease / Handle | `*Lease` / `*Handle` | ライフサイクル管理付き asset 保持。**Lease** = 共有リソースの貸与（Dispose で「返却」し参照カウント等で元リソースは生存しうる）、**Handle** = 個別に確保した実体への参照（Dispose で対象そのものを解放） | DTO の asset 禁止規定の**明示的例外**。`IDisposable` 必須、Dispose 契約を doc に明記 |
 | Options | `*Options` | 起動時確定の immutable 設定値 | `SettingsAsset.ToOptions()` で生成。値域 clamp は Options 側に置く（SettingsAsset と二重実装しない） |
+| Preferences | `*Preferences` | ユーザーが UI から変更し永続化する個人設定値 | `Settings` と呼ばない（asset / Options と混同するため） |
 
 ### UseCase 作成基準
 
@@ -95,7 +96,7 @@ Service ↔ State の同期配線専用クラス。次の 2 形態のみ:
 | Cache | `*Cache` | runtime cache（LRU 等） | 同形のキャッシュを型別にコピーしない（generic 化する） |
 | DTO | `*Dto` | backend 契約のミラー | 公開ファイルで定義する（private nested にしない） |
 
-## Composition / Shared
+## Composition
 
 | 種別 | 命名 | 責務 | 作成基準・契約 |
 |:-----|:-----|:-----|:---------------|
@@ -103,5 +104,9 @@ Service ↔ State の同期配線専用クラス。次の 2 形態のみ:
 | Installer | `*Installer` | 機能単位の DI 登録分割 | 複数 scope から使い回す、または差し替える単位のときに分ける。1 つの LifetimeScope からしか呼ばれず差し替えもしないなら分けない |
 | EntryPoint | `*EntryPoint` | DI コンテナの lifecycle（`IStartable` / `IAsyncStartable` / `IDisposable`）に載せる起動・停止 adapter | plain class。`Composition/EntryPoints/` に置く。起動対象（Synchronizer 等）に lifecycle 依存を持ち込まないために存在するので、**自身は業務ロジックを持たず起動・停止のみ**。CancellationTokenSource の生成・cancel と多重 Dispose ガードを担う |
 | SettingsAsset | `*SettingsAsset` | Unity Inspector で編集する ScriptableObject | 必ず `ToOptions()` を持つ。`CreateAssetMenu` のメニュー名・order は既存と衝突させない |
-| Preferences | `*Preferences` | ユーザーが UI から変更し永続化する個人設定値 | `Settings` と呼ばない（asset / Options と混同するため） |
+
+## Shared
+
+| 種別 | 命名 | 責務 | 作成基準・契約 |
+|:-----|:-----|:-----|:---------------|
 | Shared ユーティリティ | — | ビジネス意味を持たない技術部品 | 暗黙の副作用（ログ出力等）を持たない。失敗は戻り値で表現する（`TryParse` 形式等） |

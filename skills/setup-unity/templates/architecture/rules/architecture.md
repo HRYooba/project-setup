@@ -8,12 +8,12 @@
 
 | 層 | 責務 |
 |:---|:-----|
-| **Presentation** | UI（Model / View / Presenter）と Gameplay（UI 以外のランタイム制御） |
+| **Presentation** | UI と Gameplay（UI 以外のランタイム制御） |
 | **Application** | ユースケース層 |
 | **Domain** | エンティティ層 |
-| **Infrastructure** | Application の port の具象実装 |
-| **Composition** | DI 登録・初期化順序・エントリーポイント（Composition Root）。配線目的のみ。SettingsAsset → Options 変換もこの層 |
-| **Shared** | ビジネス意味を持たない技術的ユーティリティ。ログ出力等の暗黙の副作用を持たない |
+| **Infrastructure** | インターフェースアダプター層（外部サービス・永続化側） |
+| **Composition** | Composition Root |
+| **Shared** | ビジネス意味を持たない技術的ユーティリティ |
 
 ## 依存ルール
 
