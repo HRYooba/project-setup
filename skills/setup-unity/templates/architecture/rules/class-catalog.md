@@ -69,13 +69,6 @@ Service ↔ State の同期配線専用クラス。次の 2 形態のみ:
 
 業務ルール（フィルタ・集計ポリシー）を Synchronizer に書かない（State または純関数へ）。
 
-## Domain
-
-| 種別 | 命名 | 責務 | 作成基準・契約 |
-|:-----|:-----|:-----|:---------------|
-| 業務分類 | 名詞（enum） | 業務概念の分類 | **enum であることは Domain 配置の根拠にならない** |
-| 値オブジェクト | 名詞（readonly struct / record） | 業務概念の不変条件・導出 | **readonly struct / record であることは Domain 配置の根拠にならない** |
-
 ## Presentation
 
 | 種別 | 命名 | 責務 | 作成基準・契約 |
