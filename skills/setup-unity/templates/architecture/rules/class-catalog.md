@@ -19,11 +19,12 @@
 | UseCase | 動詞 + 名詞 + `UseCase`、公開エントリは原則 `ExecuteAsync` 1 つ | 単一のアプリケーションコマンド（検証・実行・結果解釈） | 下記「UseCase 作成基準」を満たす場合のみ作成。**他の UseCase を呼ばない** |
 | Orchestrator | `*Orchestrator` | 複数 UseCase の逐次実行・分岐・補償（rollback） | 下記「Orchestrator 規約」参照 |
 | State | `*State` + `IReadOnly*State` | runtime current value の保持・公開 | Presentation へは `IReadOnly*State` のみ DI 登録する。`_isDisposed` ガード必須 |
-| Store | `I*Store` | 永続化の load / save port | current value を保持しない（保持は State）。永続化結果と State の整合は UseCase / Orchestrator が担う |
+| Repository | `I*Repository` | 集約ルートの永続化 port | 集約ルートごとに 1 つ。テーブル・Entity ごとに作らない。current value を保持しない（保持は State） |
+| Store | `I*Store` | 集約ルート以外（設定値・キャッシュ等）の永続化の load / save port | current value を保持しない（保持は State）。永続化結果と State の整合は UseCase / Orchestrator が担う |
 | Service | `I*Service` | 外部サービスへの port | 1 interface 1 責務。責務が混ざったら分割する |
 | ErrorCode | `*ErrorCode` | context ごとの失敗分岐 enum | **`None = 0` を必ず持つ**（成功時の `OperationResult.ErrorCode` は `default(TError)` = 0 値になるため、0 を実エラーに割り当てると成功結果が実エラー値を保持してしまう）。`None` を `Failure` に渡さない。共通メンバー名は `NetworkError` / `ServerError` / `InvalidResponse` / `Unknown` に統一 |
 | DTO | 名詞（`Dto` サフィックスを**付けない**。Infrastructure の backend ミラー DTO と区別するため） | 層間データ運搬 | `readonly struct` または `record`。mutable にしない。Unity asset 参照を持たない（必要なら asset key / ID を持ち、ロードは asset service に分離する）。MonoBehaviour / Component 参照を持たない。コンストラクタで null → `string.Empty` 正規化 |
-| Lease / Handle | `*Lease` / `*Handle` | ライフサイクル管理付き asset 保持。**Lease** = 共有リソースの貸与（Dispose で「返却」し参照カウント等で元リソースは生存しうる）、**Handle** = 個別に確保した実体への参照（Dispose で対象そのものを解放） | DTO の asset 禁止規定の**明示的例外**。`IDisposable` 必須、Dispose 契約を doc に明記 |
+| Handle | `*Handle` | ライフサイクル管理付き asset 保持 | DTO の asset 禁止規定の**明示的例外**。`IDisposable` 必須で、Dispose は 1 回だけ。Dispose 後に実体が解放されるか（参照カウント等で生存するか）は型名に出さない。保持する asset を書き換えない・`Destroy` しない |
 | Options | `*Options` | 起動時確定の immutable 設定値 | `SettingsAsset.ToOptions()` で生成。値域 clamp は Options 側に置く（SettingsAsset と二重実装しない） |
 | Preferences | `*Preferences` | ユーザーが UI から変更し永続化する個人設定値 | `Settings` と呼ばない（asset / Options と混同するため） |
 
@@ -49,7 +50,7 @@
 
 - 失敗しうる操作は `OperationResult`（エラー型をジェネリクスで型付けしたもの）を返す。
   例外は「呼び出し側にバグがある」場合（引数契約違反等）のみ
-- port（Service / Store）のエラー契約も OperationResult 返しに統一する（例外伝播契約を作らない）
+- port（Service / Repository / Store）のエラー契約も OperationResult 返しに統一する（例外伝播契約を作らない）
 - **UI 表示文言は Presentation の責務**。Application / Infrastructure は ErrorCode を返し、
   `ErrorMessage` はログ・診断用の開発者向け文言（英語）に限定する
 - context 境界をまたぐエラーは受け側 context の ErrorCode へ変換してから返す
@@ -66,7 +67,7 @@
 | View | `*View` | UXML 参照・表示反映・入力の受け口 | UIDocument を持つ **MonoBehaviour**。**DI 依存を持たない受動的部品**。Presenter からメソッドを呼ばれ、入力を Observable で公開する |
 | Presenter | `*Presenter` | Model / View / UseCase / Service の配線 | plain class + `IStartable`（または `IAsyncStartable`）+ `IDisposable` が原則。MonoBehaviour にするのは SerializeField / Unity イベント関数が必須の場合のみ |
 | Manager | `*Manager` | View を持たない非同期ワークフローの進行制御（scene load/unload、dialog 待ち、loading overlay 等） | plain class。Application 呼び出しは境界タイミング（開始・終了・イベント発生時）に限定し、毎フレーム呼び出しは避ける |
-| Provider | `*Provider` | Presentation 向けの asset・データ供給と解放管理 | Lease の取得・保持・解放を一元管理する |
+| Provider | `*Provider` | Presentation 向けの asset・データ供給と解放管理 | Handle の取得・保持・解放を一元管理する |
 | Binder | `*Binder` | UXML 部分木と状態の接続部品（dialog / リスト / スライダー行等） | View の内部部品。View と同じ受動性を保つ |
 
 ### Presenter が Service を直接利用してよい範囲
@@ -79,7 +80,7 @@
 | 種別 | 命名 | 責務 | 作成基準・契約 |
 |:-----|:-----|:-----|:---------------|
 | HTTP adapter | `Http*Service` / `Http*Downloader` | backend API port の実装 | レスポンス解釈（deserialize・エラー分類・ページング）は共通基盤経由。各 adapter は path + DTO→モデル変換 + ErrorCode 変換のみ |
-| 永続化 adapter | 媒体 prefix + `*Store`（例: `File*Store`） | Store port の実装 | |
+| 永続化 adapter | 媒体 prefix + `*Repository` / `*Store`（例: `File*Store`） | Repository / Store port の実装 | |
 | SDK adapter | SDK 名 prefix（例: `Vivox*` / `Fusion*` / `UnityAudio*`） | 外部 SDK の port 実装 | 1 クラス 1 port が原則。複数 port を 1 クラスで実装しない |
 | Cache | `*Cache` | runtime cache（LRU 等） | 同形のキャッシュを型別にコピーしない（generic 化する） |
 | DTO | `*Dto` | backend 契約のミラー | 公開ファイルで定義する（private nested にしない） |
