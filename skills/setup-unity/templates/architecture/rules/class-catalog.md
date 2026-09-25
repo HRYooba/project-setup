@@ -16,7 +16,7 @@
 
 | 種別 | 命名 | 責務 | 作成基準・契約 |
 |:-----|:-----|:-----|:---------------|
-| UseCase | 動詞 + 名詞 + `UseCase`、公開エントリは原則 `ExecuteAsync` 1 つ | 単一のアプリケーションコマンド（検証・実行・結果解釈） | 状態を変える操作（command）にだけ作る。読み取りは UseCase にしない。**他の UseCase / Orchestrator を呼ばない** |
+| UseCase | 動詞 + 名詞 + `UseCase`、公開エントリは原則 `ExecuteAsync` 1 つ | 単一のアプリケーション操作（検証・実行・結果解釈） | 状態を変える操作は必ず UseCase を通す。読み取りは Presenter から直接でもよく、素通しの読み取り UseCase は作らない（複数 source の組み合わせ・解釈が要るときは作る）。**他の UseCase / Orchestrator を呼ばない** |
 | Orchestrator | `*Orchestrator` | 複数 UseCase の逐次実行・分岐・補償（rollback） | 2 つ以上の UseCase の合成か、補償が要るときだけ作る。持つのは順序・分岐・補償のみ（検証・結果解釈は UseCase）。Orchestrator 同士は呼ばない |
 | State | `*State` + `IReadOnly*State` | runtime current value の保持・公開 | Presentation へは `IReadOnly*State` のみ DI 登録する。`_isDisposed` ガード必須 |
 | Repository | `I*Repository` | 集約ルートの永続化 port | 集約ルートごとに 1 つ。テーブル・Entity ごとに作らない。current value を保持しない（保持は State） |
