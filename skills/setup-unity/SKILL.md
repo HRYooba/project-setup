@@ -13,7 +13,7 @@ description: >
   Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れる。アプリ本体の置き場（既定 `Assets/App/`）、
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無、レビュー対象を
   そこへ絞るかを実行時に AskUserQuestion で確認する。
-version: 3.19.1
+version: 3.19.2
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
