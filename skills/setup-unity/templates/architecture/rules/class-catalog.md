@@ -43,7 +43,7 @@
 
 | 種別 | 命名 | 責務 | 作成基準・契約 |
 |:-----|:-----|:-----|:---------------|
-| Adapter | 技術 prefix + port 名（例: `Http*Service` / `File*Store`） | Repository / Store / Service port の実装 | 1 クラス 1 port。複数 port を 1 クラスで実装しない |
+| Adapter | 技術 prefix + port 名（例: `Http*Service` / `File*Store`） | Repository / Store / Service port の実装 | |
 | Cache | `*Cache` | runtime cache（LRU 等） | |
 | DTO | `*Dto` | backend 契約のミラー | 公開ファイルで定義する（private nested にしない） |
 | Listener | `*Listener` | 外部からの push（SDK イベント・通知）を受けて UseCase を呼ぶ入口 | `Start()` + `IDisposable`。State を直接書かない |
