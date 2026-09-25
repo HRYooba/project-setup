@@ -22,7 +22,7 @@
 | Repository | `I*Repository` | 集約ルートの永続化 port | 集約ルートごとに 1 つ。テーブル・Entity ごとに作らない。current value を保持しない（保持は State） |
 | Store | `I*Store` | 集約ルート以外（設定値・キャッシュ等）の永続化の load / save port | current value を保持しない（保持は State）。永続化結果と State の整合は UseCase / Orchestrator が担う |
 | Service | `I*Service` | 外部サービスへの port | 1 interface 1 責務。責務が混ざったら分割する |
-| ErrorCode | `*ErrorCode` | context ごとの失敗分岐 enum | **`None = 0` を必ず持つ**（成功時の `OperationResult.ErrorCode` は `default(TError)` = 0 値になるため、0 を実エラーに割り当てると成功結果が実エラー値を保持してしまう）。`None` を `Failure` に渡さない。共通メンバー名は `NetworkError` / `ServerError` / `InvalidResponse` / `Unknown` に統一 |
+| ErrorCode | `*ErrorCode` | context ごとの失敗分岐 enum | **`None = 0` を必ず持つ**（成功結果のエラー値は既定値 0 になるため、0 を実エラーに割り当てると成功結果が実エラー値を持ってしまう）。失敗結果に `None` を渡さない |
 | DTO | 名詞（`Dto` サフィックスを**付けない**。Infrastructure の backend ミラー DTO と区別するため） | 層間データ運搬 | `readonly struct` または `record`。mutable にしない。Unity asset 参照を持たない（必要なら asset key / ID を持ち、ロードは asset service に分離する）。MonoBehaviour / Component 参照を持たない。コンストラクタで null → `string.Empty` 正規化 |
 | Handle | `*Handle` | ライフサイクル管理付き asset 保持 | DTO の asset 禁止規定の**明示的例外**。`IDisposable` 必須で、Dispose は 1 回だけ。Dispose 後に実体が解放されるか（参照カウント等で生存するか）は型名に出さない。保持する asset を書き換えない・`Destroy` しない |
 | Options | `*Options` | 起動時確定の immutable 設定値 | `SettingsAsset.ToOptions()` で生成。値域 clamp は Options 側に置く（SettingsAsset と二重実装しない） |
@@ -48,13 +48,13 @@
 
 | 種別 | 命名 | 責務 | 作成基準・契約 |
 |:-----|:-----|:-----|:---------------|
-| HTTP adapter | `Http*Service` / `Http*Downloader` | backend API port の実装 | レスポンス解釈（deserialize・エラー分類・ページング）は共通基盤経由。各 adapter は path + DTO→モデル変換 + ErrorCode 変換のみ |
+| HTTP adapter | `Http*Service` | backend API port の実装 | レスポンス解釈（deserialize・エラー分類）は adapter 間で共通化し、各 adapter に複製しない |
 | 永続化 adapter | 媒体 prefix + `*Repository` / `*Store`（例: `File*Store`） | Repository / Store port の実装 | |
-| SDK adapter | SDK 名 prefix（例: `Vivox*` / `Fusion*` / `UnityAudio*`） | 外部 SDK の port 実装 | 1 クラス 1 port が原則。複数 port を 1 クラスで実装しない |
+| SDK adapter | SDK 名 prefix | 外部 SDK の port 実装 | 1 クラス 1 port が原則。複数 port を 1 クラスで実装しない |
 | Cache | `*Cache` | runtime cache（LRU 等） | 同形のキャッシュを型別にコピーしない（generic 化する） |
 | DTO | `*Dto` | backend 契約のミラー | 公開ファイルで定義する（private nested にしない） |
 | Listener | `*Listener` | 外部からの push（SDK イベント・通知）を受けて UseCase を呼ぶ入口 | `Start()` + `IDisposable`。State を直接書かない |
-| Poller | `*Poller` | 外部を定期取得して UseCase を呼ぶ入口 | `RunLoopAsync(CancellationToken)`。共通基底 `PollerBase` を継承。State を直接書かない。ループ脱出時の OperationCanceledException の黙殺のみ許容 |
+| Poller | `*Poller` | 外部を定期取得して UseCase を呼ぶ入口 | `RunLoopAsync(CancellationToken)`。State を直接書かない。ループ脱出時の OperationCanceledException の黙殺のみ許容 |
 
 ## Composition
 
