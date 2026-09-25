@@ -16,7 +16,7 @@
 
 | 種別 | 命名 | 責務 | 作成基準・契約 |
 |:-----|:-----|:-----|:---------------|
-| UseCase | 動詞 + 名詞 + `UseCase`、公開エントリは原則 `ExecuteAsync` 1 つ | 単一のアプリケーション操作（検証・実行・結果解釈） | 状態を変える操作は必ず UseCase を通す。読み取りは Presenter から直接でもよく、素通しの読み取り UseCase は作らない（複数 source の組み合わせ・解釈が要るときは作る）。**他の UseCase / Orchestrator を呼ばない** |
+| UseCase | 動詞 + 名詞 + `UseCase`、公開エントリは原則 `ExecuteAsync` 1 つ | 単一のアプリケーション操作（検証・実行・結果解釈） | 状態を変える操作は、呼び出し側を問わず必ず UseCase を通す。状態を変えない操作（読み取り・毎フレームの制御）は Service / State を直接使ってよく、素通しの読み取り UseCase は作らない（複数 source の組み合わせ・解釈が要るときは作る）。**他の UseCase / Orchestrator を呼ばない** |
 | Orchestrator | `*Orchestrator` | 複数 UseCase の逐次実行・分岐・補償（rollback） | 2 つ以上の UseCase の合成か、補償が要るときだけ作る。持つのは順序・分岐・補償のみ（検証・結果解釈は UseCase）。Orchestrator 同士は呼ばない |
 | State | `*State` + `IReadOnly*State` | runtime current value の保持・公開 | Presentation へは `IReadOnly*State` のみ DI 登録する |
 | Repository | `I*Repository` | 集約ルートの永続化 port | 集約ルートごとに 1 つ。テーブル・Entity ごとに作らない。current value を保持しない（保持は State） |
@@ -34,7 +34,7 @@
 |:-----|:-----|:-----|:---------------|
 | Model | `*Model` | プレゼンテーション状態の ReactiveProperty 保持 + 自身の整合性ロジック（値域制約・導出・状態遷移） | 素通し setter だけの Model にしない。表示判定・フィルタ等の純粋ロジックは Presenter でなく Model へ |
 | View | `*View` | UXML 参照・表示反映・入力の受け口 | UIDocument を持つ **MonoBehaviour**。**DI 依存を持たない受動的部品**。Presenter からメソッドを呼ばれ、入力を Observable で公開する |
-| Presenter | `*Presenter` | Model / View / UseCase / Service の配線 | Service を直接呼んでよいのは読み取りと毎フレームのランタイム制御のみ。plain class + `IStartable`（または `IAsyncStartable`）+ `IDisposable` が原則。MonoBehaviour にするのは SerializeField / Unity イベント関数が必須の場合のみ |
+| Presenter | `*Presenter` | Model / View と Application の橋渡し | plain class + `IStartable`（または `IAsyncStartable`）+ `IDisposable` が原則。MonoBehaviour にするのは SerializeField / Unity イベント関数が必須の場合のみ |
 | Manager | `*Manager` | View を持たない非同期ワークフローの進行制御（scene load/unload、dialog 待ち、loading overlay 等） | plain class。Application 呼び出しは境界タイミング（開始・終了・イベント発生時）に限定し、毎フレーム呼び出しは避ける |
 | Provider | `*Provider` | Presentation 向けの asset・データ供給と解放管理 | Handle の取得・保持・解放を一元管理する |
 | Binder | `*Binder` | UXML 部分木と状態の接続部品（dialog / リスト / スライダー行等） | View の内部部品。View と同じ受動性を保つ |
