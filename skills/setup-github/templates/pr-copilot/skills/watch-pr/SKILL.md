@@ -5,7 +5,7 @@ description: >
   レビュー対象外（コード変更なし等）なので自発的に起動しない — 起動すると 30 分の空監視になる。
   1 PR につき 1 回のみ。Monitor で PR のレビューと CI チェックを監視し、両方が出揃ってから
   指摘または CI の失敗があれば resolve-pr を起動する。PR 番号または URL を指定。
-version: 1.9.0
+version: 1.9.1
 argument-hint: [PR番号 or URL]
 ---
 
@@ -210,5 +210,4 @@ Skill(skill: "resolve-pr", args: "{pr}")
 resolve-pr 自身がレビューコメントと失敗した check の両方を集めるので、内容は渡さない。
 
 **resolve-pr は 1 度だけ起動する。** その push で CI が回り直した結果まで待たない
-（待ち直すと監視が入れ子になる）。resolve-pr の報告に「push 後の CI は未確認」と出るので、
-ユーザーがそこから続きを判断する。
+（待ち直すと監視が入れ子になる）。その先の判断はユーザーに渡す。
