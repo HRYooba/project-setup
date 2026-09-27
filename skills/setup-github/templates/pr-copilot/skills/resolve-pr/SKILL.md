@@ -4,7 +4,7 @@ description: >
   PR に未対応のレビュー指摘または失敗した CI チェックがあるとき、ユーザーの依頼を待たずに
   実行する（watch-pr が検知したときの起動先でもある）。指摘と CI 失敗の取得・修正・コミット・
   Push・リプライ送信・Copilot コメントの Resolve までを 1 巡で行う。PR 番号または URL を指定。
-version: 1.2.0
+version: 1.2.1
 argument-hint: [PR番号 or URL]
 context: fork
 agent: review-responder
@@ -111,8 +111,8 @@ CI 側は check 名, 失敗ステップ, ログの該当箇所
 （例: `fix: コーディング規約違反を解消`）。リプライ文は修正したかスキップしたかが分かる形で、
 スキップなら理由を書く。
 
-コミット subject に `(#PR番号)` を付けないこと（`.claude/rules/git-conventions.md`: Issue 参照は
-subject でなく footer に書く。squash merge 時は PR 番号が subject 末尾へ自動付与されるため手書きは重複する）。
+コミット subject に `(#PR番号)` を付けない。squash merge 時に PR 番号が subject 末尾へ
+自動付与されるため、手書きすると重複する。
 
 ---
 
