@@ -5,9 +5,13 @@
 // 成功応答のまま別のスナップショットを検証してしまう（＝偽の green）。
 // それを機械的に止めるのがこのフックの役目。
 //
-// 重要: Claude Code の hook は既定で fail-open で、**exit 2 だけがツール呼び出しを止める**。
-// exit 1 も、例外も、壊れた JSON も「通す」側に落ちる。よってこのスクリプトは
-// 「判断できないなら exit 2」で書く。判断できない状態で通すと、止めたかった事故がそのまま起きる。
+// 重要: ツール呼び出しを止める経路は 2 つある。
+//   - スクリプト内で判断した拒否は exit 2。よってこのスクリプトは「判断できないなら exit 2」で書く。
+//     判断できない状態で通すと、止めたかった事故がそのまま起きる。
+//   - スクリプト外の失敗（node が起動できない・timeout・exit 0/2 以外の終了）は、SKILL.md の
+//     hook 定義にある `onFailure: "block"` で止まる。これを外すと Claude Code 既定の fail-open に戻り、
+//     門番が動かないまま素通りする。
+// exit 0 だけが「通す」（レーン未初期化の素通しを含む）。
 //
 // 何を止められないか（正直な限界。references/protocol.md が読者向けの正本）:
 //   - Unity CLI の呼び出しもシェル越しの書き込みも、コマンド文字列のヒューリスティックでしか
@@ -41,7 +45,7 @@ const UNITY_EXT_RE = new RegExp(`(${UNITY_SERIALIZED_EXT.map((e) => e.replace(".
 
 function deny(reason) {
   process.stderr.write(`[unity-parallel] ${reason}\n`);
-  process.exit(2); // PreToolUse を止められる唯一の終了コード
+  process.exit(2); // 判断した拒否を明示する終了コード（それ以外の失敗終了は onFailure: "block" が止める）
 }
 
 function allow() {
