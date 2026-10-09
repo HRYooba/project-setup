@@ -12,10 +12,12 @@ hooks:
       hooks:
         - type: command
           command: node "${CLAUDE_PROJECT_DIR}/.claude/skills/unity-parallel/guard.mjs"
+          onFailure: "block"
     - matcher: "Bash|PowerShell"
       hooks:
         - type: command
           command: node "${CLAUDE_PROJECT_DIR}/.claude/skills/unity-parallel/guard.mjs"
+          onFailure: "block"
 ---
 
 # Unity 並列作業（検証レーンの貸し出し）

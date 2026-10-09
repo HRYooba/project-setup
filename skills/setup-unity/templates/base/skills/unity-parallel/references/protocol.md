@@ -129,8 +129,10 @@ Unity 操作は `unity <サブコマンド>` に固定されているので、�
 - **hook 自体の無効化** — settings の編集、`disableAllHooks`、別プロセスの起動
 - **hook を経由しない Editor 操作** — Pipeline サーバーの HTTP エンドポイントを直接叩く経路
 
-Claude Code の hook は既定で **fail-open**（例外・不正 JSON・exit 1 はすべて「通す」）で、
-`exit 2` だけがツール呼び出しを止める。よって `guard.mjs` は「判断できないなら exit 2」で書いてある。
+門番がツール呼び出しを止める経路は 2 つある。`guard.mjs` が判断して拒否するときは `exit 2` で、
+判断できないときも `exit 2` に倒す。スクリプト外の失敗（node が起動できない・timeout・`exit 0` / `exit 2`
+以外の終了）は、SKILL.md の hook 定義の `onFailure: "block"` で止まる。これが無いと Claude Code 既定の
+**fail-open** で素通りし、門番が動いていないことに気づけない。`exit 0` だけが「通す」。
 レーンが初期化されていないときだけは素通しする（並列作業をしていないセッションを邪魔しないため）。
 
 ## この仕組みが保証しないこと
