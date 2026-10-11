@@ -552,12 +552,21 @@ test("Unity 操作の方針は CLAUDE.md の 2 行だけ（CLI の写しを持�
   assert.match(md, /Unity CLI 経由で行う/, "CLI 経由の方針が消えている");
   assert.match(md, /\.prefab.*手編集しない/, "手編集の禁止が消えている");
 
-  // テストと lint は **アプリ本体のホワイトリスト**。外部アセットの置き場は数え上げ
+  // テストは **アプリ本体のホワイトリスト**。外部アセットの置き場は数え上げ
   // られないので、除外リストにすると漏れが直せない失敗・指摘になって返ってくる
   // （analyzer と CI で同じ結論に至っている）。実値は配備時に --app-root が決めるので、
   // テンプレ側で見るのはトークンの有無。
-  for (const line of md.split(/\r?\n/).filter((l) => /^- \*\*(テスト|lint)\*\*/.test(l))) {
+  const lines = md.split(/\r?\n/);
+  for (const line of lines.filter((l) => /^- \*\*テスト\*\*/.test(l))) {
     assert.match(line, /\{\{APP_ROOT\}\}/, `アプリ本体の置き場に絞られていない: ${line}`);
+  }
+  // lint の起動条件は lint-unity の description が正本。CLAUDE.md へ写すと片方だけ
+  // 変わったときに黙って食い違うので、ここには skill 名だけを置く。
+  const lint = lines.filter((l) => /^- \*\*lint\*\*/.test(l));
+  assert.ok(lint.length >= 1, "lint の行が消えている（PR 前に回す skill 名は残す）");
+  for (const line of lint) {
+    assert.match(line, /\/lint-unity/, `lint-unity を挙げていない: ${line}`);
+    assert.doesNotMatch(line, /\{\{APP_ROOT\}\}/, `lint の起動条件を写している: ${line}`);
   }
   assert.ok(
     !existsSync(
