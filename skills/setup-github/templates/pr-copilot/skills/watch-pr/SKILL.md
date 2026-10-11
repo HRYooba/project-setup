@@ -5,7 +5,7 @@ description: >
   レビュー対象外（コード変更なし等）なので自発的に起動しない — 起動すると 30 分の空監視になる。
   1 PR につき 1 回のみ。Monitor で PR のレビューと CI チェックを監視し、両方が出揃ってから
   指摘または CI の失敗があれば resolve-pr を起動する。PR 番号または URL を指定。
-version: 1.9.1
+version: 1.9.2
 argument-hint: [PR番号 or URL]
 ---
 
@@ -26,8 +26,8 @@ PR 作成後に外から返ってくる非同期の結果は 2 系統ある。**
 ## 制約
 
 - **1 PR につき 1 回のみ**起動する。Copilot は 1 PR に 1 回しか自動レビューしないため、
-  resolve-pr 対応後に再度 watch-pr を起動しない。resolve-pr の push で CI が回り直した結果は
-  ユーザーが `gh pr checks --watch` で見るか、次のターンで確認する
+  resolve-pr 対応後に再度 watch-pr を起動しない。resolve-pr の push で CI が回り直した場合は、
+  完了報告の中で CI がまだ回っていることと確認方法（`gh pr checks {pr} --watch`）を伝える
 - 起動は原則 after-pr-create hook の指示による。指示が無い PR は Copilot レビュー対象外
   （コード変更なし等）なので自発的に起動しない
 
@@ -210,4 +210,5 @@ Skill(skill: "resolve-pr", args: "{pr}")
 resolve-pr 自身がレビューコメントと失敗した check の両方を集めるので、内容は渡さない。
 
 **resolve-pr は 1 度だけ起動する。** その push で CI が回り直した結果まで待たない
-（待ち直すと監視が入れ子になる）。その先の判断はユーザーに渡す。
+（待ち直すと監視が入れ子になる）。代わりに完了報告で、CI が回り直していることと
+確認方法（`gh pr checks {pr} --watch`）を伝える。
