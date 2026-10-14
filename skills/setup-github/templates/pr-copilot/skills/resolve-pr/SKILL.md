@@ -4,8 +4,9 @@ description: >
   PR に未対応のレビュー指摘または失敗した CI チェックがあるとき、ユーザーの依頼を待たずに
   実行する（watch-pr が検知したときの起動先でもある）。指摘と CI 失敗の取得・修正・コミット・
   Push・リプライ送信・Copilot コメントの Resolve までを 1 巡で行う。PR 番号または URL を指定。
-version: 1.2.1
-argument-hint: [PR番号 or URL]
+  `ci` を付けると CI の失敗だけを扱う。
+version: 1.3.0
+argument-hint: "[PR番号 or URL] [ci]"
 context: fork
 agent: review-responder
 # 背景で走らせない。コードを直して commit / push するので、
@@ -25,8 +26,11 @@ background: false
 | レビュー指摘 | 未解決レビュースレッド + PR コメント | 各スレッドへリプライ、Copilot のスレッドは Resolve |
 | CI の失敗 | 失敗した check とその実行ログ | 返信先が無いので PR コメント 1 本にまとめる |
 
-**このスキルは 1 巡で終える。** push で CI が回り直した結果は待たない
-（待つと監視が入れ子になる）。最後の報告に「push 後の CI は未確認」と明記する。
+**このスキルは 1 巡で終える。** push で回り直した CI の監視は watch-pr の責務
+（このスキルは fork で動くため、Monitor の通知を受けて待ち続けられない）。
+
+引数に `ci` が付いたときは **CI 系統だけ**を扱う（Step 1 の 3・4、Step 4 のレビューへの返信、
+Step 5 を飛ばす）。CI 修正の再試行で呼ばれたとき、返信済みの指摘へ 2 度目の返信を付けないため。
 
 ## Step 1: PR特定 + 対応対象の取得
 
@@ -159,4 +163,8 @@ Resolve 失敗はベストエフォート。
 - 対応した CI の失敗（check 名・原因・修正内容）
 - **直さなかったもの**とその理由（環境起因・原因不明・仕様判断が要るもの）
 - pending のまま結果が出ていなかった check があればその一覧
-- **push 後の CI は未確認である旨**（このスキルは回り直した結果を待たない）
+- push したかどうか
+
+push した場合、回り直した CI は呼び出し元が監視して結論まで出す。watch-pr から呼ばれたなら
+watch-pr の Step 3 が見る。それ以外から呼ばれたなら、呼び出し元は続けて
+`Skill(skill: "watch-pr", args: "{pr_number} ci")` を起動する。
