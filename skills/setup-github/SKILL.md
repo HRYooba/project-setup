@@ -9,7 +9,7 @@ description: >
   （setup-unity のドリフトもこれが見るので、Unity プロジェクトでも導入が要る）を撒く。
   ブランチ保護の有無と、PR 自動レビュー（Copilot 自動アサイン / watch-pr / resolve-pr /
   AGENTS.md 自動生成）の導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.34.3
+version: 1.35.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -31,8 +31,8 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 
 ## pr-copilot モード（質問で「PR 自動レビューを入れる」を選んだ場合）
 
-9. **Copilot 自動アサイン** — `gh pr create` 直後、コード変更を含む PR に Copilot レビュアーを自動で付ける（PostToolUse hook）。watch-pr の起動指示はこの hook の additionalContext が唯一のトリガー（CLAUDE.md には書かない。無条件の起動指示は hook の「コード変更を含む PR のみ」ガードを迂回し、レビューが来ない PR への空監視を生むため）。Copilot 依頼に失敗した PR には watch-pr を起動させない
-10. **watch-pr** — PR のレビューと CI チェックを監視し、出揃ったら resolve-pr を起動する skill を配る。起動条件と挙動は `templates/pr-copilot/skills/watch-pr/SKILL.md` が正本でここには写さない
+9. **Copilot 自動アサイン** — `gh pr create` 直後、コード変更を含む PR に Copilot レビュアーを自動で付ける（PostToolUse hook）。Copilot レビューを待つ watch-pr（引数が PR 番号だけの起動）の起動指示はこの hook の additionalContext が唯一のトリガー（CLAUDE.md には書かない。無条件の起動指示は hook の「コード変更を含む PR のみ」ガードを迂回し、レビューが来ない PR への空監視を生むため）。Copilot 依頼に失敗した PR には watch-pr を起動させない
+10. **watch-pr** — PR のレビューと CI チェックを監視し、出揃ったら resolve-pr を起動し、その push で回り直した CI も監視して結論を出す skill を配る。起動条件と挙動は `templates/pr-copilot/skills/watch-pr/SKILL.md` が正本でここには写さない
 11. **resolve-pr** — レビューコメントと失敗した CI チェックへの対応を一括で行う skill（+ `review-responder` agent）を配る。挙動は `templates/pr-copilot/skills/resolve-pr/SKILL.md` が正本でここには写さない
 12. **AGENTS.md 自動生成** — `.claude/rules/*.md` のうち先頭 5 行以内に「agents-md: include」マーカー（HTML コメント）を持つファイルを、固定文（言語: 日本語（対話・出力）、英語（思考・推論）／コードレビューの対象はスクリプトのみ）とともに連結し、ルートの `AGENTS.md` を生成する。Copilot code review はルートの AGENTS.md を自動で読むため、これが Copilot にプロジェクト規約を教える経路になる。同期は `.githooks/pre-commit` がコミットごとに再生成 → 差分があれば stage（rules 更新と AGENTS.md の乖離が構造的に起きない）。手書きの AGENTS.md（生成ヘッダー無し）は上書きせず警告。マーカー付き rules が無い場合は固定文だけの AGENTS.md になる（setup-unity 等が後からマーカー付き rules を撒けば、次のコミットで自動的に取り込まれる）
 13. **AGENTS.md 乖離の CI ガード** — `.github/workflows/agents-md-sync.yml`。PR と保護ブランチへの push の両方で AGENTS.md を再生成して差分が出ないか検証する（`git add -N` で未追跡の生成物も検出）。ローカルの pre-commit は `--no-verify` / GitHub Web UI 編集 / hooksPath 未設定の clone / node 不在（fail-open）で素通りするため、その経路のドリフト（PR を経ない保護ブランチ直 push も含む）を検出する最後の砦

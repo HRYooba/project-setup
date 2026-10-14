@@ -1,12 +1,15 @@
 ---
 name: watch-pr
 description: >
-  **after-pr-create hook が起動を指示したときだけ**起動する。指示が無い PR は Copilot の
-  レビュー対象外（コード変更なし等）なので自発的に起動しない — 起動すると 30 分の空監視になる。
-  1 PR につき 1 回のみ。Monitor で PR のレビューと CI チェックを監視し、両方が出揃ってから
-  指摘または CI の失敗があれば resolve-pr を起動する。PR 番号または URL を指定。
-version: 1.9.2
-argument-hint: [PR番号 or URL]
+  PR の非同期の結果（Copilot レビュー・CI）を Monitor で監視し、結論まで出す。
+  引数が PR 番号だけのときは **after-pr-create hook が起動を指示したときだけ**起動する。
+  指示が無い PR は Copilot のレビュー対象外（コード変更なし等）なので自発的に起動しない —
+  起動すると 30 分の空監視になる。この形は 1 PR につき 1 回のみ。レビューと CI が出揃ってから
+  指摘または CI の失敗があれば resolve-pr を起動し、その push で回り直した CI も監視して
+  pass / fail / timeout を報告する。watch-pr の外で resolve-pr が push したときは
+  `{PR番号} ci` で起動し、回り直した CI だけを監視する。
+version: 1.10.0
+argument-hint: "[PR番号 or URL] [ci]"
 ---
 
 # PR のレビュー・CI 監視
@@ -23,13 +26,73 @@ PR 作成後に外から返ってくる非同期の結果は 2 系統ある。**
 | Copilot のレビュー | `pulls/{pr}/reviews` | 監視開始後のレビューが 1 件でも付いた |
 | CI チェック | `gh pr checks` | pending が 1 つも無くなった |
 
+resolve-pr が push すると CI だけが回り直す。**その結果もこのスキルが見て結論を出す**（Step 3）。
+CI の結果をユーザーの確認に委ねて終わらない。
+
 ## 制約
 
-- **1 PR につき 1 回のみ**起動する。Copilot は 1 PR に 1 回しか自動レビューしないため、
-  resolve-pr 対応後に再度 watch-pr を起動しない。resolve-pr の push で CI が回り直した場合は、
-  完了報告の中で CI がまだ回っていることと確認方法（`gh pr checks {pr} --watch`）を伝える
-- 起動は原則 after-pr-create hook の指示による。指示が無い PR は Copilot レビュー対象外
-  （コード変更なし等）なので自発的に起動しない
+- **Copilot レビューの監視は 1 PR につき 1 回のみ。** Copilot は 1 PR に 1 回しか自動レビュー
+  しないため、2 回目を待っても何も来ない。Step 3 は CI だけを見て、レビューは見ない
+- **CI 修正の再試行は 1 回まで。** CI 失敗で resolve-pr を起動するのは、最初の決着とは別に
+  1 回だけ。それでも落ちたら失敗内容を報告して止まる（直せない失敗を push で回し続けない）
+- 引数が PR 番号だけの起動は after-pr-create hook の指示による。指示が無い PR は
+  Copilot レビュー対象外（コード変更なし等）なので自発的に起動しない
+- 引数に `ci` が付いた起動は、watch-pr の外で resolve-pr が push した後に使う。
+  **Step 3 から始める**（Step 1・2 は通らない）
+
+## 監視スクリプト
+
+監視の 1 回分は、このスキルの base directory 直下の `poll-pr.sh` が行う。Step 2 と Step 3 が共用する。
+
+```
+Monitor(
+  description: "PR #{pr} {phase} 監視 ({attempt}/5)",
+  timeout_ms: 420000,
+  command: bash "<このスキルの base directory>/poll-pr.sh" {owner} {repo} {pr} {phase} {start_time} {attempt}
+)
+```
+
+| 引数 | 値 |
+|:---|:---|
+| `{phase}` | `review` = レビューと CI の両方を待つ（Step 2）/ `ci` = CI だけを待つ（Step 3） |
+| `{start_time}` | Step 1 で記録した時刻。`ci` ではレビューを見ないので、その監視を始めた時刻を入れる |
+| `{attempt}` | 監視ごとに `1` から始める |
+
+**Monitor の watch は必ず deadline を持つ。無期限にするオプションは無い。**
+`timeout_ms` に達すると watch は kill され、Claude へ「再 arm せよ」という通知が届く。
+deadline の上限は **30 分**、**単発 `-p` 実行では 10 分**
+（パラメータ名と上限の正本は Monitor ツール自身の説明文。ここへ写さない）。
+
+したがって 30 分を 1 回の watch で張ることはできない。**6 分の watch を最大 5 回つなぐ**:
+
+| 値 | 意味 |
+|:---|:---|
+| スクリプトの `max_checks=12` | 30 秒 × 12 = **watch 1 回あたり 6 分** |
+| `timeout_ms: 420000` | 7 分。スクリプトの 6 分より長いので**通常はスクリプトが自分で終わる**（deadline kill は `gh` が固まったときの保険）。`-p` の上限 10 分より短いので**通常実行と `-p` で同じ値がそのまま使える** |
+| スクリプトの `max_attempts=5` | 6 分 × 5 = **1 つの監視の合計 30 分**。**CI が Editor を起動するプロジェクトでは 10〜30 分かかる**ので縮めない |
+
+**再 arm で状態を引き継ぐ必要は無い。** `review` / `checks` は毎回 API から `start_time` 起点で
+判定し直すので、`start_time` さえ変えなければ前の watch で検出済みのレビューもそのまま再現される。
+watch をまたいで引き継ぐのは `{attempt}` だけ。
+
+### 監視の終了条件
+
+スクリプトは打ち切るとき、次にどうするかを自分で最終行に出す。**残り回数を頭で数えない。**
+
+| スクリプトの最終行 | 対応 |
+|:---|:---|
+| `CONTINUE` 行（`next_attempt=N` 付き） | **同じ引数のまま `{attempt}` だけ N に差し替えて再 arm する**。`{start_time}` は変えない |
+| `RESULT` 行 | 出揃った。その監視を呼んだ Step の決着表へ |
+| `TIMEOUT` 行 | 5 回を使い切った。打ち切りとして、その時点の値で決着表へ |
+
+`timeout_ms` の deadline が先に来て、上のどれも出ないまま watch が終わった場合
+（Monitor から再 arm を促す通知だけが届く）は `CONTINUE` と同じ扱いにし、
+`{attempt}` を 1 つ進めて再 arm する。ただし `{attempt}` が既に `5` なら `TIMEOUT` と同じ扱い。
+
+**1 つの監視で 5 回を超えて再 arm しない。** 延長したくなったら `max_attempts` を上げるのであって、
+表の外で追加の watch を張らない。
+
+決着の後に届いた Monitor の終了通知は無視する（その監視はもう終わっている）。
 
 ## Step 1: PR 特定 + 現在の状態確認 + 開始時刻記録
 
@@ -65,125 +128,14 @@ PR 作成後に外から返ってくる非同期の結果は 2 系統ある。**
 
 ---
 
-## Step 2: 監視と決着
+## Step 2: レビューと CI の監視と決着
 
-**このステップが終わるのは resolve-pr を起動したか「対応不要」を報告した時点**であって、
+監視スクリプトを `{phase}` = `review`、`{attempt}` = `1` で Monitor 起動する。
+**初回だけ**「PR #{pr} のレビュー・CI 監視を開始しました」と出力する
+（再 arm は同じ監視の続きなので何も出力しない）。
+
+**このステップが終わるのは決着表の対応を済ませた時点**であって、
 Monitor の完了通知が届いた時点ではない。通知は監視の途中経過で、決着はこのステップの中にある。
-
-以下のポーリングスクリプトを Monitor ツールで起動する。
-`{owner}`, `{repo}`, `{pr}`, `{start_time}` は Step 1 で取得した値に置換する。
-`{attempt}` は初回起動なので `1` を入れる。
-
-```
-Monitor(
-  description: "PR #{pr} レビュー・CI 監視 ({attempt}/5)",
-  timeout_ms: 420000,
-  command: <下記スクリプト>
-)
-```
-
-**Monitor の watch は必ず deadline を持つ。無期限にするオプションは無い。**
-`timeout_ms` に達すると watch は kill され、Claude へ「再 arm せよ」という通知が届く。
-deadline の上限は **30 分**、**単発 `-p` 実行では 10 分**
-（パラメータ名と上限の正本は Monitor ツール自身の説明文。ここへ写さない）。
-
-したがって 30 分を 1 回の watch で張ることはできない。**6 分の watch を最大 5 回つなぐ**:
-
-| 値 | 意味 |
-|:---|:---|
-| スクリプトの `max_checks=12` | 30 秒 × 12 = **watch 1 回あたり 6 分** |
-| `timeout_ms: 420000` | 7 分。スクリプトの 6 分より長いので**通常はスクリプトが自分で終わる**（deadline kill は `gh` が固まったときの保険）。`-p` の上限 10 分より短いので**通常実行と `-p` で同じ値がそのまま使える** |
-| スクリプトの `max_attempts=5` | 6 分 × 5 = **合計 30 分**。**CI が Editor を起動するプロジェクトでは 10〜30 分かかる**ので縮めない |
-
-**再 arm しても「1 PR につき 1 回のみ」は崩れない。** 再 arm は同じ監視の続きであって、
-resolve-pr を複数回起動することではない。resolve-pr の起動は決着表で 1 度だけ。
-
-**再 arm で状態を引き継ぐ必要は無い。** `review` / `checks` は毎回 API から `start_time` 起点で
-判定し直すので、`start_time` さえ変えなければ前の watch で検出済みのレビューもそのまま再現される。
-watch をまたいで引き継ぐのは `{attempt}` だけ。
-
-### ポーリングスクリプト
-
-```bash
-owner="{owner}"
-repo="{repo}"
-pr="{pr}"
-start_time="{start_time}"
-attempt={attempt}
-max_attempts=5
-max_checks=12
-check=0
-
-review_state="none"    # none / detected / no_comments
-checks_state="pending" # pending / pass / fail / none
-
-while [ $check -lt $max_checks ]; do
-  check=$((check + 1))
-  echo "attempt $attempt/$max_attempts check $check/$max_checks review=$review_state checks=$checks_state" >&2
-
-  # --- レビュー ---
-  if [ "$review_state" = "none" ]; then
-    reviews=$(gh api "repos/$owner/$repo/pulls/$pr/reviews" \
-      --jq "[.[] | select(.submitted_at > \"$start_time\")] | length" 2>/dev/null || echo "0")
-    if [ "$reviews" -gt 0 ] 2>/dev/null; then
-      pr_comments=$(gh api "repos/$owner/$repo/pulls/$pr/comments" \
-        --jq "[.[] | select(.created_at > \"$start_time\")] | length" 2>/dev/null || echo "0")
-      issue_comments=$(gh api "repos/$owner/$repo/issues/$pr/comments" \
-        --jq "[.[] | select(.created_at > \"$start_time\" and (.user.type != \"Bot\" or (.user.login | test(\"^copilot-pull-request-reviewer\"))))] | length" 2>/dev/null || echo "0")
-      total=$((pr_comments + issue_comments))
-      if [ "$total" -gt 0 ]; then review_state="detected"; else review_state="no_comments"; fi
-    fi
-  fi
-
-  # --- CI チェック ---
-  if [ "$checks_state" = "pending" ]; then
-    checks_out=$(gh pr checks "$pr" 2>&1)
-    case $? in
-      0) checks_state="pass" ;;
-      8) checks_state="pending" ;;
-      *) if printf '%s' "$checks_out" | grep -qi "no checks"; then
-           checks_state="none"
-         else
-           checks_state="fail"
-         fi ;;
-    esac
-  fi
-
-  if [ "$review_state" != "none" ] && [ "$checks_state" != "pending" ]; then
-    echo "RESULT|pr=$pr|review=$review_state|checks=$checks_state"
-    exit 0
-  fi
-
-  sleep 30
-done
-
-if [ "$attempt" -lt "$max_attempts" ]; then
-  echo "CONTINUE|pr=$pr|review=$review_state|checks=$checks_state|next_attempt=$((attempt + 1))"
-else
-  echo "TIMEOUT|pr=$pr|review=$review_state|checks=$checks_state"
-fi
-```
-
-**初回（`{attempt}` が `1`）のときだけ**「PR #{pr} のレビュー・CI 監視を開始しました」と出力する。
-再 arm では何も出力しない（同じ監視の続きであって、新しい監視ではない）。
-
-### 監視の終了条件
-
-スクリプトは打ち切るとき、次にどうするかを自分で最終行に出す。**残り回数を頭で数えない。**
-
-| スクリプトの最終行 | 対応 |
-|:---|:---|
-| `CONTINUE` 行（`next_attempt=N` 付き） | **同じスクリプトを `{attempt}` = N に差し替えて再 arm する**。`{start_time}` は初回の値のまま変えない |
-| `RESULT` 行 | 両系統が出揃った。**下の決着表へ** |
-| `TIMEOUT` 行 | 5 回を使い切った。打ち切りとして、その時点の値で**下の決着表へ** |
-
-`timeout_ms` の deadline が先に来て、上のどれも出ないまま watch が終わった場合
-（Monitor から再 arm を促す通知だけが届く）は `CONTINUE` と同じ扱いにし、
-`{attempt}` を 1 つ進めて再 arm する。ただし `{attempt}` が既に `5` なら `TIMEOUT` と同じ扱い。
-
-**これ以上は再 arm しない。** 合計 5 回（30 分）が全体の打ち切り条件で、
-到達したら監視を終える。延長したくなったら `max_attempts` を上げるのであって、
-表の外で追加の watch を張らない。
 
 ### 決着表
 
@@ -191,17 +143,24 @@ Step 1 で両系統が出揃っていた場合もここへ来る（Monitor を�
 
 | review | checks | 対応 |
 |:---|:---|:---|
-| `detected` | 何でも | resolve-pr を起動（下記） |
-| `no_comments` | `fail` | resolve-pr を起動（下記） |
+| `detected` | 何でも | resolve-pr を起動し、Step 3 へ |
+| `no_comments` | `fail` | resolve-pr を起動し、Step 3 へ |
 | `no_comments` | `pass` / `none` | 「レビュー完了・CI 通過、対応不要」と報告して終了 |
 
-`TIMEOUT` で出揃わなかった値（`review=none` / `checks=pending`）が残っているときは、
-その値をそのまま報告して終了する（`checks=fail` が確定していれば resolve-pr を起動してよい）。
+`TIMEOUT` で出揃わなかった値が残っているとき:
 
-決着の後に届いた Monitor の終了通知は無視する（監視はもう終わっている）。
-それ以外の終了通知は上の終了条件表に従う。
+| 残った値 | 対応 |
+|:---|:---|
+| `review=none`（レビューが来なかった） | `checks=fail` なら resolve-pr を起動し Step 3 へ。`pending` なら Step 3 の CI 監視へ（push 前の head のまま CI を見続ける）。`pass` / `none` ならレビュー未着と CI の結果を報告して終了 |
+| `checks=pending`（`review=detected` / `no_comments`） | 表の上段と同じく resolve-pr が要るなら起動して Step 3 へ。要らないなら Step 3 の CI 監視へ |
 
 #### resolve-pr の起動方法
+
+起動する直前に PR の head を記録する（Step 3 で push の有無を判定するため）:
+
+```bash
+gh pr view {pr} --json headRefOid --jq .headRefOid   # → {head_before}
+```
 
 ```
 Skill(skill: "resolve-pr", args: "{pr}")
@@ -209,6 +168,38 @@ Skill(skill: "resolve-pr", args: "{pr}")
 
 resolve-pr 自身がレビューコメントと失敗した check の両方を集めるので、内容は渡さない。
 
-**resolve-pr は 1 度だけ起動する。** その push で CI が回り直した結果まで待たない
-（待ち直すと監視が入れ子になる）。代わりに完了報告で、CI が回り直していることと
-確認方法（`gh pr checks {pr} --watch`）を伝える。
+---
+
+## Step 3: push 後の CI 監視と決着
+
+回り直した CI を監視し、pass / fail / timeout の結論を**自分で**報告する。
+CI 修正の再試行回数 `{ci_retry}` は `0` から始める。
+
+1. **監視が要るか判定する**（resolve-pr から戻ったときだけ。`ci` 引数で始めたときと
+   Step 2 から resolve-pr を経ずに来たときは 2 へ進む）:
+
+   ```bash
+   gh pr view {pr} --json headRefOid --jq .headRefOid   # → {head_after}
+   ```
+
+   | 状態 | 対応 |
+   |:---|:---|
+   | `{head_after}` ≠ `{head_before}` | push された。2 へ |
+   | 等しい（push が無かった） | CI は回り直していない。resolve-pr の報告と、push 前の CI の結果をそのまま報告して終了 |
+
+2. **監視する**: 開始時刻を `{start_time}` に取り直し、監視スクリプトを `{phase}` = `ci`、
+   `{attempt}` = `1` で Monitor 起動する。再 arm は監視スクリプトの終了条件に従う
+
+3. **決着表**:
+
+   | checks | 対応 |
+   |:---|:---|
+   | `pass` | 「push 後の CI 通過」と報告して終了 |
+   | `fail` かつ `{ci_retry}` = `0` | `{ci_retry}` を `1` にし、head を `{head_before}` に記録してから `Skill(skill: "resolve-pr", args: "{pr} ci")` を起動し、この Step の 1 へ戻る |
+   | `fail` かつ `{ci_retry}` = `1` | **止まる。** 失敗した check の一覧（`gh pr checks {pr}`）と、resolve-pr が報告した原因を添えて「CI 修正を 1 回試したが通らなかった」と報告して終了 |
+   | `none` | 新しい head で CI が 1 つも走らなかった（ワークフローの paths 絞り込み等）と報告して終了 |
+   | `pending`（`TIMEOUT`） | 30 分で結果が出なかった check の一覧（`gh pr checks {pr}`）を添えて timeout として報告して終了 |
+
+   resolve-pr に `ci` を付けるのは、1 回目で返信済みのレビュー指摘へ 2 度目の返信を付けないため。
+
+**報告にユーザーへの確認依頼を含めない。** pass / fail / timeout のどれで終わったかを結論として書く。
