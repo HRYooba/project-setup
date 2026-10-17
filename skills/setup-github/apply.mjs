@@ -407,6 +407,9 @@ const mdStates = [
   )}`,
 ];
 
+// skill 一式は plugin の所有物なので、配備先の旧版を消してから置く
+// （上書きコピーだけだと、テンプレから消えたファイルが配備先に残り続ける）。
+rmSync(join(claudeDir, "skills", "create-issue"), { recursive: true, force: true });
 cpSync(join(templatesDir, "base", "skills", "create-issue"), join(claudeDir, "skills", "create-issue"), {
   recursive: true,
 });
