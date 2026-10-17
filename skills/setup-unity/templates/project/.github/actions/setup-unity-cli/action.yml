@@ -1,5 +1,4 @@
 # Unity CLI を入れて PATH へ通す（setup-unity が配布）。
-# verify ジョブと test ジョブの両方が要るので、composite action に切り出してある。
 name: setup-unity-cli
 description: Unity CLI をインストールして PATH に通す
 
