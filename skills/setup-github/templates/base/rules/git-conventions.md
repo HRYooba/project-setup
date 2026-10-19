@@ -19,6 +19,11 @@
 - `<type>/<簡潔な説明>`。Issue が紐づくときだけ番号を挟む `<type>/<issue番号>-<簡潔な説明>`（例: `fix/camera-flicker` / `fix/34-camera-flicker`）
 - `<type>` はコミットの type と同じ語彙（`feat/` を使い `feature/` は使わない）
 
+## Git LFS
+
+- LFS の設定は人間の承認なしに入れない・変えない。対象: `git lfs install` / `git lfs track` / `git lfs migrate` / `.gitattributes` の `filter=lfs` 行 / `.lfsconfig`
+- LFS が要りそうな場面（大きなバイナリの追加など）では、提案だけして止まる
+
 ## revert
 
 - `git revert` の自動生成メッセージ（`Revert "<元subject>"`）は Conventional Commits 形式ではないため、`revert: <元subject>` + footer `Refs: <sha>` + 理由 の形へ手で書き換える
