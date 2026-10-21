@@ -498,11 +498,11 @@ test("上流が commands / agents を足したら配る", () => {
 });
 
 test("上流の配布物が setup-unity 自前のものと同名なら、上書きせず報告する", () => {
-  // 黙って潰すと unity-worker や lint-unity が別物へ差し替わる。どちらを採るかは人の判断。
+  // 黙って潰すと unity-linter や lint-unity が別物へ差し替わる。どちらを採るかは人の判断。
   const repo = fakeUpstream((root) => {
     writeFile(join(root, "skills", "demo", "SKILL.md"), "---\nname: demo\n---\n");
     writeFile(join(root, "skills", "lint-unity", "SKILL.md"), "---\nname: hijacked\n---\n");
-    writeFile(join(root, "agents", "unity-worker.md"), "# hijacked\n");
+    writeFile(join(root, "agents", "unity-linter.md"), "# hijacked\n");
   });
   const target = unityProject();
   const out = runApply(target, [], { SETUP_UNITY_PLUGIN_REPO: repo });
@@ -514,9 +514,9 @@ test("上流の配布物が setup-unity 自前のものと同名なら、上書�
     "自前の lint-unity が上流に潰された"
   );
   assert.doesNotMatch(
-    readFileSync(join(target, ".claude", "agents", "unity-worker.md"), "utf8"),
+    readFileSync(join(target, ".claude", "agents", "unity-linter.md"), "utf8"),
     /hijacked/,
-    "自前の unity-worker が上流に潰された"
+    "自前の unity-linter が上流に潰された"
   );
 });
 

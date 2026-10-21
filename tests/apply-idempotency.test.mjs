@@ -298,6 +298,12 @@ test("setup-unity: このスキルが配らないファイルは再適用で取�
     ["references", "test-designing-guide.md"],
     ["references", "test-writing-guide.md"],
     ["agents", "unity-tester.md"],
+    ["skills", "unity-parallel", "SKILL.md"],
+    ["skills", "unity-parallel", "guard.mjs"],
+    ["skills", "unity-parallel", "lane.mjs"],
+    ["skills", "unity-parallel", "protocol.mjs"],
+    ["skills", "unity-parallel", "references", "protocol.md"],
+    ["agents", "unity-worker.md"],
   ];
   for (const parts of legacy) {
     const p = join(target, ".claude", ...parts);
@@ -319,6 +325,7 @@ test("setup-unity: このスキルが配らないファイルは再適用で取�
   );
   // 空の殻が残ると、配備先を見た人が「まだあるもの」と読む
   assert.ok(!existsSync(join(target, ".claude", "skills", "test-unity")), "空になった test-unity が残っている");
+  assert.ok(!existsSync(join(target, ".claude", "skills", "unity-parallel")), "空になった unity-parallel が残っている");
   // テスト専用の rules / skill / references は撒かない。空の殻も残らない
   assert.ok(!existsSync(join(target, ".claude", "references")), "空になった references が残っている");
 });

@@ -65,6 +65,12 @@ const OBSOLETE_PATHS = [
   "references/test-designing-guide.md",
   "references/test-writing-guide.md",
   "agents/unity-tester.md",
+  "skills/unity-parallel/SKILL.md",
+  "skills/unity-parallel/guard.mjs",
+  "skills/unity-parallel/lane.mjs",
+  "skills/unity-parallel/protocol.mjs",
+  "skills/unity-parallel/references/protocol.md",
+  "agents/unity-worker.md",
 ];
 
 const rawArgs = process.argv.slice(2);
@@ -421,7 +427,7 @@ function installUnityPlugin(recorded) {
     // 配る対象を集める。marker が要るのは skills だけ（SKILL.md を持たないディレクトリは skill でない）。
     //
     // **自前の配布物と名前がぶつかったら上流を配らない。** 上流の agent / command / skill が
-    // unity-worker や lint-unity と同名になると、黙って潰して別物へ差し替わる。どちらを採るかは
+    // unity-linter や lint-unity と同名になると、黙って潰して別物へ差し替わる。どちらを採るかは
     // 人の判断なので、ここでは触らずに名指しで報告する。`copied` は今回配ったファイルの相対パス。
     const collided = [];
     const wanted = {};
@@ -481,7 +487,7 @@ function installUnityPlugin(recorded) {
     if (existsSync(licenseSrc)) cpSync(licenseSrc, join(claudeDir, "skills", UNITY_PLUGIN_LICENSE));
 
     // 上流から消えたものを配備先からも消す。**前回配った記録にあるものだけ**を対象にする
-    // （lint-unity / unity-parallel / unity-linter などは別経路の配布物なので触ってはいけない）。
+    // （lint-unity / unity-linter などは別経路の配布物なので触ってはいけない）。
     const dropped = [];
     for (const kind of new Set([...Object.keys(prevPlaced), ...Object.keys(wanted)])) {
       const names = wanted[kind] ?? [];

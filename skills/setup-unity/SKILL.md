@@ -5,7 +5,7 @@ description: >
   「Unityセットアップ」「setup-unity」「Unity規約を導入」「このプロジェクトにUnity開発ルールを入れて」
   などと依頼したときに使用する。`.claude/` へ rules（folder-structure / hierarchy /
   asset-naming / coding-standards）、CLAUDE.md（Unity 操作の方針と、コンパイル確認 / テスト / lint を
-  回すタイミング）、skills（lint-unity / unity-parallel）、agents（unity-linter / unity-worker）を
+  回すタイミング）、skills（lint-unity）、agents（unity-linter）を
   撒き、プロジェクト本体へ Roslyn analyzer と整合性検査の GitHub Actions を置く。
   公式 unity プラグイン（unity-cli を含む skills / commands / agents）も上流から引いて
   `.claude/` へ直接置く（プラグインとしては入れないので個人マシンのキャッシュに実体が残らず、
@@ -13,7 +13,7 @@ description: >
   Unity 操作は Unity CLI に固定。CLI 本体と com.unity.pipeline が未導入なら入れる。アプリ本体の置き場（既定 `Assets/App/`）、
   レイヤードアーキテクチャ規約（architecture / class-catalog）の導入有無、レビュー対象を
   そこへ絞るかを実行時に AskUserQuestion で確認する。
-version: 3.20.2
+version: 3.21.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -22,24 +22,23 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 このコマンドは、対象 Unity プロジェクトに次を**冪等に**インストールする（再実行安全）:
 
 1. **rules** — `folder-structure.md` / `hierarchy.md` / `asset-naming.md` / `coding-standards.md`（**規約の機械チェック**・命名・非同期・Reactive・DI・ドキュメントコメント・エラーハンドリング）
-2. **CLAUDE.md** — Unity 操作の方針（CLI 経由 / シリアライズファイルを手編集しない）、`.cs` 変更後のコンパイル確認と `UCS` の読み方、テスト・lint を PR 前に回すタイミング。**Unity CLI の rules は配らない**（使い方は下記 8 が配る `unity-cli` skill が持つ）
+2. **CLAUDE.md** — Unity 操作の方針（CLI 経由 / シリアライズファイルを手編集しない）、`.cs` 変更後のコンパイル確認と `UCS` の読み方、テスト・lint を PR 前に回すタイミング。**Unity CLI の rules は配らない**（使い方は下記 7 が配る `unity-cli` skill が持つ）
 3. **lint-unity** — アセット・シーン・Prefab のルール準拠チェック（skill + `unity-linter` agent + チェックリスト）
-4. **unity-parallel** — git worktree で複数の `unity-worker` を並列に動かしつつ、1 つしかない検証レーン（Unity Editor が開いているフォルダ）を順番待ちで貸し出す（skill + `lane.mjs`（貸し出し管理）+ `guard.mjs`（PreToolUse hook）+ `unity-worker` agent + `references/protocol.md`）。**この skill は自身の frontmatter で hook を登録する** — 呼び出したセッションでだけ有効になり、`settings.json` には触れない
-5. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
-6. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards への差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
-7. **Roslyn analyzer** — `coding-standards.md` のうち**機械で判定できる規約**をコンパイル時に止める。`Assets/Analyzers/`（DLL + `.meta` + README）を**`.claude/` ではなく Unity プロジェクト本体へ**置く（判断が要る規約と、プロジェクト名を知らないと当てられない名前空間の規約は持たない）。**設定ファイル（`.ruleset` / `.globalconfig`）は配らない** — 全規則 Warning 固定（Error にすると Unity が Safe Mode へ落ちる）。**CI は診断を見ない**ので、違反は Editor のコンソールで読んで直す
-8. **公式 unity プラグイン** — Unity 公式プラグイン（[`Unity-Technologies/unity-agent-plugin`](https://github.com/Unity-Technologies/unity-agent-plugin)）を上流から引き、`skills/` `commands/` `agents/` を `{target}/.claude/` 配下へ**直接置く**（各エントリの `references/` `resources/` `scripts/` ごと）。**プラグインとしては入れない**
+4. **Unity CLI 本体と `com.unity.pipeline`**（未導入のとき）— Unity 操作の前提。CLI は winget / brew、Pipeline は `unity pipeline install`
+5. **（architecture モード。質問で「入れる」を選んだ場合）** — レイヤードアーキテクチャ規約（`architecture.md` / `class-catalog.md`）+ レイヤー前提版の folder-structure / coding-standards への差し替え（lint チェックリストは base に統合済み。層依存チェック項目は「architecture 導入時のみ」として base 側に載る）
+6. **Roslyn analyzer** — `coding-standards.md` のうち**機械で判定できる規約**をコンパイル時に止める。`Assets/Analyzers/`（DLL + `.meta` + README）を**`.claude/` ではなく Unity プロジェクト本体へ**置く（判断が要る規約と、プロジェクト名を知らないと当てられない名前空間の規約は持たない）。**設定ファイル（`.ruleset` / `.globalconfig`）は配らない** — 全規則 Warning 固定（Error にすると Unity が Safe Mode へ落ちる）。**CI は診断を見ない**ので、違反は Editor のコンソールで読んで直す
+7. **公式 unity プラグイン** — Unity 公式プラグイン（[`Unity-Technologies/unity-agent-plugin`](https://github.com/Unity-Technologies/unity-agent-plugin)）を上流から引き、`skills/` `commands/` `agents/` を `{target}/.claude/` 配下へ**直接置く**（各エントリの `references/` `resources/` `scripts/` ごと）。**プラグインとしては入れない**
    - **キャッシュを経由しない経路が他に無い。** `claude plugin install` は scope を問わず実体を `~/.claude/plugins/cache/` へコピーし、そこから読む。リポジトリ内に marketplace を置いて相対パスで入れても同じ。個人マシンへ実体を残さず、リポジトリの現物をそのまま読ませるには直置きしかない
-   - **どの sha を配るかは、このマシンに登録済みの marketplace が unity に対して pin した値に従う**（`~/.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json`）。pin が読めなければ上流 HEAD。**下記 9 の検知と同じ値を見る必要がある** — HEAD を配ると pin とズレている間ずっと drift 扱いになり、同期 PR が出続ける
+   - **どの sha を配るかは、このマシンに登録済みの marketplace が unity に対して pin した値に従う**（`~/.claude/plugins/marketplaces/*/.claude-plugin/marketplace.json`）。pin が読めなければ上流 HEAD。**下記 8 の検知と同じ値を見る必要がある** — HEAD を配ると pin とズレている間ずっと drift 扱いになり、同期 PR が出続ける
    - **project-setup 側にコピーを持たない。** テンプレートへ写すと Unity 側の更新が手作業でしか届かなくなる。配った sha と各種名を `sync-setup-state.json` の `unityPlugin` に記録する
    - 入れ直すのは**記録の sha と pin が食い違うとき**だけ。`git` が無い・clone が失敗する環境では見送って続行し、記録は消さない
    - **上流の更新はこの sha の食い違いで検知される**（ドリフト検知 hook が同じ値を読む）。marketplace を 1 つも登録していないマシンでは pin が読めず、配置は HEAD で動くが**更新の検知が働かない** — その旨を警告する
-   - **上流から消えたものは配備先からも消す。** 対象は記録に載っているものだけ（`lint-unity` / `unity-parallel` / `unity-linter` / `unity-worker` は別経路の配布物なので触らない）
-   - **自前の配布物と同名なら上流を配らず報告する。** 黙って潰すと `unity-worker` などが別物へ差し替わる
+   - **上流から消えたものは配備先からも消す。** 対象は記録に載っているものだけ（`lint-unity` / `unity-linter` は別経路の配布物なので触らない）
+   - **自前の配布物と同名なら上流を配らず報告する。** 黙って潰すと `unity-linter` などが別物へ差し替わる
    - **直置きで再現できない構成要素（`hooks/` `.mcp.json`）と、扱いを決めていない要素は配らず警告する。** hook は `${CLAUDE_PLUGIN_ROOT}` の解決と settings.json への登録が要る。黙って無視すると、上流が構成要素を足した更新が「入ったつもりで入っていない」状態のまま誰にも気づかれない
    - **`unity-cli` も上流版をそのまま配る。** `unity skill install` で CLI 埋め込み版を入れる経路は**持たない** — 実測（CLI `1.0.0-beta.9`）で埋め込み版の CHANGELOG は `beta.8` 止まり、上流は `beta.9` まで載せていて references も 1 本多く、**上流の方が新しかった**。加えて CLI 経由だと「同期を回した人のマシンの CLI 版」が配布物になり、中身がマシンごとに揺れる
    - **再配布なので `LICENSE.md` も置く**（`.claude/skills/UNITY-AGENT-PLUGIN-LICENSE.md`）。Unity Companion License（Unity 依存プロジェクトでの利用が条件）
-9. **プラグインとして入っている同名 skill を伏せる** — `{target}/.claude/settings.json` の `skillOverrides` へ `"unity:<name>": "off"` を入れる（上記 8 で配った skill ぶん）
+8. **プラグインとして入っている同名 skill を伏せる** — `{target}/.claude/settings.json` の `skillOverrides` へ `"unity:<name>": "off"` を入れる（上記 7 で配った skill ぶん）
    - **潰し合わない。** プラグインをマーケットプレース経由で user スコープに入れているマシンでは、`unity:<name>` へ名前空間化された同じ skill が `.claude/skills/` 側と並んで両方モデルへ提示される。どちらを引くかは決まっていない
    - 伏せる名前は**配った skill から導出する**ので、上流の増減に自動で追随する。上流から消えたものの `off` は取り下げる（値が `"off"` のものだけ）
    - **配備先の settings.json に置く**ので、効くのは Unity 案件だけ
@@ -106,8 +105,7 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/setup-unity/apply.mjs" {target} [--architectu
 
 apply.mjs が次を行う:
 - `templates/base/` を `{target}/.claude/`（`rules/` `skills/` `agents/`）へ再帰コピー
-- このスキルが配らないファイル（`OBSOLETE_PATHS`。旧 unity-mcp 一式と、skill をやめた
-  `skills/test-unity/` 一式・`agents/unity-tester.md`・旧 `references/test-*-guide.md`・旧 `rules/testing.md` / `rules/dev-flow.md`）が配備先にあれば**取り除く**。
+- このスキルが配らないファイル（正本は apply.mjs の `OBSOLETE_PATHS`）が配備先にあれば**取り除く**。
   空になったディレクトリも畳む。残すと現行の rules と手順が二重になり、常時コンテキストに並ぶため
   （プロジェクト固有の追記があった場合は配備先の git 履歴から復元できる）
 - 廃止したフラグ（`--mcp <値>` / `--analyzer` / `--analyzer-severity=...`）を渡されても
@@ -124,9 +122,9 @@ apply.mjs が次を行う:
   ファイルがここに無い ＝ マージ判定が要らない）
 - `.claude/rules/*.md` と `.claude/CLAUDE.md` は**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持したまま「要マージ」として報告する。CLAUDE.md は節を配るので全文一致では判定できず、**節の非空行がすべて配備先にあれば反映済み**とみなす（判定基準がテンプレ本体から導出されるので、別途マーカーを維持しなくてよい）
 - `.github/workflows/unity-ci.yml` も**書かない**（初回配置と、内容が同じときを除く）。差分があれば現物を維持して「要マージ」として報告する。CI の走らせ方は配備先の事情（LFS を引くか・トリガー・runner）を抱えるため、黙って巻き戻さない。`.github/` の他の配布物（`scripts/unity-verify.mjs` / `actions/setup-unity-cli/action.yml`）と `Assets/Analyzers/**` は無条件に上書きする
-- 公式 unity プラグインを上流から clone（marketplace が pin した sha へ checkout）し、`skills/` `commands/` `agents/` の全件と `LICENSE.md` を `{target}/.claude/` 配下へ配置する（上記 8）
+- 公式 unity プラグインを上流から clone（marketplace が pin した sha へ checkout）し、`skills/` `commands/` `agents/` の全件と `LICENSE.md` を `{target}/.claude/` 配下へ配置する（上記 7）
 - `{target}/.claude/settings.json` の `skillOverrides` へ、配った skill 名ぶんの `"unity:<name>": "off"` をマージする（他キーは温存。既に値があれば触らない。settings.json が不正な JSON なら見送って続行する）
-- `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時の skill 版 = この SKILL.md の `version:`、有効フラグ = `--architecture`、`unityPlugin` = 配った sha と各種名）をマージ記録する（setup-github のキーは温存）。**settings.json へ書くのは `skillOverrides` だけで、hook は配らない**（上記 9）。ドリフト検知の hook（SessionStart の `sync-setup-check.mjs` と UserPromptSubmit の `sync-setup-prompt.mjs`）は setup-github が配り、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
+- `{target}/.claude/sync-setup-state.json`（テンプレート自動追随の状態ファイル）へ `setup-unity` キー（適用時の skill 版 = この SKILL.md の `version:`、有効フラグ = `--architecture`、`unityPlugin` = 配った sha と各種名）をマージ記録する（setup-github のキーは温存）。**settings.json へ書くのは `skillOverrides` だけで、hook は配らない**（上記 8）。ドリフト検知の hook（SessionStart の `sync-setup-check.mjs` と UserPromptSubmit の `sync-setup-prompt.mjs`）は setup-github が配り、この状態ファイルの全キーを見る。したがって Unity プロジェクトの auto-sync には setup-github の導入も必要
 
 ### Step 2.5: 要マージのファイルを統合する
 
@@ -240,9 +238,8 @@ apply.mjs の出力（配置ファイル一覧・モード）をそのまま伝�
 - 不明な `--` オプションはエラー終了する（typo で意図しないモードのまま成功しない）。例外は廃止フラグ（`--mcp <値>` / `--analyzer` / `--analyzer-severity=...`。注意を出して無視。上記）
 - **Unity 操作のコマンド表を持たない。** Editor が公開するコマンドは Editor 側（`com.unity.pipeline` と
   プロジェクトの `[CliCommand]`）が定義するため、一覧を書くと必ず腐る。CLI 自身の詳細も持たない
-  （公式 `unity-cli` skill が正本で、上記 8 が上流版をそのまま配る）
+  （公式 `unity-cli` skill が正本で、上記 7 が上流版をそのまま配る）
 - このスキルは `.claude/settings.json` に触れない。テンプレート自動追随の状態ファイル `.claude/sync-setup-state.json` へは自分のキー（`setup-unity`）だけをマージ記録する（データファイルの更新であり hook 登録ではない）。同期チェック hook 本体（SessionStart / UserPromptSubmit）と settings.json 登録は setup-github が単独で担う（hook の二重管理を作らないため）
-- **hook 契約の範囲**: 「settings.json へ恒久登録する hook は配らない」が契約であって、「hook を一切配らない」ではない。`unity-parallel` は自身の SKILL.md frontmatter に PreToolUse hook を持つ。これは **その skill を呼び出したセッションでだけ登録され**、settings.json には現れない。並列作業をしていないセッションの挙動は変わらない
 - **`templates/project/` は `.claude/` の外へ出る配置物**（analyzer の DLL と整合性検査の workflow）。
   テンプレ同期の sparse-checkout が `Assets/Analyzers` と `.github` を展開している必要がある
   （`skills/sync-setup/sync-run.mjs`）。配置先を変えるならそちらも合わせる —
