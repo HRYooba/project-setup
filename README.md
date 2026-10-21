@@ -5,7 +5,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 | skill | 内容 |
 |:------|:-----|
 | `setup-github` | GitHub 開発フロー一式を導入する。ブランチ保護（pre-push。既定 ON・質問で外せる）、PR 前レビュー運用（`/code-review` + `/security-review` のソフト指示）、git 運用規約（Git Flow / Conventional Commits）、create-issue skill。任意で Copilot PR 自動レビュー（自動アサイン / watch-pr / resolve-pr）と AGENTS.md 自動生成 |
-| `setup-unity` | Unity 開発規約一式を導入する。rules（Unity 操作 / フォルダ構成 / Hierarchy / アセット命名 / コーディング規約 / テスト）、skills（lint-unity / unity-parallel）、agents（unity-linter / unity-worker）、テスト設計・実装ガイド（references）。Unity 操作は **Unity CLI** 固定。コーディング規約を機械で止める Roslyn analyzer と PR ゲートの GitHub Actions も配る。任意でレイヤードアーキテクチャ規約 |
+| `setup-unity` | Unity 開発規約一式を導入する。rules（Unity 操作 / フォルダ構成 / Hierarchy / アセット命名 / コーディング規約 / テスト）、skills（lint-unity）、agents（unity-linter）、テスト設計・実装ガイド（references）。Unity 操作は **Unity CLI** 固定。コーディング規約を機械で止める Roslyn analyzer と PR ゲートの GitHub Actions も配る。任意でレイヤードアーキテクチャ規約 |
 | `sync-setup` | プラグインのテンプレート更新に、展開済みリポジトリを追随させる。保存フラグで apply.mjs を再適用し、同期 PR を作成する（merge はしない）。UserPromptSubmit hook が最初のプロンプトへ差し込む、または手動で `/sync-setup` を実行する |
 
 どちらも**冪等**（再実行安全）で、導入オプションは実行時に対話で確認する。配置物は対象リポジトリの `.claude/` などにコミットされるため、plugin を持たないチームメイトにもそのまま効く。
@@ -35,25 +35,6 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 - 重複 PR 防止（`gh pr list`）・試行上限（同一版 最大2回）・merge 禁止・**作業ツリー分離** を **コードで担保** する（指示文頼みにしない）。同期は origin の default から切った使い捨て worktree の中だけで走るので、ユーザーが編集中でもブランチは動かない。判断を要するのは .md の統合工程だけで、そこを飛ばせないよう `--phase` は必須。事前確認は `sync-run.mjs --dry-run`。hook の無効化は環境変数 `SYNC_SETUP_DISABLE=1`。
 
 既存の展開済みプロジェクトは、一度 setup-github / setup-unity を再実行すれば状態ファイルが生成され、以後の追随対象になる。
-
-## Unity の並列作業（検証レーン）
-
-Unity Editor は開いているフォルダ 1 つしか見ない。そのフォルダ（＝レーン）は貸し出すたびに
-`checkout --detach` で借り手の commit へ切り替わるので、借りていない者がそこへ `unity command` や
-`unity test` を向けると、**別のスナップショットを検証して green を報告する**。エラーにならないので気づけない。
-
-`setup-unity` が配る `unity-parallel` skill は、レーンを「順番に 1 人だけへ貸す排他資源」として扱う。
-作業自体は worktree ごとに並列のまま、Editor が必要になったエージェントだけがキューに並ぶ。
-
-- **貸し出し管理は `lane.mjs`**（ロック・phase journal・`checkout --detach`・`cherry-pick` での返却・復旧）。散文の手順書では担保できない（守られなかったことが出力に現れないため）
-- **検問は `guard.mjs`**（PreToolUse hook）。トークンを持たないエージェントの `unity` 呼び出し（Editor に触るサブコマンド）と、Unity シリアライズファイルの手編集を止める
-- hook は **skill の frontmatter で登録**され、その skill を呼び出したセッションでだけ有効になる。`settings.json` には触れない
-
-**保証しないこと**（`references/protocol.md` に明記）: これは協調的なエージェントの事故を止める仕組みであって、
-意図的な回避への防壁ではない。`unity` 呼び出しの検出もシェル越しの書き込みもコマンド文字列の
-ヒューリスティック判定（変数展開・エイリアスは追えない）で、hook 自体の無効化は防げない。
-またレーンの green は**そのスナップショットに対する green**でしかなく、`Library/` を持ち回るため
-クリーンな環境でのインポート結果と一致する保証もない。重要な統合点では CI を最終的な権威にする。
 
 ## インストール
 
@@ -114,7 +95,7 @@ scripts/
 
 ## テスト
 
-apply.mjs の冪等性・Markdown の要マージ判定（配る / 触らない / 書かずに報告する）・配らなくなった hook の撤去（実体削除 + settings.json 登録解除）、テンプレ自動追随（sync-setup のフェーズ分割・ガード）、検証レーン（門番の拒否判定・差分ゲート・排他・`.meta` の往復）は `tests/` のユニットテストで検証する（Node 標準の test runner のみ・依存なし）:
+apply.mjs の冪等性・Markdown の要マージ判定（配る / 触らない / 書かずに報告する）・配らなくなった hook の撤去（実体削除 + settings.json 登録解除）、テンプレ自動追随（sync-setup のフェーズ分割・ガード）は `tests/` のユニットテストで検証する（Node 標準の test runner のみ・依存なし）:
 
 ```
 node --test "tests/*.test.mjs"
