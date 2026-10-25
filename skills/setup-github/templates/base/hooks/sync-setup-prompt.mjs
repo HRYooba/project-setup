@@ -27,6 +27,11 @@
 //   - UserPromptSubmit の timeout は既定 30 秒（他 hook の 600 秒ではない）。ここはローカルの
 //     JSON を数本読むだけに保つ。ネットワーク・gh・git は sync-run.mjs 側が叩く。
 //   - SYNC_SETUP_DISABLE=1 で黙る（避難口。detectDrift が見る）。
+//   - **Orca が作業を配った worker セッションには添えない。** worker への brief は GitHub 操作や
+//     依頼外の作業を禁じており、同期の指示は実行されずに空振りする。worker の最初のプロンプトは
+//     Orca が固定文（ORCA_DISPATCH_LEAD）で始める。人間が Orca 端末で打つプロンプトはこの文で
+//     始まらず、環境変数は worker と人間の Orca 端末で区別が付かないので、見分けはこの文だけで行う。
+//     添えたときと同じく記録してから黙るので、同じ worker セッションの 2 通目以降にも添えない。
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -36,6 +41,9 @@ import { dataDir, detectDrift, readJson, readStdin } from "./lib/sync-setup-drif
 // 添えたセッションの記録。1 セッション 1 エントリで、古いものは捨てる
 // （セッションごとにファイルを作ると増え続けるため、1 ファイルの map に畳む）。
 const PRUNE_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Orca 本体の ORCA_DISPATCH_PROMPT_LEAD_LINE の先頭。文末の言い回しが変わっても外れないよう前半だけ見る。
+const ORCA_DISPATCH_LEAD = "Please carry out this task from my Orca coordinator";
 
 function promptedPath() {
   return process.env.SYNC_SETUP_PROMPTED_JSON || join(dataDir(), "sync-setup-prompted.json");
@@ -69,6 +77,12 @@ const sessionId = typeof stdin.session_id === "string" ? stdin.session_id : "";
 
 // session_id が取れない環境では黙る（記録できない＝毎プロンプト添えることになるため）。
 if (!sessionId || alreadyPrompted(sessionId)) process.exit(0);
+
+const prompt = typeof stdin.prompt === "string" ? stdin.prompt : "";
+if (prompt.trimStart().startsWith(ORCA_DISPATCH_LEAD)) {
+  markPrompted(sessionId);
+  process.exit(0);
+}
 
 const drift = detectDrift(projectDir);
 if (!drift) process.exit(0);
