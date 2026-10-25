@@ -459,6 +459,25 @@ test("prompt hook: session_id が無ければ黙る（毎プロンプト差し�
   assert.equal(runPromptHook(target, "1.3.0", { sessionId: "" }), "");
 });
 
+test("prompt hook: Orca が配った worker セッションには添えず、同じセッションの 2 通目以降も黙る", () => {
+  const target = tempDir("sync-p-orca-");
+  writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
+  const promptedJson = join(tempDir("sync-prompted-"), "prompted.json");
+  const dispatch =
+    "Please carry out this task from my Orca coordinator by following the brief I pasted below. \n\n" +
+    "You are working inside Orca, a multi-agent IDE. You are a dispatched worker.";
+
+  assert.equal(runPromptHook(target, "1.3.0", { prompt: dispatch, promptedJson, sessionId: "w1" }), "");
+  assert.equal(runPromptHook(target, "1.3.0", { prompt: "続けて", promptedJson, sessionId: "w1" }), "");
+});
+
+test("prompt hook: Orca の固定文が途中に出てくるだけの人間のプロンプトには添える", () => {
+  const target = tempDir("sync-p-orca-human-");
+  writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
+  const prompt = "worker に「Please carry out this task from my Orca coordinator」と送ったら止まった。原因を見て";
+  assert.notEqual(runPromptHook(target, "1.3.0", { prompt }), "");
+});
+
 test("prompt hook: SYNC_SETUP_DISABLE=1 なら黙る（避難口）", () => {
   const target = tempDir("sync-p-disable-");
   writeState(target, { "setup-github": { version: "1.0.0", flags: [] } });
