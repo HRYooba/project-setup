@@ -108,12 +108,18 @@ function gh(args) {
   return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
+// gh pr view で取るフィールド。statusCheckRollup は checks / statuses の読み取り権限を要し、
+// workflow の GITHUB_TOKEN はそれを持たないので、CI を見ないときは取らない。
+export function viewFields({ includeChecks = true } = {}) {
+  return ["number", "url", "baseRefName", "headRefOid", ...(includeChecks ? ["statusCheckRollup"] : [])].join(",");
+}
+
 // GitHub から状態を取る。prArg は番号・URL・ブランチ名（gh pr view が受ける形）。
 // 失敗は throw する（握り潰すかは呼び手が決める）。
-export function fetchState(prArg, { repo } = {}) {
+export function fetchState(prArg, { repo, includeChecks = true } = {}) {
   const repoArgs = repo ? ["--repo", repo] : [];
   const view = JSON.parse(
-    gh(["pr", "view", ...(prArg ? [String(prArg)] : []), ...repoArgs, "--json", "number,url,baseRefName,headRefOid,statusCheckRollup"])
+    gh(["pr", "view", ...(prArg ? [String(prArg)] : []), ...repoArgs, "--json", viewFields({ includeChecks })])
   );
   const m = String(view.url).match(/\/([^/]+)\/([^/]+)\/pull\/\d+/);
   if (!m) throw new Error(`PR の URL を解釈できません: ${view.url}`);
@@ -142,7 +148,7 @@ function main(argv) {
   const prArg = argv.find((a) => !a.startsWith("--"));
   const repoArg = argv.find((a) => a.startsWith("--repo="))?.slice("--repo=".length);
   const includeChecks = !argv.includes("--no-checks");
-  const state = fetchState(prArg, { repo: repoArg });
+  const state = fetchState(prArg, { repo: repoArg, includeChecks });
   const problems = judge(state, { includeChecks });
   if (!problems.length) {
     console.log(`PR #${state.number}: マージを止める条件はありません`);

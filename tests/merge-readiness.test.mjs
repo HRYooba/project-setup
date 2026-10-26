@@ -1,5 +1,5 @@
 // マージ可否の判定（merge-readiness.mjs）と、gh pr merge の引数解釈のテスト。
-// GitHub への問い合わせ（fetchState）は対象外。取得済みの状態から判定する部分だけを見る。
+// GitHub への問い合わせ（fetchState）は対象外。取得済みの状態から判定する部分と、取るフィールドの選び方だけを見る。
 
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { HOOKS_DIR } from "./helpers.mjs";
 
-const { judge, parseMergeArgs, GATE_WORKFLOW } = await import(
+const { judge, parseMergeArgs, viewFields, GATE_WORKFLOW } = await import(
   pathToFileURL(join(HOOKS_DIR, "lib", "merge-readiness.mjs")).href
 );
 
@@ -48,6 +48,12 @@ test("includeChecks: false では CI を見ない", () => {
     kinds(judge({ checks: [run("ci", "IN_PROGRESS", null)], behindBy: 1 }, { includeChecks: false })),
     ["behind"]
   );
+});
+
+test("includeChecks: false では statusCheckRollup を取らない", () => {
+  // workflow の GITHUB_TOKEN は checks / statuses の読み取り権限を持たず、取ると GraphQL が拒否する
+  assert.ok(!viewFields({ includeChecks: false }).split(",").includes("statusCheckRollup"));
+  assert.ok(viewFields().split(",").includes("statusCheckRollup"));
 });
 
 test("gh pr merge の PR 指定とリポジトリ指定を取り出す", () => {
