@@ -46,6 +46,9 @@ test("初回適用 → 再実行で重複せず、review-config が温存され�
     ".claude/hooks/lib/reviewable-files.mjs",
     ".claude/hooks/review-config.json",
     ".claude/sync-setup-state.json",
+    ".claude/hooks/before-pr-merge.mjs",
+    ".claude/hooks/lib/merge-readiness.mjs",
+    ".github/workflows/merge-gate.yml",
     ".githooks/pre-push",
   ]) {
     assert.ok(existsSync(join(target, f)), `${f} が配置されていない`);
@@ -76,8 +79,9 @@ test("初回適用 → 再実行で重複せず、review-config が温存され�
   for (const m of MARKS) assert.equal(count(md1, m), 1, `${m} が 1 回でない`);
 
   const settings1 = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
-  // gate / nudge は配らない。PreToolUse には何も登録しない。
-  assert.ok(!settings1.hooks.PreToolUse, "PreToolUse に hook が登録されている（登録しないはず）");
+  // PreToolUse はマージ判定の 1 本だけ（gate / nudge は配らない）。
+  const preToolUse = (s) => s.hooks.PreToolUse.flatMap((g) => g.hooks.map((h) => h.command));
+  assert.deepEqual(preToolUse(settings1), ['node "$CLAUDE_PROJECT_DIR/.claude/hooks/before-pr-merge.mjs"']);
   assert.equal(settings1.hooks.SessionStart.length, 2); // core.hooksPath + sync-setup-check
 
   // 再実行（フラグ無し）: 温存・重複なし
@@ -91,7 +95,7 @@ test("初回適用 → 再実行で重複せず、review-config が温存され�
   for (const m of MARKS) assert.equal(count(md2, m), 1, `再実行で ${m} が重複した`);
 
   const settings2 = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
-  assert.ok(!settings2.hooks.PreToolUse, "再実行で PreToolUse に hook が登録された（登録しないはず）");
+  assert.deepEqual(preToolUse(settings2), preToolUse(settings1), "再実行で PreToolUse が変わった");
   assert.equal(settings2.hooks.SessionStart.length, 2, "再実行で SessionStart が重複した");
 
   // 再実行で状態ファイルの setup-github キーが温存される（同版・同フラグ）

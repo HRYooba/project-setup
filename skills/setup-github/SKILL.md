@@ -9,7 +9,7 @@ description: >
   （setup-unity のドリフトもこれが見るので、Unity プロジェクトでも導入が要る）を撒く。
   ブランチ保護の有無と、PR 自動レビュー（Copilot 自動アサイン / watch-pr / resolve-pr /
   AGENTS.md 自動生成）の導入有無は、実行時に AskUserQuestion で確認する。
-version: 1.37.1
+version: 1.38.0
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 
@@ -21,13 +21,14 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 
 1. **ブランチ保護（既定 ON・質問で外せる）** — `.githooks/pre-push` が保護ブランチ（default branch + develop）への直 push を拒否。保護ブランチは実行時に検出するため repo ごとの設定は不要。Claude Code 利用者は SessionStart hook で `core.hooksPath` が自動設定され、手動 push を含む全ツールの push に効く。質問で「入れない」を選ぶと `--no-pre-push` で pre-push の `BRANCH_PROTECTION` を 0 にして保護部分だけ止める（**ファイルは消さない** — 下の LFS 連鎖が同じ pre-push に載っているため）
 2. **Git LFS 連鎖（常時・外せない）** — `.githooks/` に LFS が使う 4 hook（`pre-push` / `post-checkout` / `post-commit` / `post-merge`）を撒き、中身を `git lfs <hook> "$@"` へ委譲する。`core.hooksPath` を `.githooks` へ向けている間、git-lfs は自前の hook をここへ置こうとして既存ファイルがあると「Hook already exists」で撤退する。放置すると **LFS の実体が上がらないままポインタだけが push され、clone 側が 404 で落ちる**（push は成功表示のまま。git-lfs 公式が案内する merge 方式でこちらから呼ぶ）。LFS は後から導入されることが多いため、LFS 未使用のリポジトリにも常に撒く（hook 側が実行時に `command -v git-lfs` で自己判断するので無害）。配備先で `git lfs install` は不要。**`git lfs update --force` は打たないこと**（pre-push ごと上書きされ、ブランチ保護が消える）
-3. **レビュー対象フォルダ設定** — `.claude/hooks/review-config.json`（`reviewTargets` / `reviewExcludes`）と `.claude/hooks/lib/reviewable-files.mjs` を配布する。**レビュー対象範囲の唯一の正本**で、読み手は 2 つある: (a) pr-copilot の Copilot 自動アサイン（`reviewable-files.mjs` がフォルダ＋拡張子で判定）、(b) CLAUDE.md の `/code-review` / `/security-review` 指示（`reviewTargets` をコマンド引数として渡す。拡張子までは絞らない）。除外デフォルトは `.claude/` `.github/` `.githooks/`。明示指定が無い限り再実行で温存する
+3. **レビュー対象フォルダ設定** — `.claude/hooks/review-config.json`（`reviewTargets` / `reviewExcludes`）と `.claude/hooks/lib/reviewable-files.mjs` を配布する。**レビュー対象範囲の唯一の正本**で、読み手は 2 つある: (a) pr-copilot の Copilot 自動アサイン（`reviewable-files.mjs` がフォルダ＋拡張子で判定）、(b) CLAUDE.md の `/code-review` / `/security-review` 指示（`reviewTargets` をコマンド引数として渡す。拡張子までは絞らない）。`reviewExcludes` は (a) だけが読む（PR 前レビューはツール設定系の変更も見る）。除外デフォルトは `.claude/` `.github/` `.githooks/`。明示指定が無い限り再実行で温存する
 4. **code-review 用 hook の撤去** — `pr-code-review-gate.mjs`（PR 作成 gate）と `code-review-effort-nudge.mjs`（effort 差し戻し nudge）は**配らない**。hook で PR 作成を機械的に堰き止める形は取らず、レビュー運用は CLAUDE.md のソフト指示に置く。配備先に残っていれば**再実行時に実体を削除**し、settings.json の登録も解除する
 5. **git-conventions ルール** — skill 同梱の `templates/base/rules/git-conventions.md` を `.claude/rules/` へコピー。ただし**既存があり内容が異なる場合は書かず「要マージ」として報告**し、Claude が現物とテンプレを読んで統合する（Step 2.6）。上書きするとプロジェクト固有のブランチ戦略が消え、スキップするとテンプレ更新が永久に届かないため、どちらも採らない
 6. **create-issue skill** — skill 同梱の `templates/base/skills/create-issue/` を `.claude/skills/` へコピー
 5-b. **`.github/` テンプレート（seed）** — `templates/base/.github/` の `pull_request_template.md`（小文字・単一ファイル）と `ISSUE_TEMPLATE/{bug_report,feature_request,task}.yml` を配置。**既にファイルがある場合は一切触らない**（PR / Issue テンプレはリポジトリ所有の成果物で、独自に育てているリポがあるため）。更新したいときはプロジェクト側で同梱版から手動で取り込む
 7. **CLAUDE.md** — ブランチ規約（作業ブランチ経由の PR 必須）と PR 前レビュー運用を**ソフト指示**として配る（強制はしない）。レビュー（`/code-review` / `/security-review`）は条件付きで各 1 回。**発火条件の文面は `templates/claude-md.md` が正本**でありここには写さない（写すとテンプレ更新で黙ってズレる）。**ファイルが無ければ書き、節の行が揃っていれば触らず、揃っていなければ「要マージ」として報告**する（Step 2.6 で Claude が統合。文面の移行リストは保守しない）
 8. **テンプレート更新の検知と実行** — `.claude/sync-setup-state.json` に「適用時の skill 版（この SKILL.md の `version:`）」と「有効フラグ一式」を記録し（setup-github / setup-unity が同じファイルへ各自のキーでマージ。相手のキーは消さない）、テンプレ更新を検知する hook 2 本（`sync-setup-check.mjs`（SessionStart）/ `sync-setup-prompt.mjs`（UserPromptSubmit））と判定 lib `.claude/hooks/lib/sync-setup-drift.mjs` を配る。**検知の判定は `sync-setup-drift.mjs`、hook の挙動は各 hook 本体、同期の手順とガード（merge 禁止を含む）は `sync-setup` skill が正本**でここには写さない。skill 版は手で上げる数字なので、bump 忘れは `scripts/check-skill-version-bump.mjs` が PR で落とす（上げ忘れると更新がどの配備先にも黙って届かない）。無効化は `SYNC_SETUP_DISABLE=1`。**この 2 つの hook が setup-unity のドリフトも検知する**（setup-unity は状態ファイルへ自分のキーを書くだけで settings.json には触れない。検知には setup-github の導入が前提）
+8-b. **マージを止める条件** — 判定 `.claude/hooks/lib/merge-readiness.mjs`（CI の失敗・未完了 / 未解決のレビュースレッド / base ブランチからの遅れ）と、それを読む 2 つを配る: `before-pr-merge.mjs`（PreToolUse。Claude の `gh pr merge` を拒否）と `.github/workflows/merge-gate.yml`（PR 上の check）。**条件の正本は `merge-readiness.mjs`** でここには写さない。ブランチ保護の無いプランでは check は表示だけで、マージを止めるのは hook の側
 
 ## pr-copilot モード（質問で「PR 自動レビューを入れる」を選んだ場合）
 
@@ -40,8 +41,8 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ## 前提
 
 - base: 対象が git リポジトリであること（git repo でなくてもファイル配置は行うが、hooksPath 設定はスキップされる）
-- pr-copilot モード: `gh` CLI が認証済み（`gh auth status`）かつ、**その token が `workflow` scope を持つ**（`.github/workflows/agents-md-sync.yml` を配置するため。確認と復旧は Step 1.5）かつ、そのリポジトリで GitHub Copilot code review が有効
-  - base モードはこの scope を要求しない（`.github/workflows/` を書かないため）
+- `gh` CLI の token が **`workflow` scope を持つ**（`.github/workflows/` を配置するため。確認と復旧は Step 1.5）
+- pr-copilot モード: 加えて `gh` CLI が認証済み（`gh auth status`）かつ、そのリポジトリで GitHub Copilot code review が有効
 
 ## 手順
 
@@ -56,18 +57,15 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 | ブランチ保護 | 保護ブランチ（default branch + develop）への直 push を拒否するか。既定は拒否する（Git Flow 前提の推奨構成）。「入れない」を選んでも `.githooks/pre-push` 自体は配備され、Git LFS 連鎖だけが残る | 入れる（推奨）/ 入れない | `.githooks/pre-push` の `BRANCH_PROTECTION` の値 |
 | PR 自動レビュー | Copilot 自動アサイン / watch-pr / resolve-pr / AGENTS.md 自動生成を入れるか。そのリポジトリで Copilot code review が使えるかを判断材料として添える。※導入済み（`after-pr-create.mjs` がある）なら、フラグ無し再実行でも apply.mjs が自動継承する | 入れる / 入れない | `.claude/hooks/after-pr-create.mjs` の有無 |
 | レビュー対象フォルダ | レビュー対象フォルダを絞るか（ベンダーコードの一括導入 PR にレビューを付けないための絞り込み）。**Copilot 自動アサインと `/code-review` / `/security-review` の両方に効く**旨を添える。質問前にリポジトリ構成を見て自作コードのフォルダ候補（例: `src` `shared`、Unity なら `Assets/App`）を挙げる。Unity プロジェクトでこれから setup-unity を走らせる場合は、`Assets/App` がまだ無くても候補に出す（setup-unity 側でも同じ設定を入れられる） | 候補フォルダ（multiSelect 可）/ 絞らない（全フォルダ対象） | `.claude/hooks/review-config.json` の `reviewTargets` |
-| レビュー除外フォルダ | 対象から常に外すフォルダ。デフォルトは `.claude/` `.github/` `.githooks/`（ツール設定系。setup-github の導入 PR を素通しする）。対象フォルダ指定より優先 | デフォルトのまま / 追加除外あり / 除外なし | `.claude/hooks/review-config.json` の `reviewExcludes` |
+| レビュー除外フォルダ | Copilot 自動アサインの対象から常に外すフォルダ（`/code-review` / `/security-review` には効かない）。デフォルトは `.claude/` `.github/` `.githooks/`（ツール設定系。setup-github の導入 PR を素通しする）。対象フォルダ指定より優先 | デフォルトのまま / 追加除外あり / 除外なし | `.claude/hooks/review-config.json` の `reviewExcludes` |
 | ブランチ自動削除 | PR マージ後に head ブランチを GitHub が自動削除するか（リポジトリ設定 `delete_branch_on_merge`）。**実行者が admin（`viewerPermission: ADMIN`）のときのみ質問する**（admin 以外は設定を変更できないため質問せず、現在値を Step 3 で報告するに留める）。ローカルに残る gone ブランチの掃除は git-refresh 等の運用側の役割である旨を判断材料として添える | 有効にする / 無効のまま（再実行時は現在値の維持を推奨選択肢に） | Step 1 で取得済みの `deleteBranchOnMerge` |
 
 - 回答 → フラグ変換: ブランチ保護「入れない」= `--no-pre-push`（「入れる」= フラグを渡さない＝既定 ON） / PR 自動レビュー「入れる」= `--pr-copilot` / フォルダ指定 = `--review-targets=<csv>` / 「絞らない」= `--review-targets=`（空値で明示解除。再実行時に配備済みの値が温存されないよう必ず明示する） / 除外の変更 = `--review-excludes=<csv>` / 「除外なし」= `--review-excludes=`（空値で明示解除） / 「デフォルトのまま」= フラグを渡さない（テンプレートのデフォルト or 配備済み値の温存）
 - ブランチ自動削除の回答は apply.mjs のフラグにはしない（GitHub API 設定でありファイル配置ではないため）。Step 2.5 で gh により反映する
 
-### Step 1.5: `workflow` scope の確認（pr-copilot モードのときだけ）
+### Step 1.5: `workflow` scope の確認
 
-PR 自動レビューを**「入れる」と答えた場合のみ**実行する。「入れない」（base モードのみ）なら
-`.github/workflows/` を書かないため、この確認はスキップする。
-
-pr-copilot モードは `.github/workflows/agents-md-sync.yml` を配置する。`.github/workflows/` 配下の
+apply.mjs は `.github/workflows/`（`merge-gate.yml`、pr-copilot モードでは `agents-md-sync.yml` も）を配置する。`.github/workflows/` 配下の
 変更を含む push は、token に `workflow` scope が無いと GitHub 側で拒否される。ファイル配置
 （Step 2）は scope 無しでも通り、後からコミットを push する段で初めて失敗するため、**書き込む前の
 この段で確かめる**。
@@ -86,7 +84,7 @@ gh auth refresh -h github.com -s workflow
 ```
 
 scope を付け直さないまま進める判断もユーザーは採れる。その場合は
-`.github/workflows/agents-md-sync.yml` を含むコミットの push が拒否されうる旨を Step 3 の報告に
+`.github/workflows/` を含むコミットの push が拒否されうる旨を Step 3 の報告に
 含める（apply.mjs 自体は止めない）。
 
 ### Step 2: インストール実行
@@ -118,7 +116,7 @@ Step 2.6 で統合したファイルがあれば、何を採り何を残した�
 併せて次を案内する:
 
 - 反映には**新しいセッションでの再読み込みが必要**（hook・skill・agent はセッション開始時に読み込まれる）
-- `.claude/` と `.githooks/`（pr-copilot モード時は `AGENTS.md` と `.github/workflows/` も）は repo にコミットしてチームへ配布する（`.githooks/` の hook は exec bit 付きで stage 済み）。コミットは通常どおり作業ブランチ + PR で
+- `.claude/` と `.githooks/` と `.github/workflows/`（pr-copilot モード時は `AGENTS.md` も）は repo にコミットしてチームへ配布する（`.githooks/` の hook は exec bit 付きで stage 済み）。コミットは通常どおり作業ブランチ + PR で
 - pr-copilot モード時: `AGENTS.md` は自動生成物なので直接編集しない（内容は `.claude/rules/` 側で変える）。Copilot の custom instructions は **PR の head branch から読まれる**ため、AGENTS.md の変更はマージ前に同じ PR のレビューへ効く
 - チームメイトは clone 後、Claude Code で開いて trust 承認すれば SessionStart hook により pre-push が自動で有効になる
 

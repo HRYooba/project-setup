@@ -1,0 +1,39 @@
+# マージ可否の check（setup-github が配布）。判定は .claude/hooks/lib/merge-readiness.mjs が正本で、
+# Claude の gh pr merge を止める before-pr-merge.mjs と同じ条件を見る。
+#
+# 見るのは「未解決のレビュースレッド」と「base ブランチから遅れていないか」。他の CI の成否は
+# 見ない（起動時点では他の workflow も未完了で、完了を拾って再評価する手段が無い。CI の赤は
+# GitHub が PR 画面に出す）。
+#
+# スレッドの Resolve と base ブランチの前進では再評価されない（そのイベントで起動できない）。
+# 赤のまま古くなったら、Actions 画面の Re-run で取り直す。
+#
+# ブランチ保護（required status check）が使えるプランなら、この check を必須にするとマージを止められる。
+name: merge-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # インラインコメントも review として submitted で届く
+  pull_request_review:
+    types: [submitted, dismissed]
+
+concurrency:
+  group: merge-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .claude/hooks/lib
+      - name: マージを止める条件が無いか
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .claude/hooks/lib/merge-readiness.mjs "${{ github.event.pull_request.number }}" "--repo=${{ github.repository }}" --no-checks

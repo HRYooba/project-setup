@@ -11,7 +11,7 @@
 
 ## PR 本文
 
-- 先頭に `Closes #N`（Issue 紐づけが無ければ省略）、続けて `## Summary` と `## Test plan`
+- 先頭に `Closes #N`（Issue 紐づけが無ければ省略）、続けて `## Summary` / `## Testing`（どう確かめたか） / `## Risk`（壊れうる範囲） / `## How to revert`（戻し方）
 - `.github/pull_request_template.md`（小文字・単一ファイル）を置くとこの形が自動挿入される
 
 ## ブランチ
