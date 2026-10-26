@@ -13,6 +13,10 @@
 //       clone 側が 404 で落ちる。git-lfs 公式が案内する merge 方式でこちらから呼ぶ
 //     - .claude/hooks/lib/reviewable-files.mjs + review-config.json（Copilot 自動アサインの
 //       対象判定に使う）
+//     - マージを止める条件（未完了・失敗の CI / 未解決スレッド / base からの遅れ）の判定
+//       .claude/hooks/lib/merge-readiness.mjs と、それを使う 2 つの読み手:
+//       .claude/hooks/before-pr-merge.mjs（Claude の gh pr merge を PreToolUse で拒否）と
+//       .github/workflows/merge-gate.yml（PR 上の check）
 //     - .claude/rules/git-conventions.md と .claude/CLAUDE.md（前者は templates/base/rules、
 //       後者は templates/claude-md.md）。**既存があり内容が異なるときは書かない** —
 //       「要マージ」として報告し、SKILL 手順で Claude が文脈判断して統合する
@@ -297,9 +301,16 @@ cpSync(join(templatesDir, "base", "hooks"), join(claudeDir, "hooks"), { recursiv
 copied.push(
   ".claude/hooks/sync-setup-check.mjs",
   ".claude/hooks/sync-setup-prompt.mjs",
+  ".claude/hooks/before-pr-merge.mjs",
   ".claude/hooks/lib/sync-setup-drift.mjs",
-  ".claude/hooks/lib/reviewable-files.mjs"
+  ".claude/hooks/lib/reviewable-files.mjs",
+  ".claude/hooks/lib/merge-readiness.mjs"
 );
+
+// マージ可否の check。判定は .claude/hooks/lib/merge-readiness.mjs を呼ぶだけなので、
+// hook と同じく plugin の所有物として上書きで配る。
+cpSync(join(templatesDir, "base", "workflows"), join(target, ".github", "workflows"), { recursive: true });
+copied.push(".github/workflows/merge-gate.yml");
 
 // 名前を変えた hook の旧実体を削除する（settings.json からの登録解除は下の deregister が担当）。
 {
@@ -611,6 +622,24 @@ if (settingsReadable) {
   deregister("PreToolUse", {
     label: "code-review-effort-nudge.mjs",
     owns: (cmd) => cmd.includes("code-review-effort-nudge.mjs"),
+  });
+
+  // Claude の gh pr merge を、マージを止める条件（lib/merge-readiness.mjs）があるとき拒否する。
+  register("PreToolUse", {
+    label: "before-pr-merge.mjs",
+    owns: (cmd) => cmd.includes("before-pr-merge.mjs"),
+    entry: {
+      matcher: "Bash",
+      hooks: [
+        {
+          type: "command",
+          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/before-pr-merge.mjs"',
+          if: "Bash(gh pr merge *)",
+          // gh を 3 回呼ぶ（PR・スレッド・compare）
+          timeout: 30,
+        },
+      ],
+    },
   });
 
   // .githooks/ には常に LFS 連鎖 hook が入るため、core.hooksPath の自動設定も常に登録する
