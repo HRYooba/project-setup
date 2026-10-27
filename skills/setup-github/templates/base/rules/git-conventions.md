@@ -11,7 +11,10 @@
 
 ## PR 本文
 
-- 先頭に `Closes #N`（Issue 紐づけが無ければ省略）、続けて `## Summary` / `## Testing`（どう確かめたか） / `## Risk`（壊れうる範囲） / `## How to revert`（戻し方）
+- 先頭に `Closes #N`（Issue 紐づけが無ければ省略）、続けて `## Summary` / `## Testing` / `## Risk` / `## How to revert`
+  - Testing: 実行したコマンドと、その結果。確かめていないことも書く（「後で確かめる」は証拠にならない）
+  - Risk: 壊れうる範囲。CI の workflow・認証・課金・インストーラに触れたらそのことを書く
+  - How to revert: 具体的な戻し方と、戻すと一緒に消えるもの（squash merge なら PR 1 つ = コミット 1 つ）
 - `.github/pull_request_template.md`（小文字・単一ファイル）を置くとこの形が自動挿入される
 
 ## ブランチ
