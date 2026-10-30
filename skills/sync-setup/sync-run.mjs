@@ -7,7 +7,8 @@
 // このスクリプトが「コードで担保」すること（SKILL.md の指示文には委ねない）:
 //   1. 重複防止: 同一同期ブランチの open PR が既にあれば起動しない
 //   2. 試行上限: 同一版につき最大 SYNC_SETUP_MAX_ATTEMPTS 回（既定 2）。データファイルで管理
-//   3. merge しない: PR を作るところで止める（不可逆操作は人間のゲートに残す）
+//   3. 自動 merge の条件: auto-merge.mjs の止める理由が無く、PR の CI が通ったときだけ merge する。
+//      止めた同期は PR を開いたまま人のゲートへ回す
 //   4. 作業ツリーを汚さない: 対象リポジトリのブランチは切り替えない。origin の default から
 //      使い捨て worktree を切り、その中だけで apply / commit / push / PR を行う
 //
@@ -25,7 +26,7 @@
 // commit まで一息に走らせるとその更新が反映されないまま PR が出る。
 //   --phase=apply   … 重複チェック → 試行上限 → worktree 作成 → apply 再適用（ここで停止）
 //   〈この間に SKILL 手順で Claude が worktree 内の要マージファイルを統合する〉
-//   --phase=publish … commit → push → PR 作成（merge はしない）→ worktree 撤去
+//   --phase=publish … commit → push → PR 作成 → worktree 撤去 → CI 待ち → merge
 // フェーズ間の引き継ぎ（同期計画・警告・worktree パス）は attempts と同じデータディレクトリの
 // sync-plan.json に置く。対象リポジトリ内に置くと git add -A で PR に混入するため。
 //
@@ -50,11 +51,17 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { autoMergeBlockers, pickMergeMethod } from "./auto-merge.mjs";
 import { decideDrift, pinnedUnityPluginSha, readSkillVersion, SKILL_KEYS } from "./skill-version.mjs";
 import { readSyncState, stateFiles } from "./state.mjs";
 /* global process, console */
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+// PR 作成直後は check がまだ登録されていない。この間に 1 つも現れなければ CI の無いリポジトリとみなす
+const CHECKS_APPEAR_MS = 60_000;
+// 配布している CI は秒単位で返る。これを超えるなら何かが詰まっているので人へ回す
+const CHECKS_TIMEOUT_MS = 15 * 60_000;
 
 function fail(msg) {
   console.error(msg);
@@ -443,7 +450,7 @@ if (phase === "apply") {
 }
 
 // ============================ publish フェーズ ============================
-// commit → push → PR 作成 → worktree 撤去。merge はしない（不可逆操作は人間のゲートに残す）。
+// commit → push → PR 作成 → worktree 撤去 → CI 待ち → merge。
 // 操作対象は apply が作った worktree であって、対象リポジトリの作業ツリーではない。
 if (!planWorktree || !existsSync(planWorktree)) {
   fail(
@@ -493,11 +500,11 @@ if (git(wt, "commit", "-m", commitMsg) === null) fail("git commit に失敗し�
 // ---- push ----
 if (git(wt, "push", "-u", "origin", branch) === null) fail(`git push（origin ${branch}）に失敗しました。`);
 
-// ---- PR 作成（merge はしない）----
+// ---- PR 作成 ----
 let createdUrl;
 try {
   createdUrl = gh(wt, "pr", "create", "--title", `chore: テンプレ同期 v${currentVersion}`, "--body", body, "--head", branch).trim();
-  console.log(`同期 PR を作成しました（merge はしません）: ${createdUrl}`);
+  console.log(`同期 PR を作成しました: ${createdUrl}`);
 } catch (e) {
   fail(`gh pr create に失敗しました: ${String(e.message || e).trim()}`);
 }
@@ -521,3 +528,76 @@ try {
 // PR は push 済みなので worktree はもう要らない。計画も消して、同じ計画での再 publish を防ぐ。
 removeWorktree(target, wt);
 rmSync(planPath, { force: true });
+
+// ---- 自動 merge ----
+// 止める条件は auto-merge.mjs が正本。止めた同期は PR を開いたまま人のゲートへ回す。
+const blockers = autoMergeBlockers(drifted, carriedNotes);
+if (blockers.length) {
+  console.log(`自動 merge はしません。PR を確認してからマージしてください: ${createdUrl}`);
+  for (const r of blockers) console.log(`  - ${r}`);
+  process.exit(0);
+}
+
+const checks = waitForChecks(target, createdUrl);
+if (!checks.ok) {
+  console.log(`自動 merge はしません（${checks.reason}）。PR を確認してください: ${createdUrl}`);
+  if (checks.detail) console.log(checks.detail);
+  process.exit(0);
+}
+if (checks.none) console.log("PR に CI の check が現れなかったため、CI を待たずに merge します。");
+
+let repoInfo = null;
+try {
+  repoInfo = JSON.parse(gh(target, "repo", "view", "--json", "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed"));
+} catch {
+  /* 読めなければ方式を決められない。下で止める */
+}
+const method = pickMergeMethod(repoInfo);
+if (!method) fail(`merge 方式を決められませんでした（gh repo view の失敗）。PR を手でマージしてください: ${createdUrl}`);
+try {
+  gh(target, "pr", "merge", createdUrl, method);
+} catch (e) {
+  // ブランチ保護の必須レビューなど、人の承認が要る設定ではここで止まる
+  fail(`gh pr merge に失敗しました。PR を手でマージしてください: ${createdUrl}\n${String(e.message || e).trim()}`);
+}
+console.log(`同期 PR を merge しました（${method.slice(2)}）: ${createdUrl}`);
+// head ブランチの自動削除が有効なリポジトリでは push --delete が失敗するが、結果は同じ
+git(target, "push", "origin", "--delete", branch);
+git(target, "branch", "-D", branch);
+
+// PR の check が出揃うのを待ち、全部通ったかを返す。
+// check を 1 つも持たないリポジトリもあるので、登録を待つのは CHECKS_APPEAR_MS まで。
+function waitForChecks(cwd, url) {
+  const appearDeadline = Date.now() + CHECKS_APPEAR_MS;
+  let seen = false;
+  while (Date.now() < appearDeadline) {
+    try {
+      if (JSON.parse(gh(cwd, "pr", "checks", url, "--json", "name")).length) {
+        seen = true;
+        break;
+      }
+    } catch {
+      /* check が未登録のあいだ gh は非 0 で返る */
+    }
+    sleepSync(5000);
+  }
+  if (!seen) return { ok: true, none: true };
+  try {
+    execFileSync("gh", ["pr", "checks", url, "--watch", "--fail-fast", "--interval", "10"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: CHECKS_TIMEOUT_MS,
+    });
+    return { ok: true };
+  } catch (e) {
+    if (e.code === "ETIMEDOUT" || e.signal) {
+      return { ok: false, reason: `CI が ${CHECKS_TIMEOUT_MS / 60000} 分以内に終わらなかった` };
+    }
+    return { ok: false, reason: "CI が通らなかった", detail: String(e.stdout || "").trim() };
+  }
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
