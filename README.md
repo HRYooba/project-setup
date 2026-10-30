@@ -31,7 +31,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
   - `sync-setup-check.mjs`（SessionStart）: `systemMessage` でユーザーの画面に 1 行出す。**知らせる役**。
   - `sync-setup-prompt.mjs`（UserPromptSubmit）: そのセッションの最初のプロンプトを `updatedInput` で包み、`/sync-setup` を先に実行させる。**実行のトリガー**。1 セッション 1 回（`session_id` で記録）。スラッシュコマンド・`!`・`#` で始まるプロンプトは展開が壊れるため書き換えず `additionalContext` で渡す。
   - 実行指示を SessionStart 側へ置かないのは、**その時点でモデルが呼ばれないから**。セッションは入力待ちで止まるので、そこに指示を積んでも人が何か打つまで効かず、打たれなければ放置される。Claude が実際に動く最初の瞬間は UserPromptSubmit。
-- 実際の同期は `sync-setup` skill（`sync-run.mjs`）が **ユーザーのセッションで** 行う。`--phase=apply`（ガード → sparse worktree 作成 → apply 再適用）→ **要マージの .md を Claude が統合** → `--phase=publish`（commit → push → PR 作成 → worktree 撤去 → CI 待ち → merge）の 3 段。矛盾メモ・unity プラグインの sha 同期・CI の失敗があれば merge せず PR で人へ回す（条件は `skills/sync-setup/auto-merge.mjs`）。
+- 実際の同期は `sync-setup` skill（`sync-run.mjs`）が **ユーザーのセッションで** 行う。`--phase=apply`（ガード → sparse worktree 作成 → apply 再適用）→ **要マージの .md を Claude が統合** → `--phase=publish`（commit → push → PR 作成 → worktree 撤去 → CI 待ち → merge）の 3 段。要マージの統合・矛盾メモ・unity プラグインの sha 同期・CI の失敗があれば merge せず PR で人へ回す（条件は `skills/sync-setup/auto-merge.mjs`）。
 - 重複 PR 防止（`gh pr list`）・試行上限（同一版 最大2回）・merge 禁止・**作業ツリー分離** を **コードで担保** する（指示文頼みにしない）。同期は origin の default から切った使い捨て worktree の中だけで走るので、ユーザーが編集中でもブランチは動かない。判断を要するのは .md の統合工程だけで、そこを飛ばせないよう `--phase` は必須。事前確認は `sync-run.mjs --dry-run`。hook の無効化は環境変数 `SYNC_SETUP_DISABLE=1`。
 
 既存の展開済みプロジェクトは、一度 setup-github / setup-unity を再実行すれば状態ファイルが生成され、以後の追随対象になる。

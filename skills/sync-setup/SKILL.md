@@ -85,20 +85,25 @@ apply フェーズの出力に「要マージ」節があれば、`${CLAUDE_PLUG
 node "${CLAUDE_PLUGIN_ROOT}/skills/sync-setup/sync-run.mjs" {target} --phase=publish
 ```
 
+**Bash の `run_in_background` で起動し、完了通知を待つ。** CI 待ちで最大 16 分戻らず、前景だと
+Bash の timeout で kill されて merge の成否が出ない。待つ間はユーザーの依頼へ進んでよい。
+
 worktree の中で `git add -A` → 差分ゼロなら終了 → `chore:` コミット → push → `gh pr create` →
-古い版の同期 PR を close → **worktree を撤去** → **PR の CI を待って merge**。
+古い版の同期 PR を close → **PR の CI を待って merge 可否を判定** → **worktree を撤去** → merge。
 PR 本文には apply の警告と、あれば Step 2.5 の矛盾メモを全文転記する。
 
 merge の方式はリポジトリが許すものから squash を優先して選び、merge 後に同期ブランチを消す。
-次のときは merge せず PR を開いたまま止める（条件の正本は `auto-merge.mjs`）:
+次のときは merge せず PR を開いたまま止める（止める理由の正本は `auto-merge.mjs` と `sync-run.mjs`）:
 
+- Step 2.5 で要マージのファイルを統合した（Claude が書いた差分を人が確認する）
 - Step 2.5 の矛盾メモがある（人の判断が要る）
-- 公式 unity プラグインの sha 同期を含む（sha に新旧の向きが無く、巻き戻しを機械で見分けられない）
-- CI が落ちた、または 15 分で終わらない
+- 記録された公式 unity プラグインの sha が変わる（sha に新旧の向きが無く、巻き戻しを機械で見分けられない）
+- CI が落ちた・15 分で終わらない・CI の状態を取れない
+- 配備先の `.claude/hooks/lib/merge-readiness.mjs` が止めた（未解決スレッド・base からの遅れ）
 - `gh pr merge` が拒否された（必須レビューなどのブランチ保護）
 
-CI の check が 60 秒以内に 1 つも現れなければ、CI の無いリポジトリとみなして待たずに merge する。
-CI 待ちの間は publish が戻らない（配布している CI は秒単位で返る）。
+CI の check が 60 秒以内に 1 つも現れなければ、CI の無いリポジトリとみなして待たずに判定する。
+Copilot などの自動レビューは数分遅れて届くため、その指摘は merge 前に間に合わないことがある。
 
 ### Step 3: 結果報告
 
