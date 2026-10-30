@@ -101,8 +101,8 @@ export function readSkillVersion(pluginRoot, skillKey) {
 // 古い版のマシンが新しい版で同期済みのプロジェクトを巻き戻す churn を防ぐ。
 //
 // **sha にはこの向きが無いので "unity-plugin" は不一致で発火する。** marketplace の更新が遅れている
-// マシンが新しい配備先を巻き戻す PR を出す余地は残る（同期は PR までで merge しないので人の
-// レビューで止まる。attempt key に sha を含めて試行回数だけは分離する）。
+// マシンが新しい配備先を巻き戻す PR を出す余地は残る（この同期は自動 merge しないので人の
+// レビューで止まる。auto-merge.mjs が担保。attempt key に sha を含めて試行回数だけは分離する）。
 export function decideDrift(rec, curSkillVersion, curPluginVersion, curUnitySha) {
   if (!rec || typeof rec !== "object") return null;
   if (rec.skillVersion) {

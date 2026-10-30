@@ -7,7 +7,8 @@
 // このスクリプトが「コードで担保」すること（SKILL.md の指示文には委ねない）:
 //   1. 重複防止: 同一同期ブランチの open PR が既にあれば起動しない
 //   2. 試行上限: 同一版につき最大 SYNC_SETUP_MAX_ATTEMPTS 回（既定 2）。データファイルで管理
-//   3. merge しない: PR を作るところで止める（不可逆操作は人間のゲートに残す）
+//   3. 自動 merge の条件: auto-merge.mjs の止める理由が無く、PR の CI が通ったときだけ merge する。
+//      止めた同期は PR を開いたまま人のゲートへ回す
 //   4. 作業ツリーを汚さない: 対象リポジトリのブランチは切り替えない。origin の default から
 //      使い捨て worktree を切り、その中だけで apply / commit / push / PR を行う
 //
@@ -25,7 +26,7 @@
 // commit まで一息に走らせるとその更新が反映されないまま PR が出る。
 //   --phase=apply   … 重複チェック → 試行上限 → worktree 作成 → apply 再適用（ここで停止）
 //   〈この間に SKILL 手順で Claude が worktree 内の要マージファイルを統合する〉
-//   --phase=publish … commit → push → PR 作成（merge はしない）→ worktree 撤去
+//   --phase=publish … commit → push → PR 作成 → worktree 撤去 → CI 待ち → merge
 // フェーズ間の引き継ぎ（同期計画・警告・worktree パス）は attempts と同じデータディレクトリの
 // sync-plan.json に置く。対象リポジトリ内に置くと git add -A で PR に混入するため。
 //
@@ -50,11 +51,17 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { autoMergeBlockers, pickMergeMethod } from "./auto-merge.mjs";
 import { decideDrift, pinnedUnityPluginSha, readSkillVersion, SKILL_KEYS } from "./skill-version.mjs";
 import { readSyncState, stateFiles } from "./state.mjs";
 /* global process, console */
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+// PR 作成直後は check がまだ登録されていない。この間に 1 つも現れなければ CI の無いリポジトリとみなす
+const CHECKS_APPEAR_MS = 60_000;
+// 配布している CI は秒単位で返る。これを超えるなら何かが詰まっているので人へ回す
+const CHECKS_TIMEOUT_MS = 15 * 60_000;
 
 function fail(msg) {
   console.error(msg);
@@ -193,6 +200,8 @@ let attemptCount = 0;
 let drifted;
 let carriedWarnings = [];
 let planWorktree = null;
+let planNeedsMerge = false;
+let planUnityShaChange = null;
 if (phase === "publish") {
   const plan = readJson(planPath);
   // 照合はリポジトリ同一性だけで行い、版は計画側を正とする。**現行版で照合してはいけない** —
@@ -228,6 +237,8 @@ if (phase === "publish") {
   drifted = plan.drifted;
   carriedWarnings = Array.isArray(plan.warnings) ? plan.warnings : [];
   planWorktree = plan.worktree || null;
+  planNeedsMerge = plan.needsMerge === true;
+  planUnityShaChange = plan.unityShaChange || null;
 } else {
   // 旧名の解決は state.mjs が持つ（正名しか見ないと、旧名だけが残った配備先が黙って落ちる）。
   const claudeDir = join(target, ".claude");
@@ -290,6 +301,36 @@ if (dryRun) {
   process.exit(0);
 }
 
+// 状態ファイルに記録された、配った unity プラグインの sha（setup-unity を入れていなければ null）。
+function recordedUnitySha(dir) {
+  const sha = readSyncState(join(dir, ".claude"))?.["setup-unity"]?.unityPlugin?.sha;
+  return typeof sha === "string" ? sha : null;
+}
+
+// origin/<base> の状態ファイルで、今回 drift と判定した skill がすべて同期済みか。
+// 読めなければ false（同期を止める理由にしない）。
+function syncedOnDefault(repo, base) {
+  const raw = git(repo, "show", `origin/${base}:.claude/sync-setup-state.json`);
+  if (!raw) return false;
+  let state;
+  try {
+    state = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch {
+    return false;
+  }
+  // 記録が無い skill は decideDrift が null（＝差なし）を返すので、先に弾く
+  return drifted.every(
+    (d) =>
+      state[d.skill] &&
+      !decideDrift(
+        state[d.skill],
+        readSkillVersion(installPath, d.skill),
+        currentVersion,
+        d.skill === "setup-unity" ? pinnedUnityPluginSha() : null
+      )
+  );
+}
+
 // gh は git と違い -C を持たない。対象リポジトリの解決は cwd で行う
 // （worktree の中で呼んでも同じ origin を指す）。
 function gh(cwd, ...a) {
@@ -329,13 +370,6 @@ if (phase === "apply") {
     );
   }
 
-  // ここから副作用。crash しても試行としてカウントされるよう、先に試行回数を +1 して保存する。
-  mkdirSync(dirname(attemptsPath), { recursive: true });
-  attempts[attemptKey] = attemptCount + 1;
-  writeFileSync(attemptsPath, JSON.stringify(attempts, null, 2) + "\n", "utf8");
-
-  describePlan();
-
   if (git(target, "rev-parse", "--is-inside-work-tree") !== "true") {
     fail("対象が git リポジトリではありません。");
   }
@@ -347,6 +381,21 @@ if (phase === "apply") {
   }
   const base = resolveDefaultBranch(target);
   if (!base) fail("origin の default ブランチを特定できませんでした。");
+
+  // ---- default ブランチで同期済みなら何もしない ----
+  // drift は手元の作業ツリーの状態ファイルで判定している。同期 PR は自動 merge で閉じるので、
+  // 手元が default を取り込むまでの間、毎回ここへ来る。試行回数を消費させずに返す。
+  if (syncedOnDefault(target, base)) {
+    console.log(`同期不要: origin/${base} では同期済みです。手元のブランチへ ${base} を取り込むと、この通知は止まります。`);
+    process.exit(0);
+  }
+
+  // ここから副作用。crash しても試行としてカウントされるよう、先に試行回数を +1 して保存する。
+  mkdirSync(dirname(attemptsPath), { recursive: true });
+  attempts[attemptKey] = attemptCount + 1;
+  writeFileSync(attemptsPath, JSON.stringify(attempts, null, 2) + "\n", "utf8");
+
+  describePlan();
 
   // ---- 使い捨て worktree ----
   // 対象リポジトリの作業ツリーには触らない。ユーザーが Unity Editor で編集中でもブランチが
@@ -386,6 +435,10 @@ if (phase === "apply") {
     fail(`ブランチ ${branch} の作成に失敗しました（対象リポジトリで同名ブランチを checkout 中かもしれません）。`);
   }
 
+  // apply.mjs は配る unity プラグインの sha を手元の marketplace の pin で書き直す。pin が古いマシンでは
+  // skill 版の同期でも sha が巻き戻るので、前後を比べて publish の自動 merge 判定へ渡す。
+  const unityShaBefore = recordedUnitySha(worktree);
+
   // ---- テンプレ再適用（保存フラグで apply.mjs を直叩き）----
   const warnings = [];
   let anyNeedsMerge = false;
@@ -416,12 +469,16 @@ if (phase === "apply") {
     }
   }
 
+  const unityShaAfter = recordedUnitySha(worktree);
+  const unityShaChange =
+    unityShaBefore && unityShaAfter && unityShaBefore !== unityShaAfter ? { from: unityShaBefore, to: unityShaAfter } : null;
+
   // ---- 同期計画をフェーズ間で引き継ぐ ----
   // 対象リポジトリ内には置かない（git add -A で PR に混入するため）。
   mkdirSync(dirname(planPath), { recursive: true });
   writeFileSync(
     planPath,
-    JSON.stringify({ key: attemptKey, version: currentVersion, branch, repo: target, worktree, drifted, warnings }, null, 2) + "\n",
+    JSON.stringify({ key: attemptKey, version: currentVersion, branch, repo: target, worktree, drifted, warnings, needsMerge: anyNeedsMerge, unityShaChange }, null, 2) + "\n",
     "utf8"
   );
 
@@ -443,7 +500,7 @@ if (phase === "apply") {
 }
 
 // ============================ publish フェーズ ============================
-// commit → push → PR 作成 → worktree 撤去。merge はしない（不可逆操作は人間のゲートに残す）。
+// commit → push → PR 作成 → worktree 撤去 → CI 待ち → merge。
 // 操作対象は apply が作った worktree であって、対象リポジトリの作業ツリーではない。
 if (!planWorktree || !existsSync(planWorktree)) {
   fail(
@@ -493,11 +550,11 @@ if (git(wt, "commit", "-m", commitMsg) === null) fail("git commit に失敗し�
 // ---- push ----
 if (git(wt, "push", "-u", "origin", branch) === null) fail(`git push（origin ${branch}）に失敗しました。`);
 
-// ---- PR 作成（merge はしない）----
+// ---- PR 作成 ----
 let createdUrl;
 try {
   createdUrl = gh(wt, "pr", "create", "--title", `chore: テンプレ同期 v${currentVersion}`, "--body", body, "--head", branch).trim();
-  console.log(`同期 PR を作成しました（merge はしません）: ${createdUrl}`);
+  console.log(`同期 PR を作成しました: ${createdUrl}`);
 } catch (e) {
   fail(`gh pr create に失敗しました: ${String(e.message || e).trim()}`);
 }
@@ -517,7 +574,107 @@ try {
   console.error(`警告: 古い同期 PR の整理に失敗しました（続行）: ${String(e.message || e).trim()}`);
 }
 
+// ---- 自動 merge の可否 ----
+// merge-readiness.mjs は worktree（同期後の版）から読むので、判定は worktree を消す前に済ませる。
+const mergeDecision = decideMerge();
+
 // ---- 後始末 ----
 // PR は push 済みなので worktree はもう要らない。計画も消して、同じ計画での再 publish を防ぐ。
 removeWorktree(target, wt);
 rmSync(planPath, { force: true });
+
+// ---- 自動 merge ----
+// 止めた同期は PR を開いたまま人のゲートへ回す。merge を止めるのは失敗ではないので exit 0。
+if (!mergeDecision.ok) {
+  console.log(`自動 merge はしません。PR を確認してください: ${createdUrl}`);
+  for (const r of mergeDecision.reasons) console.log(`  - ${r}`);
+  process.exit(0);
+}
+try {
+  // --delete-branch: merge queue のあるリポジトリでは queue 投入で戻り、ブランチは gh が残す
+  const out = gh(target, "pr", "merge", createdUrl, mergeDecision.method, "--delete-branch").trim();
+  if (out) console.log(out);
+  console.log(`同期 PR を merge しました（${mergeDecision.method.slice(2)}）: ${createdUrl}`);
+} catch (e) {
+  console.log(`自動 merge はしません。PR を確認してください: ${createdUrl}`);
+  console.log(`  - gh pr merge が拒否された（必須レビューなどのブランチ保護）: ${String(e.stderr || e.message || e).trim()}`);
+}
+
+// 自動 merge してよいかを決め、してよければ merge 方式を返す。
+function decideMerge() {
+  const reasons = autoMergeBlockers({ notes: carriedNotes, needsMerge: planNeedsMerge, unityShaChange: planUnityShaChange });
+  if (reasons.length) return { ok: false, reasons };
+
+  let repo = null;
+  try {
+    repo = JSON.parse(gh(wt, "repo", "view", "--json", "nameWithOwner,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed"));
+  } catch (e) {
+    return { ok: false, reasons: [`リポジトリ設定を読めなかった: ${String(e.stderr || e.message || e).trim()}`] };
+  }
+  const method = pickMergeMethod(repo);
+  if (!method) return { ok: false, reasons: ["リポジトリが許す merge 方式が無い"] };
+
+  const checks = waitForChecks(wt, createdUrl);
+  if (!checks.ok) return { ok: false, reasons: [checks.reason] };
+  if (checks.none) console.log("PR に CI の check が現れなかったため、CI を待たずに判定します。");
+
+  // setup-github を入れたリポジトリは、Claude の gh pr merge を止める判定を自前で持つ。
+  // node から叩く gh pr merge は PreToolUse hook を通らないので、ここで同じ判定を呼ぶ。
+  const readiness = join(wt, ".claude", "hooks", "lib", "merge-readiness.mjs");
+  if (existsSync(readiness)) {
+    try {
+      execFileSync(process.execPath, [readiness, prNumber(createdUrl), `--repo=${repo.nameWithOwner}`], {
+        cwd: wt,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (e) {
+      const why = String(e.stdout || e.stderr || e.message || e).replace(/::error::/g, "").trim();
+      return { ok: false, reasons: [`merge-readiness が止めた: ${why}`] };
+    }
+  }
+  return { ok: true, method };
+}
+
+function prNumber(url) {
+  return String(url).match(/\/pull\/(\d+)/)?.[1] ?? url;
+}
+
+// PR の check が出揃うのを待ち、全部通ったかを返す。
+// check を 1 つも持たないリポジトリもあるので、登録を待つのは CHECKS_APPEAR_MS まで。
+// gh の失敗（認証切れ・通信断）は「check が無い」と区別して止める。取り違えると CI を待たずに merge する。
+function waitForChecks(cwd, url) {
+  const appearDeadline = Date.now() + CHECKS_APPEAR_MS;
+  let seen = false;
+  while (Date.now() < appearDeadline) {
+    try {
+      if (JSON.parse(gh(cwd, "pr", "checks", url, "--json", "name")).length) {
+        seen = true;
+        break;
+      }
+    } catch (e) {
+      const err = String(e.stderr || e.message || e);
+      if (!/no checks reported/i.test(err)) return { ok: false, reason: `CI の状態を取れなかった: ${err.trim()}` };
+    }
+    sleepSync(5000);
+  }
+  if (!seen) return { ok: true, none: true };
+  try {
+    execFileSync("gh", ["pr", "checks", url, "--watch", "--fail-fast", "--interval", "10"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: CHECKS_TIMEOUT_MS,
+    });
+    return { ok: true };
+  } catch (e) {
+    if (e.code === "ETIMEDOUT" || e.signal) {
+      return { ok: false, reason: `CI が ${CHECKS_TIMEOUT_MS / 60000} 分以内に終わらなかった` };
+    }
+    return { ok: false, reason: `CI が通らなかった:\n${String(e.stdout || e.stderr || "").trim()}` };
+  }
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}

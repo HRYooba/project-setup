@@ -6,7 +6,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 |:------|:-----|
 | `setup-github` | GitHub 開発フロー一式を導入する。ブランチ保護（pre-push。既定 ON・質問で外せる）、PR 前レビュー運用（`/code-review` + `/security-review` のソフト指示）、git 運用規約（Git Flow / Conventional Commits）、create-issue skill。任意で Copilot PR 自動レビュー（自動アサイン / watch-pr / resolve-pr）と AGENTS.md 自動生成 |
 | `setup-unity` | Unity 開発規約一式を導入する。rules（Unity 操作 / フォルダ構成 / Hierarchy / アセット命名 / コーディング規約 / テスト）、skills（lint-unity）、agents（unity-linter）、テスト設計・実装ガイド（references）。Unity 操作は **Unity CLI** 固定。コーディング規約を機械で止める Roslyn analyzer と PR ゲートの GitHub Actions も配る。任意でレイヤードアーキテクチャ規約 |
-| `sync-setup` | プラグインのテンプレート更新に、展開済みリポジトリを追随させる。保存フラグで apply.mjs を再適用し、同期 PR を作成する（merge はしない）。UserPromptSubmit hook が最初のプロンプトへ差し込む、または手動で `/sync-setup` を実行する |
+| `sync-setup` | プラグインのテンプレート更新に、展開済みリポジトリを追随させる。保存フラグで apply.mjs を再適用し、同期 PR を作成して CI が通れば merge する。UserPromptSubmit hook が最初のプロンプトへ差し込む、または手動で `/sync-setup` を実行する |
 
 どちらも**冪等**（再実行安全）で、導入オプションは実行時に対話で確認する。配置物は対象リポジトリの `.claude/` などにコミットされるため、plugin を持たないチームメイトにもそのまま効く。
 
@@ -31,7 +31,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
   - `sync-setup-check.mjs`（SessionStart）: `systemMessage` でユーザーの画面に 1 行出す。**知らせる役**。
   - `sync-setup-prompt.mjs`（UserPromptSubmit）: そのセッションの最初のプロンプトを `updatedInput` で包み、`/sync-setup` を先に実行させる。**実行のトリガー**。1 セッション 1 回（`session_id` で記録）。スラッシュコマンド・`!`・`#` で始まるプロンプトは展開が壊れるため書き換えず `additionalContext` で渡す。
   - 実行指示を SessionStart 側へ置かないのは、**その時点でモデルが呼ばれないから**。セッションは入力待ちで止まるので、そこに指示を積んでも人が何か打つまで効かず、打たれなければ放置される。Claude が実際に動く最初の瞬間は UserPromptSubmit。
-- 実際の同期は `sync-setup` skill（`sync-run.mjs`）が **ユーザーのセッションで** 行う。`--phase=apply`（ガード → sparse worktree 作成 → apply 再適用）→ **要マージの .md を Claude が統合** → `--phase=publish`（commit → push → PR 作成 → worktree 撤去）の 3 段。**merge はしない**（PR diff で戻し・警告を確認して人間がマージ）。
+- 実際の同期は `sync-setup` skill（`sync-run.mjs`）が **ユーザーのセッションで** 行う。`--phase=apply`（ガード → sparse worktree 作成 → apply 再適用）→ **要マージの .md を Claude が統合** → `--phase=publish`（commit → push → PR 作成 → worktree 撤去 → CI 待ち → merge）の 3 段。要マージの統合・矛盾メモ・unity プラグインの sha 同期・CI の失敗があれば merge せず PR で人へ回す（条件は `skills/sync-setup/auto-merge.mjs`）。
 - 重複 PR 防止（`gh pr list`）・試行上限（同一版 最大2回）・merge 禁止・**作業ツリー分離** を **コードで担保** する（指示文頼みにしない）。同期は origin の default から切った使い捨て worktree の中だけで走るので、ユーザーが編集中でもブランチは動かない。判断を要するのは .md の統合工程だけで、そこを飛ばせないよう `--phase` は必須。事前確認は `sync-run.mjs --dry-run`。hook の無効化は環境変数 `SYNC_SETUP_DISABLE=1`。
 
 既存の展開済みプロジェクトは、一度 setup-github / setup-unity を再実行すれば状態ファイルが生成され、以後の追随対象になる。
