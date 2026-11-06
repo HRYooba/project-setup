@@ -92,8 +92,10 @@ const VALUE_FLAGS = new Set([
 const words = (s) => (s.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((t) => t.replace(/^(["'])(.*)\1$/, "$2"));
 
 // gh pr merge より前の段にある cd の行き先を、書かれた順に返す。
-// 静的に追えない形（変数・コマンド置換・cd -・pushd/popd・cd の後でサブシェルを閉じる）なら null。
+// 静的に追えない形（変数・コマンド置換・cd -・pushd/popd・cd の後でサブシェルを閉じる・
+// || で cd の失敗側に分岐する）なら null。
 function cdTargets(prefix) {
+  if (/\bcd\b/.test(prefix) && prefix.includes("||")) return null;
   const targets = [];
   for (const stage of prefix.split(/[;&|\n]+/)) {
     const w = words(stage.replace(/^[\s(]+/, ""));
@@ -118,7 +120,10 @@ export function parseMergeArgs(command) {
   if (!m) return null;
   const tokens = words(m[3]);
   let pr;
-  let repo = words(m[2]).find((a) => a.startsWith("GH_REPO="))?.slice("GH_REPO=".length);
+  let repo = words(m[2])
+    .find((a) => a.startsWith("GH_REPO="))
+    ?.slice("GH_REPO=".length)
+    .replace(/^(["'])(.*)\1$/, "$2");
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (t.startsWith("--repo=")) repo = t.slice("--repo=".length);

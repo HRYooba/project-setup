@@ -64,6 +64,7 @@ test("gh pr merge の PR 指定とリポジトリ指定を取り出す", () => {
   assert.deepEqual(parseMergeArgs("gh pr merge --squash -R o/r 12"), { pr: "12", repo: "o/r", cd: [] });
   assert.deepEqual(parseMergeArgs('gh pr merge -t "a b" --repo=o/r'), { pr: undefined, repo: "o/r", cd: [] });
   assert.deepEqual(parseMergeArgs("GH_REPO=o/r gh pr merge 3"), { pr: "3", repo: "o/r", cd: [] });
+  assert.deepEqual(parseMergeArgs('GH_REPO="o/r" gh pr merge 3'), { pr: "3", repo: "o/r", cd: [] });
 });
 
 test("gh pr merge より前の cd を辿る", () => {
@@ -80,6 +81,7 @@ test("辿れない cd は null", () => {
     "cd - && gh pr merge 4",
     "pushd x && gh pr merge 4",
     "(cd x); gh pr merge 4",
+    "cd x || gh pr merge 4",
   ]) {
     assert.equal(parseMergeArgs(cmd).cd, null, cmd);
   }
