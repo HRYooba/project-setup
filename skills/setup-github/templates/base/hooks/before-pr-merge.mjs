@@ -7,7 +7,7 @@
 // gh や API が失敗したときは止めない（判定できないことを理由に拒否し続ける門番は、
 // 結局外されて何も守らなくなる）。
 
-import { describe, fetchState, judge, parseMergeArgs } from "./lib/merge-readiness.mjs";
+import { describe, fetchState, judge, parseMergeArgs, resolveMergeCwd } from "./lib/merge-readiness.mjs";
 import { readStdin } from "./lib/reviewable-files.mjs";
 /* global process */
 
@@ -32,9 +32,14 @@ try {
 const parsed = parseMergeArgs(data?.tool_input?.command ?? "");
 if (!parsed) process.exit(0);
 
+// PR 番号・ブランチ名はコマンドが動くディレクトリのリポジトリで解決されるので、
+// セッションの cwd からコマンド中の cd を辿った先で gh を動かす。辿れなければ判定しない。
+const cwd = resolveMergeCwd(parsed, data?.cwd || process.cwd());
+if (!cwd) process.exit(0);
+
 let state;
 try {
-  state = fetchState(parsed.pr, { repo: parsed.repo });
+  state = fetchState(parsed.pr, { repo: parsed.repo, cwd });
 } catch {
   process.exit(0);
 }
