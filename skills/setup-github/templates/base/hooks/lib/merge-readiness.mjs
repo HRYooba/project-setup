@@ -16,7 +16,9 @@
 //   止める条件があれば exit 1 と理由、無ければ exit 0。gh が要る（GH_TOKEN で認証）。
 
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 /* global process, console */
 
@@ -77,8 +79,9 @@ export function describe(problems, prNumber) {
 }
 
 // gh pr merge の呼び出しを捕まえる（コマンド段の先頭だけ。echo などの引数に含まれる文字列は拾わない）。
+// 1: 段の区切り文字 / 2: 前置きの環境変数代入 / 3: gh pr merge の引数
 const MERGE_RE =
-  /(?:^|[;|&\n(])\s*(?:\w+=(?:"[^"]*"|'[^']*'|\S*)\s+)*(?:command\s+)?(?:\S*\/)?gh\s+pr\s+merge\b([^;|&\n)]*)/;
+  /(^|[;|&\n(])\s*((?:\w+=(?:"[^"]*"|'[^']*'|\S*)\s+)*)(?:command\s+)?(?:\S*\/)?gh\s+pr\s+merge\b([^;|&\n)]*)/;
 
 // 値を取るフラグ。直後の語を PR 指定と取り違えないために要る。
 const VALUE_FLAGS = new Set([
@@ -86,14 +89,36 @@ const VALUE_FLAGS = new Set([
   "-A", "--author-email", "--match-head-commit",
 ]);
 
-// Bash コマンドから gh pr merge の PR 指定とリポジトリ指定を取り出す。呼び出しが無ければ null。
+const words = (s) => (s.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((t) => t.replace(/^(["'])(.*)\1$/, "$2"));
+
+// gh pr merge より前の段にある cd の行き先を、書かれた順に返す。
+// 静的に追えない形（変数・コマンド置換・cd -・pushd/popd・cd の後でサブシェルを閉じる）なら null。
+function cdTargets(prefix) {
+  const targets = [];
+  for (const stage of prefix.split(/[;&|\n]+/)) {
+    const w = words(stage.replace(/^[\s(]+/, ""));
+    if (w[0] === "pushd" || w[0] === "popd") return null;
+    if (w[0] !== "cd") continue;
+    const args = w.slice(1).filter((a) => a !== "--");
+    if (args.length > 1) return null;
+    const dir = args[0] ?? "~";
+    if (dir === "-" || /[$`*?]/.test(dir)) return null;
+    targets.push(dir);
+  }
+  if (targets.length && prefix.includes(")")) return null;
+  return targets;
+}
+
+// Bash コマンドから gh pr merge の PR 指定・リポジトリ指定・前段の cd を取り出す。呼び出しが無ければ null。
 // PR 指定が無いとき pr は undefined（gh は現在のブランチの PR を対象にする）。
+// cd は gh pr merge より前の段の cd の行き先（無ければ []、追えなければ null）。
 export function parseMergeArgs(command) {
-  const m = String(command).match(MERGE_RE);
+  const text = String(command);
+  const m = text.match(MERGE_RE);
   if (!m) return null;
-  const tokens = (m[1].match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((t) => t.replace(/^(["'])(.*)\1$/, "$2"));
+  const tokens = words(m[3]);
   let pr;
-  let repo;
+  let repo = words(m[2]).find((a) => a.startsWith("GH_REPO="))?.slice("GH_REPO=".length);
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (t.startsWith("--repo=")) repo = t.slice("--repo=".length);
@@ -101,11 +126,31 @@ export function parseMergeArgs(command) {
     else if (VALUE_FLAGS.has(t)) i++;
     else if (!t.startsWith("-") && pr === undefined) pr = t;
   }
-  return { pr, repo };
+  return { pr, repo, cd: cdTargets(text.slice(0, m.index + m[1].length)) };
 }
 
-function gh(args) {
-  return execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+// gh pr merge の対象 PR を解決するために、gh をどのディレクトリで動かすか。
+// PR を URL か --repo で指していれば cwd は対象に効かないので base のまま。
+// cd を辿れない・行き先が無いときは null（別リポジトリの同じ番号の PR を見て止めるより、判定しない方がよい）。
+export function resolveMergeCwd({ pr, repo, cd }, base, { platform = process.platform, home = homedir() } = {}) {
+  if (repo || /^https?:\/\//.test(pr ?? "")) return base;
+  if (cd === null) return null;
+  let dir = base;
+  for (const raw of cd) {
+    let t = raw.replace(/^~(?=$|[\\/])/, home);
+    // Bash ツールは Git Bash なので /c/... の形で来る
+    if (platform === "win32") t = t.replace(/^\/([a-zA-Z])(?=$|\/)/, (_, d) => `${d.toUpperCase()}:/`);
+    dir = resolve(dir, t);
+  }
+  try {
+    return existsSync(dir) && statSync(dir).isDirectory() ? dir : null;
+  } catch {
+    return null;
+  }
+}
+
+function gh(args, cwd) {
+  return execFileSync("gh", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
 // gh pr view で取るフィールド。statusCheckRollup は checks / statuses の読み取り権限を要し、
@@ -115,11 +160,12 @@ export function viewFields({ includeChecks = true } = {}) {
 }
 
 // GitHub から状態を取る。prArg は番号・URL・ブランチ名（gh pr view が受ける形）。
+// repo も URL も無いとき、PR は cwd のリポジトリで解決される。
 // 失敗は throw する（握り潰すかは呼び手が決める）。
-export function fetchState(prArg, { repo, includeChecks = true } = {}) {
+export function fetchState(prArg, { repo, cwd, includeChecks = true } = {}) {
   const repoArgs = repo ? ["--repo", repo] : [];
   const view = JSON.parse(
-    gh(["pr", "view", ...(prArg ? [String(prArg)] : []), ...repoArgs, "--json", viewFields({ includeChecks })])
+    gh(["pr", "view", ...(prArg ? [String(prArg)] : []), ...repoArgs, "--json", viewFields({ includeChecks })], cwd)
   );
   const m = String(view.url).match(/\/([^/]+)\/([^/]+)\/pull\/\d+/);
   if (!m) throw new Error(`PR の URL を解釈できません: ${view.url}`);
@@ -129,18 +175,23 @@ export function fetchState(prArg, { repo, includeChecks = true } = {}) {
   const threadsQuery =
     "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}";
   const threads = JSON.parse(
-    gh(["api", "graphql", "-f", `query=${threadsQuery}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `number=${view.number}`])
+    gh(["api", "graphql", "-f", `query=${threadsQuery}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `number=${view.number}`], cwd)
   );
   const nodes = threads?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
 
   // mergeStateStatus の BEHIND はブランチ保護がある場合しか出ないため、compare で数える。
-  const compare = JSON.parse(gh(["api", `repos/${owner}/${name}/compare/${view.baseRefName}...${view.headRefOid}`]));
+  // compare の応答は差分（files の patch）を丸ごと含み、大きい PR では execFileSync の maxBuffer を超えるので、
+  // 要る数だけを --jq で抜く。
+  const behindBy = gh(
+    ["api", `repos/${owner}/${name}/compare/${view.baseRefName}...${view.headRefOid}`, "--jq", ".behind_by"],
+    cwd
+  );
 
   return {
     number: view.number,
     checks: view.statusCheckRollup ?? [],
     unresolvedThreads: nodes.filter((n) => n && n.isResolved === false).length,
-    behindBy: Number(compare?.behind_by ?? 0),
+    behindBy: Number(behindBy.trim() || 0),
   };
 }
 
