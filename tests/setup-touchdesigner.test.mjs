@@ -1,24 +1,21 @@
-// setup-touchdesigner の apply.mjs の検証。上流は偽のリポジトリで差し替える
-// （本物の上流を叩くとテストがネットワークと上流の更新に左右される）。
+// setup-touchdesigner の apply.mjs の検証。
 //
 // 観点:
-//   1. 固定した tag の skill を配り、LICENSE と状態を残す
-//   2. プラグイン版の同名 skill を 2 つの名前空間とも伏せる
-//   3. .mcp.json は既存のサーバーと配備先の値を温存する
-//   4. 冪等（2 回目は何も変えない）
-//   5. 上流から消えた skill を消し、off も取り下げる
-//   6. 上流の構成変化（hooks・未知の要素）を報告する
-//   7. CLAUDE.md の差分は書かずに要マージにする
-//   8. TDMCP.tox は固定 sha256 と照合して置く
+//   1. skill を配らず、.mcp.json（既存の値は温存）・CLAUDE.md・状態を書く
+//   2. 以前の版が直置きした td-* を記録どおりに消し、記録も消す
+//      （自前の skill・skillOverrides・.mcp.json は残す）
+//   3. 冪等（2 回目は何も変えない）
+//   4. 記録の名前で .claude の外を消させない
+//   5. CLAUDE.md の差分は書かずに要マージにする
+//   6. TDMCP.tox は固定 sha256 と照合して置く
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { PLUGIN_ROOT, skillVersion, tempDir } from "./helpers.mjs";
-import { TDMCP_SKILLS_TAG } from "../skills/setup-touchdesigner/upstream.mjs";
 /* global process */
 
 const APPLY_TD = join(PLUGIN_ROOT, "skills", "setup-touchdesigner", "apply.mjs");
@@ -28,166 +25,135 @@ function writeFile(p, body) {
   writeFileSync(p, body, "utf8");
 }
 
-function git(repo, ...a) {
-  const r = spawnSync("git", ["-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", ...a], { encoding: "utf8" });
-  assert.equal(r.status, 0, `git ${a[0]} 失敗: ${r.stderr}`);
-  return r.stdout.trim();
-}
-
-// 偽の上流。apply.mjs が固定 tag を fetch するので、同じ名前の tag を打つ。
-function fakeUpstream(skills, extra = () => {}) {
-  const repo = tempDir("tdmcp-upstream-");
-  for (const s of skills) writeFile(join(repo, "skills", s, "SKILL.md"), `---\nname: ${s}\n---\n`);
-  writeFile(join(repo, "LICENSE.md"), "LICENSE\n");
-  writeFile(join(repo, ".mcp.json"), '{"mcpServers":{"tdmcp":{"type":"http","url":"http://localhost:13316/mcp"}}}\n');
-  extra(repo);
-  git(repo, "init", "-q", ".");
-  git(repo, "add", "-A");
-  git(repo, "commit", "-qm", "init");
-  git(repo, "tag", TDMCP_SKILLS_TAG);
-  return repo;
-}
-
-// 上流を進めて tag を打ち直す（上流の skill 増減を再現する）。
-function retag(repo, mutate) {
-  mutate(repo);
-  git(repo, "add", "-A");
-  git(repo, "commit", "-qm", "next");
-  git(repo, "tag", "-f", TDMCP_SKILLS_TAG);
-}
-
 function tdProject() {
   const target = tempDir("setup-td-project-");
   writeFile(join(target, "demo.toe"), "");
   return target;
 }
 
-function runApply(target, repo) {
+// release の取得は空のディレクトリへ向ける（ネットワークへ出さない）。
+function runApply(target) {
   const res = spawnSync(process.execPath, [APPLY_TD, target], {
     encoding: "utf8",
-    env: { ...process.env, SETUP_TOUCHDESIGNER_SKILLS_REPO: repo, SETUP_TOUCHDESIGNER_RELEASE_DIR: tempDir("td-no-release-") },
+    env: { ...process.env, SETUP_TOUCHDESIGNER_RELEASE_DIR: tempDir("td-no-release-") },
   });
   assert.equal(res.status, 0, `apply failed: ${res.stderr}\n${res.stdout}`);
   return res.stdout;
 }
 
 const readJson = (p) => JSON.parse(readFileSync(p, "utf8"));
+const stateOf = (target) => readJson(join(target, ".claude", "sync-setup-state.json"))["setup-touchdesigner"];
 
-test("固定 tag の skill を配り、LICENSE・skillOverrides・.mcp.json・状態を書く", () => {
-  const repo = fakeUpstream(["td-general", "td-top-family"]);
+// 1.x が直置きした配備先を再現する（skill・LICENSE・skillOverrides・.mcp.json・記録）。
+function legacyProject() {
   const target = tdProject();
-  const out = runApply(target, repo);
+  const skills = join(target, ".claude", "skills");
+  for (const s of ["td-general", "td-top-family"]) writeFile(join(skills, s, "SKILL.md"), `---\nname: ${s}\n---\n`);
+  writeFile(join(skills, "TDMCP-SKILLS-LICENSE.md"), "LICENSE\n");
+  writeFile(join(skills, "my-skill", "SKILL.md"), "---\nname: my-skill\n---\n");
+  writeFile(
+    join(target, ".claude", "settings.json"),
+    JSON.stringify({ skillOverrides: { "touchdesigner:td-general": "off", "tdmcp-skills:td-general": "off" } })
+  );
+  writeFile(join(target, ".mcp.json"), JSON.stringify({ mcpServers: { touchdesigner: { type: "http", url: "http://127.0.0.1:13316/mcp" } } }));
+  writeFile(
+    join(target, ".claude", "sync-setup-state.json"),
+    JSON.stringify({
+      "setup-touchdesigner": {
+        skillVersion: "1.1.0",
+        flags: [],
+        tdmcpSkills: { sha: "abc1234", placed: { skills: ["td-general", "td-top-family"] } },
+      },
+    })
+  );
+  return target;
+}
 
-  for (const s of ["td-general", "td-top-family"]) {
-    assert.ok(existsSync(join(target, ".claude", "skills", s, "SKILL.md")), `${s} を配っていない`);
-  }
-  assert.ok(existsSync(join(target, ".claude", "skills", "TDMCP-SKILLS-LICENSE.md")), "LICENSE を置いていない");
-  assert.doesNotMatch(out, /警告:/, "上流の開発用ファイルを未知の要素として報告した");
+test("skill を配らず、.mcp.json・CLAUDE.md・状態を書く", () => {
+  const target = tdProject();
+  const out = runApply(target);
 
-  const overrides = readJson(join(target, ".claude", "settings.json")).skillOverrides;
-  for (const ns of ["tdmcp-skills", "touchdesigner"]) {
-    assert.equal(overrides[`${ns}:td-general`], "off", `${ns} の名前空間を伏せていない`);
-  }
-
-  // 上流の開発用 .mcp.json（tdmcp / localhost）ではなく、正しい値で登録する。
+  assert.ok(!existsSync(join(target, ".claude", "skills")), "skill を配った");
+  // コンポーネントの Add MCP（Install Scope: Project）が書くのと同じ値
   assert.deepEqual(readJson(join(target, ".mcp.json")).mcpServers, {
     touchdesigner: { type: "http", url: "http://127.0.0.1:13316/mcp" },
   });
+  assert.ok(!existsSync(join(target, ".claude", "settings.json")), "settings.json を書いた");
+  assert.ok(existsSync(join(target, ".claude", "CLAUDE.md")), "CLAUDE.md を書いていない");
+  assert.doesNotMatch(out, /以前に直置きした/, "記録が無いのに取り除きを報告した");
 
-  const state = readJson(join(target, ".claude", "sync-setup-state.json"))["setup-touchdesigner"];
+  const state = stateOf(target);
   assert.equal(state.skillVersion, skillVersion("setup-touchdesigner"));
-  assert.equal(state.tdmcpSkills.sha, git(repo, "rev-parse", TDMCP_SKILLS_TAG + "^{commit}"));
-  assert.deepEqual(state.tdmcpSkills.placed.skills, ["td-general", "td-top-family"]);
+  assert.ok(!("tdmcpSkills" in state), "直置きの記録を書いた");
 });
 
-test("2 回目の適用は何も変えない", () => {
-  const repo = fakeUpstream(["td-general"]);
-  const target = tdProject();
-  runApply(target, repo);
-  const out = runApply(target, repo);
+test("以前の版が直置きした td-* を記録どおりに消し、自前の skill・skillOverrides・.mcp.json は残す", () => {
+  const target = legacyProject();
+  const settingsBefore = readFileSync(join(target, ".claude", "settings.json"), "utf8");
+  const mcpBefore = readFileSync(join(target, ".mcp.json"), "utf8");
+  const out = runApply(target);
 
-  assert.match(out, /TDMCPSkills.*導入済み/);
-  assert.match(out, /skillOverrides）: 変更なし/);
-  assert.match(out, /MCP 接続（\.mcp\.json）: 変更なし/);
-  assert.match(out, /CLAUDE\.md: 変更なし/);
+  const skills = join(target, ".claude", "skills");
+  for (const s of ["td-general", "td-top-family"]) assert.ok(!existsSync(join(skills, s)), `${s} が残った`);
+  assert.ok(!existsSync(join(skills, "TDMCP-SKILLS-LICENSE.md")), "LICENSE が残った");
+  assert.ok(existsSync(join(skills, "my-skill", "SKILL.md")), "記録に無い skill を消した");
+  assert.equal(readFileSync(join(target, ".claude", "settings.json"), "utf8"), settingsBefore, "skillOverrides を変えた");
+  assert.equal(readFileSync(join(target, ".mcp.json"), "utf8"), mcpBefore, ".mcp.json を変えた");
+  assert.match(out, /以前に直置きした td-\* skill: 3 件を削除しました/);
+
+  const state = stateOf(target);
+  assert.equal(state.skillVersion, skillVersion("setup-touchdesigner"));
+  assert.ok(!("tdmcpSkills" in state), "取り除き終えた記録が残った");
 });
 
 test(".mcp.json の他のサーバーと、配備先が変えた touchdesigner の値を温存する", () => {
   // ポートはプロジェクトごとに変えうる（1 台で複数の TouchDesigner を動かすとき）。
-  const repo = fakeUpstream(["td-general"]);
   const target = tdProject();
   const mine = { type: "http", url: "http://127.0.0.1:13317/mcp" };
   writeFile(join(target, ".mcp.json"), JSON.stringify({ mcpServers: { other: { command: "x" }, touchdesigner: mine } }));
-  const out = runApply(target, repo);
+  const out = runApply(target);
 
   const servers = readJson(join(target, ".mcp.json")).mcpServers;
   assert.deepEqual(servers.touchdesigner, mine, "配備先の値を書き換えた");
   assert.deepEqual(servers.other, { command: "x" }, "他のサーバーを消した");
-  assert.match(out, /触っていません/);
+  assert.match(out, /MCP 接続（\.mcp\.json）: 触っていません/);
 });
 
-test("上流から消えた skill を配備先から消し、off も取り下げる", () => {
-  const repo = fakeUpstream(["td-general", "td-old"]);
+test("2 回目の適用は何も変えない", () => {
+  const target = legacyProject();
+  runApply(target);
+  const out = runApply(target);
+
+  assert.doesNotMatch(out, /以前に直置きした/);
+  assert.match(out, /MCP 接続（\.mcp\.json）: 変更なし/);
+  assert.match(out, /CLAUDE\.md: 変更なし/);
+  assert.ok(existsSync(join(target, ".claude", "skills", "my-skill", "SKILL.md")));
+});
+
+test("記録の名前で .claude の外や配る種別以外を消させない", () => {
   const target = tdProject();
-  runApply(target, repo);
-  retag(repo, (r) => rmSync(join(r, "skills", "td-old"), { recursive: true }));
-  runApply(target, repo);
+  writeFile(join(target, "keep.txt"), "x");
+  writeFile(join(target, ".claude", "hooks", "h", "x.txt"), "x");
+  writeFile(
+    join(target, ".claude", "sync-setup-state.json"),
+    JSON.stringify({
+      "setup-touchdesigner": { skillVersion: "1.1.0", tdmcpSkills: { placed: { skills: ["..", "../keep.txt"], hooks: ["h"] } } },
+    })
+  );
+  runApply(target);
 
-  assert.ok(!existsSync(join(target, ".claude", "skills", "td-old")), "上流から消えた skill が残った");
-  const overrides = readJson(join(target, ".claude", "settings.json")).skillOverrides;
-  assert.ok(!("touchdesigner:td-old" in overrides), "上流から消えた skill の off が残った");
-  assert.equal(overrides["touchdesigner:td-general"], "off");
-});
-
-test("上流が hooks や未知の要素を足したら、黙って無視せず報告する", () => {
-  const repo = fakeUpstream(["td-general"], (r) => {
-    writeFile(join(r, "hooks", "hooks.json"), "{}\n");
-    writeFile(join(r, "brand-new-kind", "x.txt"), "x\n");
-  });
-  const out = runApply(tdProject(), repo);
-
-  assert.match(out, /警告: 上流に直置きでは再現できない構成要素があります.*hooks/);
-  assert.match(out, /警告: 上流に扱いを決めていない要素があります.*brand-new-kind/);
+  assert.ok(existsSync(join(target, "keep.txt")), ".claude の外を消した");
+  assert.ok(existsSync(join(target, ".claude", "hooks", "h", "x.txt")), "配る種別以外を消した");
 });
 
 test("既存の CLAUDE.md に節が無ければ、書かずに要マージとして報告する", () => {
-  const repo = fakeUpstream(["td-general"]);
   const target = tdProject();
   const claudeMd = join(target, ".claude", "CLAUDE.md");
   writeFile(claudeMd, "# 既存\n");
-  const out = runApply(target, repo);
+  const out = runApply(target);
 
   assert.equal(readFileSync(claudeMd, "utf8"), "# 既存\n", "既存の CLAUDE.md を書き換えた");
   assert.match(out, /要マージ[\s\S]*\.claude\/CLAUDE\.md/);
-});
-
-test("上流の HEAD が tag より進んでいても、tag の版だけを配る", () => {
-  // 上流は main を随時更新ブランチ、release tag を正式版としている。
-  const repo = fakeUpstream(["td-general"]);
-  const tagSha = git(repo, "rev-parse", TDMCP_SKILLS_TAG + "^{commit}");
-  writeFile(join(repo, "skills", "td-unreleased", "SKILL.md"), "---\nname: td-unreleased\n---\n");
-  git(repo, "add", "-A");
-  git(repo, "commit", "-qm", "after tag");
-  const target = tdProject();
-  runApply(target, repo);
-
-  assert.ok(!existsSync(join(target, ".claude", "skills", "td-unreleased")), "tag より後の skill を配った");
-  const state = readJson(join(target, ".claude", "sync-setup-state.json"))["setup-touchdesigner"];
-  assert.equal(state.tdmcpSkills.sha, tagSha, "tag 以外の sha を記録した");
-});
-
-test("tag を取得できなければ HEAD へ倒さず見送り、前回の配置と記録を残す", () => {
-  const repo = fakeUpstream(["td-general"]);
-  const target = tdProject();
-  runApply(target, repo);
-  const before = readJson(join(target, ".claude", "sync-setup-state.json"))["setup-touchdesigner"].tdmcpSkills;
-  git(repo, "tag", "-d", TDMCP_SKILLS_TAG);
-  const out = runApply(target, repo);
-
-  assert.match(out, /TDMCPSkills.*見送りました/);
-  assert.ok(existsSync(join(target, ".claude", "skills", "td-general", "SKILL.md")), "前回の配置を消した");
-  const after = readJson(join(target, ".claude", "sync-setup-state.json"))["setup-touchdesigner"].tdmcpSkills;
-  assert.deepEqual(after, before, "前回の記録を消した");
 });
 
 // ---- TDMCP.tox ----

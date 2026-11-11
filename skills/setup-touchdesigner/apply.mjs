@@ -1,17 +1,19 @@
 // setup-touchdesigner インストーラ本体。
 //
 // 対象 TouchDesigner プロジェクトへ次を配る。冪等（再実行安全）。
-//   - TDMCPSkills（`td-*` skill）を `.claude/skills/` へ直置きし、LICENSE を添える
-//   - プラグインとして入っている同名 skill を `.claude/settings.json` の skillOverrides で伏せる
 //   - TDMCP 本体（TDMCP.tox）を固定 release から取得し、プロジェクト直下へ置く（LICENSE を添える）
 //   - `.mcp.json` へ TDMCP の接続（`touchdesigner`）をマージする
 //   - `.claude/CLAUDE.md` へ TouchDesigner 操作の方針の節を配る（差分があれば要マージ）
 //   - `.claude/sync-setup-state.json` へ自分のキーを記録する
 //
+// skill（td-*）は配らない。TDMCP コンポーネントの Install Skills が、コンポーネントで選んだ範囲
+// （Local / Project / User）へ入れる。
+// 以前の版が直置きした td-* skill は、記録にあるものだけを取り除く（コンポーネントの Install Skills と
+// 二重に読まれるため）。記録は取り除き終えてから消す（消せなかった回は次の適用でやり直す）。
+//
 // 使い方: node apply.mjs [target-dir]   (target-dir 省略時は cwd)
 //
-// Node 18+ の標準のみ。外部コマンドは git 1 つ（上流の clone）、ネットワークは git と release の取得。
-// どれも失敗しても続行する（他の配置は決定的に完了させる）。
+// Node 18+ の標準のみ。ネットワークは release の取得だけ。失敗しても続行する（他の配置は決定的に完了させる）。
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -19,14 +21,9 @@ import { fileURLToPath } from "node:url";
 import { consolidateSyncState } from "../sync-setup/state.mjs";
 import { createMergeQueue, deployClaudeMdSection } from "../shared/markdown-merge.mjs";
 import { readOwnSkillVersion, readRecordedState, writeSyncState } from "../shared/skill-state.mjs";
-import {
-  disablePluginSkills,
-  printCollisionWarning,
-  printUpstreamWarnings,
-  vendorUpstreamPlugin,
-} from "../shared/upstream-plugin.mjs";
+import { removeLegacySkills } from "./legacy-skills.mjs";
 import { placeTdmcpTox } from "./tdmcp-tox.mjs";
-import { TDMCP_REPO, TDMCP_SKILLS_REPO, TDMCP_SKILLS_TAG, TDMCP_TAG, TDMCP_TOX_SHA256 } from "./upstream.mjs";
+import { TDMCP_REPO, TDMCP_TAG, TDMCP_TOX_SHA256 } from "./upstream.mjs";
 /* global process, console */
 
 const SKILL_KEY = "setup-touchdesigner";
@@ -58,56 +55,18 @@ const claudeMdState = deployClaudeMdSection(mergeQueue, {
   mergeSrc: claudeMdSrc,
 });
 
-// ---- TDMCPSkills の直置き ----
-// 上流は skill の中身だけを持つリポジトリ。配るのは skills/ だけで、残りは開発用ファイル。
-// `.mcp.json` は上流の開発用（名前 `tdmcp`・`localhost`）で配備先向けではないため配らない —
-// 接続は下の registerMcpServer が正しい値で書く。
-// 上流の差し替え口 SETUP_TOUCHDESIGNER_SKILLS_REPO は**テスト専用**（配備先の運用では設定しない）。
+// ---- 以前の版が直置きした td-* skill の取り除き ----
+// skillOverrides の "off"（プラグイン版の同名 skill を伏せるもの）は残す。skill をコンポーネントから
+// 入れても、プラグイン版が並べば二重に読まれる点は変わらない。
 const recorded = readRecordedState(claudeDir, SKILL_KEY);
-const tdSkills = vendorUpstreamPlugin({
-  repo: process.env.SETUP_TOUCHDESIGNER_SKILLS_REPO || TDMCP_SKILLS_REPO,
-  ref: TDMCP_SKILLS_TAG,
-  // HEAD は上流の随時更新ブランチなので、tag を取れなければ配らない。
-  requireRef: true,
-  refNotes: { missing: "", failed: () => "" },
-  claudeDir,
-  recorded: recorded.tdmcpSkills,
-  isOwn: () => false,
-  inert: [
-    ".git",
-    ".github",
-    ".gitignore",
-    ".claude-plugin",
-    ".claude",
-    ".mcp.json",
-    "CHANGELOG.md",
-    "CLAUDE.md",
-    "LICENSE.md",
-    "README.md",
-    "SKILLS.md",
-    "VERSION",
-    "build_plugin.py",
-    "smoketest",
-    "validate.py",
-  ],
-  unsupported: ["hooks"],
-  licenseName: "TDMCP-SKILLS-LICENSE.md",
-  tmpPrefix: "tdmcp-skills-",
-});
-
-// 同じ skill は 2 つのプラグイン名で Claude Code に届きうる: TDMCPSkills の marketplace から
-// 入れた `tdmcp-skills`、Claude Desktop 向けプラグインがアカウント同期で届く `touchdesigner`。
-const overridesState = disablePluginSkills(
-  claudeDir,
-  ["tdmcp-skills", "touchdesigner"],
-  tdSkills.record?.placed?.skills ?? [],
-  Array.isArray(recorded.tdmcpSkills?.placed?.skills) ? recorded.tdmcpSkills.placed.skills.map(String) : []
-);
+const legacy = removeLegacySkills(claudeDir, recorded.tdmcpSkills);
 
 // ---- TDMCP 本体（TDMCP.tox）----
 const tox = await placeTdmcpTox({ target, repo: TDMCP_REPO, tag: TDMCP_TAG, sha256: TDMCP_TOX_SHA256 });
 
 // ---- MCP 接続（.mcp.json）----
+// コンポーネントの Add MCP（Install Scope: Project）が出す `claude mcp add --scope project` と同じ中身を書く。
+// CLI を呼ばないのは、CLI の無い環境（テンプレ同期の worktree など）でも配れるようにするため。
 // TDMCP は TouchDesigner の中で動く HTTP の MCP サーバー。`127.0.0.1` を字句どおりに書く
 // （ソケットが IPv4 のみで、`localhost` は多くの環境で `::1` へ先に解決される）。
 // **既に `touchdesigner` があれば触らない。** ポートやサーバー名はプロジェクトごとに変えうる
@@ -149,12 +108,12 @@ if (migratedState) console.log(`状態ファイル: ${migratedState}`);
 let syncState = null;
 const skillVersion = readOwnSkillVersion(here);
 if (skillVersion) {
-  // tdmcpSkills は「上流をどの sha から、どの名前で配ったか」。clone できなかった回は前回の記録を引き継ぐ。
+  // 直置きの記録は取り除き終えたら消す。消せなかった回は引き継いで、次の適用でやり直す。
   const recreated = writeSyncState(
     claudeDir,
     SKILL_KEY,
-    { skillVersion, flags: [], tdmcpSkills: tdSkills.record },
-    { carryOver: ["tdmcpSkills"] }
+    { skillVersion, flags: [] },
+    { carryOver: legacy.done ? [] : ["tdmcpSkills"] }
   );
   if (recreated) {
     console.log("注意: sync-setup-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）。");
@@ -168,13 +127,10 @@ if (skillVersion) {
 
 // ---- 報告 ----
 console.log(`インストール先: ${claudeDir}`);
-console.log(`TDMCPSkills（tag ${TDMCP_SKILLS_TAG}）: ${tdSkills.state}`);
-console.log(`プラグイン版の同名 skill（skillOverrides）: ${overridesState}`);
 console.log(`TDMCP 本体（TDMCP.tox）: ${tox.state}`);
 if (tox.warning) console.log(`警告: ${tox.warning}`);
 console.log(`MCP 接続（.mcp.json）: ${mcpState}`);
-printUpstreamWarnings(tdSkills, SKILL_KEY);
-printCollisionWarning(tdSkills, SKILL_KEY);
+if (recorded.tdmcpSkills) console.log(`以前に直置きした td-* skill: ${legacy.state}`);
 console.log("Markdown:");
 console.log(`  - .claude/CLAUDE.md: ${claudeMdState}`);
 mergeQueue.print();
