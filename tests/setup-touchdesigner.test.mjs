@@ -9,9 +9,11 @@
 //   5. 上流から消えた skill を消し、off も取り下げる
 //   6. 上流の構成変化（hooks・未知の要素）を報告する
 //   7. CLAUDE.md の差分は書かずに要マージにする
+//   8. TDMCP.tox は固定 sha256 と照合して置く
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -63,7 +65,7 @@ function tdProject() {
 function runApply(target, repo) {
   const res = spawnSync(process.execPath, [APPLY_TD, target], {
     encoding: "utf8",
-    env: { ...process.env, SETUP_TOUCHDESIGNER_SKILLS_REPO: repo },
+    env: { ...process.env, SETUP_TOUCHDESIGNER_SKILLS_REPO: repo, SETUP_TOUCHDESIGNER_RELEASE_DIR: tempDir("td-no-release-") },
   });
   assert.equal(res.status, 0, `apply failed: ${res.stderr}\n${res.stdout}`);
   return res.stdout;
@@ -186,4 +188,57 @@ test("tag を取得できなければ HEAD へ倒さず見送り、前回の配�
   assert.ok(existsSync(join(target, ".claude", "skills", "td-general", "SKILL.md")), "前回の配置を消した");
   const after = readJson(join(target, ".claude", "sync-setup-state.json"))["setup-touchdesigner"].tdmcpSkills;
   assert.deepEqual(after, before, "前回の記録を消した");
+});
+
+// ---- TDMCP.tox ----
+// 照合の基準は呼び手が渡す sha256 なので、モジュールを直接呼んで偽の release で確かめる。
+
+async function placeWith(releaseFiles, target, sha) {
+  const { placeTdmcpTox } = await import("../skills/setup-touchdesigner/tdmcp-tox.mjs");
+  const dir = tempDir("td-release-");
+  for (const [n, body] of Object.entries(releaseFiles)) writeFile(join(dir, n), body);
+  const prev = process.env.SETUP_TOUCHDESIGNER_RELEASE_DIR;
+  process.env.SETUP_TOUCHDESIGNER_RELEASE_DIR = dir;
+  try {
+    return await placeTdmcpTox({ target, repo: "x/y", tag: "9.9.9", sha256: sha });
+  } finally {
+    if (prev === undefined) delete process.env.SETUP_TOUCHDESIGNER_RELEASE_DIR;
+    else process.env.SETUP_TOUCHDESIGNER_RELEASE_DIR = prev;
+  }
+}
+const hashOf = (s) => createHash("sha256").update(s).digest("hex");
+
+test("tox: 固定 sha256 と一致すれば LICENSE と一緒に置き、2 回目は触らない", async () => {
+  const target = tdProject();
+  const files = { "TDMCP.tox": "TOX-v1", "LICENSE.md": "LICENSE\n" };
+  const first = await placeWith(files, target, hashOf("TOX-v1"));
+  assert.match(first.state, /置きました/);
+  assert.equal(readFileSync(join(target, "TDMCP.tox"), "utf8"), "TOX-v1");
+  assert.equal(readFileSync(join(target, "TDMCP-LICENSE.md"), "utf8"), "LICENSE\n");
+
+  const second = await placeWith({}, target, hashOf("TOX-v1"));
+  assert.match(second.state, /導入済み/, "一致しているのに取得しに行った");
+});
+
+test("tox: 取得物が固定 sha256 と一致しなければ置かずに警告する", async () => {
+  const target = tdProject();
+  const res = await placeWith({ "TDMCP.tox": "TAMPERED", "LICENSE.md": "L" }, target, hashOf("TOX-v1"));
+  assert.ok(res.warning, "警告を出していない");
+  assert.ok(!existsSync(join(target, "TDMCP.tox")), "一致しない tox を置いた");
+});
+
+test("tox: 取得できなければ既存の tox を残す", async () => {
+  const target = tdProject();
+  writeFile(join(target, "TDMCP.tox"), "OLD");
+  const res = await placeWith({}, target, hashOf("TOX-v2"));
+  assert.match(res.state, /見送りました/);
+  assert.equal(readFileSync(join(target, "TDMCP.tox"), "utf8"), "OLD");
+});
+
+test("tox: 版の違う既存 tox は置き換える", async () => {
+  const target = tdProject();
+  writeFile(join(target, "TDMCP.tox"), "OLD");
+  const res = await placeWith({ "TDMCP.tox": "TOX-v2", "LICENSE.md": "L" }, target, hashOf("TOX-v2"));
+  assert.match(res.state, /置き換えました/);
+  assert.equal(readFileSync(join(target, "TDMCP.tox"), "utf8"), "TOX-v2");
 });

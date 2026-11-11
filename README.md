@@ -6,7 +6,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 |:------|:-----|
 | `setup-github` | GitHub 開発フロー一式を導入する。ブランチ保護（pre-push。既定 ON・質問で外せる）、PR 前レビュー運用（`/code-review` + `/security-review` のソフト指示）、git 運用規約（Git Flow / Conventional Commits）、create-issue skill。任意で Copilot PR 自動レビュー（自動アサイン / watch-pr / resolve-pr）と AGENTS.md 自動生成 |
 | `setup-unity` | Unity 開発規約一式を導入する。rules（Unity 操作 / フォルダ構成 / Hierarchy / アセット命名 / コーディング規約 / テスト）、skills（lint-unity）、agents（unity-linter）、テスト設計・実装ガイド（references）。Unity 操作は **Unity CLI** 固定。コーディング規約を機械で止める Roslyn analyzer と PR ゲートの GitHub Actions も配る。任意でレイヤードアーキテクチャ規約 |
-| `setup-touchdesigner` | TouchDesigner を AI エージェントで開発する一式を導入する。公式 [TDMCPSkills](https://github.com/TouchDesigner/TDMCPSkills)（`td-*` skill）を release tag 固定で `.claude/skills/` へ直置きし、`.mcp.json` へ TDMCP の接続を登録し、CLAUDE.md へ TouchDesigner 操作の方針を配る |
+| `setup-touchdesigner` | TouchDesigner を AI エージェントで開発する一式を導入する。公式 [TDMCPSkills](https://github.com/TouchDesigner/TDMCPSkills)（`td-*` skill）を release tag 固定で `.claude/skills/` へ直置きし、TDMCP 本体（`TDMCP.tox`）を release から取得してプロジェクト直下へ置き、`.mcp.json` へ TDMCP の接続を登録し、CLAUDE.md へ TouchDesigner 操作の方針を配る |
 | `sync-setup` | プラグインのテンプレート更新に、展開済みリポジトリを追随させる。保存フラグで apply.mjs を再適用し、同期 PR を作成して CI が通れば merge する。UserPromptSubmit hook が最初のプロンプトへ差し込む、または手動で `/sync-setup` を実行する |
 
 どちらも**冪等**（再実行安全）で、導入オプションは実行時に対話で確認する。配置物は対象リポジトリの `.claude/` などにコミットされるため、plugin を持たないチームメイトにもそのまま効く。
@@ -88,7 +88,8 @@ skills/
 └─ setup-touchdesigner/
     ├─ SKILL.md
     ├─ apply.mjs
-    ├─ upstream.mjs     … 配る TDMCPSkills の release tag
+    ├─ upstream.mjs     … 配る TDMCPSkills / TDMCP の release tag（tox は sha256 も）
+    ├─ tdmcp-tox.mjs    … TDMCP.tox の取得・照合・配置
     └─ templates/
         └─ claude-md.md … CLAUDE.md へ配る節
 
@@ -101,7 +102,7 @@ scripts/
 └─ check-skill-version-bump.mjs … 配布物を変えた PR の skill 版 bump 忘れを CI で止める
 ```
 
-テンプレートは plugin に同梱されたスナップショット。例外は上流の公式プラグイン（setup-unity の unity プラグイン、setup-touchdesigner の TDMCPSkills）で、コピーを持たず適用時に上流から引く。
+テンプレートは plugin に同梱されたスナップショット。例外は上流の公式プラグイン（setup-unity の unity プラグイン、setup-touchdesigner の TDMCPSkills と TDMCP.tox）で、コピーを持たず適用時に上流から引く。
 
 ## テスト
 
