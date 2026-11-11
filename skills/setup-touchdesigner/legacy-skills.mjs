@@ -2,15 +2,24 @@
 //
 // 2.0 から skill はコンポーネントの Install Skills が入れる。直置きが残ると同じ td-* が二重に読まれる。
 // 消すのは状態ファイルの記録（tdmcpSkills.placed）にあるものと、添えた LICENSE だけ。
-// 記録は配備先にコミットされたファイルなので名前を信用しない: 配った種別の、単一のパス要素だけを受ける
-// （`..` や区切りを含む名前で .claude の外を消させない）。
+// 記録も `.claude/` もリポジトリから来るので信用しない:
+//   - 名前は上流の名前空間 `td-` で始まる単一のパス要素だけを受ける（`..`・区切り・末尾のドットを通さない）
+//   - `.claude` と種別ディレクトリが symlink / junction なら、その下は消さない（リンク先の実ファイルを消させない）
 
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 const KINDS = ["skills", "commands", "agents"];
 const LICENSE_NAME = "TDMCP-SKILLS-LICENSE.md";
-const isPlainName = (n) => n !== "" && n !== "." && n !== ".." && !/[\\/:]/.test(n);
+const isTdName = (n) => /^td-[A-Za-z0-9_-]+$/.test(n);
+const isRealDir = (p) => {
+  try {
+    const st = lstatSync(p);
+    return st.isDirectory() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
+};
 
 /**
  * @param {string} claudeDir   配備先の .claude
@@ -32,12 +41,14 @@ export function removeLegacySkills(claudeDir, recorded) {
       failed.push(`${label}（${e.message}）`);
     }
   };
+  if (!isRealDir(claudeDir)) return { state: "対象なし（.claude が実ディレクトリでない）", done: true };
   for (const kind of KINDS) {
     const names = placed[kind];
-    if (!Array.isArray(names)) continue;
-    for (const n of names.map(String).filter(isPlainName)) remove(join(claudeDir, kind, n), `${kind}/${n}`);
+    const dir = join(claudeDir, kind);
+    if (!Array.isArray(names) || !isRealDir(dir)) continue;
+    for (const n of names.map(String).filter(isTdName)) remove(join(dir, n), `${kind}/${n}`);
   }
-  remove(join(claudeDir, "skills", LICENSE_NAME), `skills/${LICENSE_NAME}`);
+  if (isRealDir(join(claudeDir, "skills"))) remove(join(claudeDir, "skills", LICENSE_NAME), `skills/${LICENSE_NAME}`);
 
   const parts = [removed.length ? `${removed.length} 件を削除しました: ${removed.join(" ")}` : "削除するものはありませんでした"];
   if (failed.length) parts.push(`削除できなかったもの（手で消してから再実行してください）: ${failed.join(" ")}`);

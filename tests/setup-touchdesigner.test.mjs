@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { PLUGIN_ROOT, skillVersion, tempDir } from "./helpers.mjs";
@@ -134,16 +134,33 @@ test("記録の名前で .claude の外や配る種別以外を消させない",
   const target = tdProject();
   writeFile(join(target, "keep.txt"), "x");
   writeFile(join(target, ".claude", "hooks", "h", "x.txt"), "x");
+  writeFile(join(target, ".claude", "skills", "my-skill", "SKILL.md"), "x");
   writeFile(
     join(target, ".claude", "sync-setup-state.json"),
     JSON.stringify({
-      "setup-touchdesigner": { skillVersion: "1.1.0", tdmcpSkills: { placed: { skills: ["..", "../keep.txt"], hooks: ["h"] } } },
+      "setup-touchdesigner": { skillVersion: "1.1.0", tdmcpSkills: { placed: { skills: ["..", "../keep.txt", "my-skill"], hooks: ["h"] } } },
     })
   );
   runApply(target);
 
   assert.ok(existsSync(join(target, "keep.txt")), ".claude の外を消した");
   assert.ok(existsSync(join(target, ".claude", "hooks", "h", "x.txt")), "配る種別以外を消した");
+  assert.ok(existsSync(join(target, ".claude", "skills", "my-skill", "SKILL.md")), "td- 以外の名前を消した");
+});
+
+test("skills が symlink / junction なら、リンク先の td-* を消さない", () => {
+  const target = tdProject();
+  const outside = tempDir("td-outside-");
+  writeFile(join(outside, "td-general", "SKILL.md"), "x");
+  mkdirSync(join(target, ".claude"), { recursive: true });
+  symlinkSync(outside, join(target, ".claude", "skills"), "junction");
+  writeFile(
+    join(target, ".claude", "sync-setup-state.json"),
+    JSON.stringify({ "setup-touchdesigner": { skillVersion: "1.1.0", tdmcpSkills: { placed: { skills: ["td-general"] } } } })
+  );
+  runApply(target);
+
+  assert.ok(existsSync(join(outside, "td-general", "SKILL.md")), "リンク先を消した");
 });
 
 test("既存の CLAUDE.md に節が無ければ、書かずに要マージとして報告する", () => {
