@@ -115,7 +115,7 @@ function readCurrentPlugin() {
   return { version, installPath: entry.installPath || null };
 }
 
-const SKILL_KEYS = ["setup-github", "setup-unity"];
+const SKILL_KEYS = ["setup-github", "setup-unity", "setup-touchdesigner"];
 
 // このマシンに登録済みの marketplace が公式 unity プラグインに対して pin している sha。
 // 読めなければ null。marketplace は Claude Code が自動更新するローカルの clone なので、

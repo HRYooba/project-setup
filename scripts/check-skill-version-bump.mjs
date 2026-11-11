@@ -23,7 +23,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cmpVer, parseSkillVersion, readSkillVersion, SKILL_KEYS } from "../skills/sync-setup/skill-version.mjs";
+import { cmpVer, parseSkillVersion, readSkillVersion } from "../skills/sync-setup/skill-version.mjs";
+import { SKILL_KEYS } from "../skills/sync-setup/skill-keys.mjs";
 /* global process, console */
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");

@@ -52,7 +52,8 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { autoMergeBlockers, pickMergeMethod } from "./auto-merge.mjs";
-import { decideDrift, pinnedUnityPluginSha, readSkillVersion, SKILL_KEYS } from "./skill-version.mjs";
+import { decideDrift, pinnedUnityPluginSha, readSkillVersion } from "./skill-version.mjs";
+import { SKILL_KEYS } from "./skill-keys.mjs";
 import { readSyncState, stateFiles } from "./state.mjs";
 /* global process, console */
 
