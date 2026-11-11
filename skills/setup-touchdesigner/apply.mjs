@@ -3,13 +3,15 @@
 // 対象 TouchDesigner プロジェクトへ次を配る。冪等（再実行安全）。
 //   - TDMCPSkills（`td-*` skill）を `.claude/skills/` へ直置きし、LICENSE を添える
 //   - プラグインとして入っている同名 skill を `.claude/settings.json` の skillOverrides で伏せる
+//   - TDMCP 本体（TDMCP.tox）を固定 release から取得し、プロジェクト直下へ置く（LICENSE を添える）
 //   - `.mcp.json` へ TDMCP の接続（`touchdesigner`）をマージする
 //   - `.claude/CLAUDE.md` へ TouchDesigner 操作の方針の節を配る（差分があれば要マージ）
 //   - `.claude/sync-setup-state.json` へ自分のキーを記録する
 //
 // 使い方: node apply.mjs [target-dir]   (target-dir 省略時は cwd)
 //
-// Node 標準のみ。外部コマンドは git 1 つ（上流の clone）。失敗しても続行する（他の配置は決定的に完了させる）。
+// Node 18+ の標準のみ。外部コマンドは git 1 つ（上流の clone）、ネットワークは git と release の取得。
+// どれも失敗しても続行する（他の配置は決定的に完了させる）。
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -23,7 +25,8 @@ import {
   printUpstreamWarnings,
   vendorUpstreamPlugin,
 } from "../shared/upstream-plugin.mjs";
-import { TDMCP_SKILLS_REPO, TDMCP_SKILLS_TAG } from "./upstream.mjs";
+import { placeTdmcpTox } from "./tdmcp-tox.mjs";
+import { TDMCP_REPO, TDMCP_SKILLS_REPO, TDMCP_SKILLS_TAG, TDMCP_TAG, TDMCP_TOX_SHA256 } from "./upstream.mjs";
 /* global process, console */
 
 const SKILL_KEY = "setup-touchdesigner";
@@ -33,6 +36,11 @@ const args = process.argv.slice(2);
 const unknownFlags = args.filter((a) => a.startsWith("--"));
 if (unknownFlags.length) {
   console.error(`不明なオプション: ${unknownFlags.join(" ")}（このコマンドはオプションを取りません）`);
+  process.exit(1);
+}
+// 空文字の引数をカレント扱いにしない（シェル変数の展開漏れで意図しない場所へ配る）。
+if (args.length && !args[0].trim()) {
+  console.error("導入先ディレクトリが空文字です。");
   process.exit(1);
 }
 const target = args[0] ?? process.cwd();
@@ -95,6 +103,9 @@ const overridesState = disablePluginSkills(
   tdSkills.record?.placed?.skills ?? [],
   Array.isArray(recorded.tdmcpSkills?.placed?.skills) ? recorded.tdmcpSkills.placed.skills.map(String) : []
 );
+
+// ---- TDMCP 本体（TDMCP.tox）----
+const tox = await placeTdmcpTox({ target, repo: TDMCP_REPO, tag: TDMCP_TAG, sha256: TDMCP_TOX_SHA256 });
 
 // ---- MCP 接続（.mcp.json）----
 // TDMCP は TouchDesigner の中で動く HTTP の MCP サーバー。`127.0.0.1` を字句どおりに書く
@@ -159,6 +170,8 @@ if (skillVersion) {
 console.log(`インストール先: ${claudeDir}`);
 console.log(`TDMCPSkills（tag ${TDMCP_SKILLS_TAG}）: ${tdSkills.state}`);
 console.log(`プラグイン版の同名 skill（skillOverrides）: ${overridesState}`);
+console.log(`TDMCP 本体（TDMCP.tox）: ${tox.state}`);
+if (tox.warning) console.log(`警告: ${tox.warning}`);
 console.log(`MCP 接続（.mcp.json）: ${mcpState}`);
 printUpstreamWarnings(tdSkills, SKILL_KEY);
 printCollisionWarning(tdSkills, SKILL_KEY);
