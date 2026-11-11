@@ -25,6 +25,7 @@ import {
   SYNC_PROMPT_HOOK,
   tempDir,
 } from "./helpers.mjs";
+import { SKILL_KEYS } from "../skills/sync-setup/skill-keys.mjs";
 /* global process */
 
 function runApply(applyPath, target, args = []) {
@@ -547,4 +548,20 @@ test("hook: installPath から SKILL.md が読めなければ黙る（プラグ�
   const target = tempDir("sync-skillver-noplugin-");
   writeState(target, { "setup-github": { skillVersion: "1.26.0", flags: [] } });
   assert.equal(runSyncHook(target, "9.9.9", { installPath: fakePluginRoot() }), "");
+});
+
+test("hook: setup-touchdesigner の版が上がっていれば知らせる", () => {
+  const target = tempDir("sync-skillver-td-");
+  writeState(target, { "setup-touchdesigner": { skillVersion: "1.0.0", flags: [] } });
+  const installPath = fakePluginRoot({ "setup-touchdesigner": "1.1.0" });
+  const out = JSON.parse(runSyncHook(target, "9.9.9", { installPath }));
+  assert.match(out.systemMessage, /setup-touchdesigner v1\.0\.0→v1\.1\.0/);
+});
+
+test("配備先へ配る hook の SKILL_KEYS は skill-keys.mjs と一致する", () => {
+  // hook は配備先へ単体コピーされるため import できず、一覧を手で写している。
+  const src = readFileSync(join(HOOKS_DIR, "lib", "sync-setup-drift.mjs"), "utf8");
+  const m = src.match(/^const SKILL_KEYS = (\[[^\]]*\]);$/m);
+  assert.ok(m, "hook から SKILL_KEYS を読めない");
+  assert.deepEqual(JSON.parse(m[1]), SKILL_KEYS);
 });

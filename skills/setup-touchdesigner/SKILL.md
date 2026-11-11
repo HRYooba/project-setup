@@ -15,7 +15,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 このコマンドは、対象 TouchDesigner プロジェクトに次を**冪等に**インストールする（再実行安全）:
 
 1. **TDMCPSkills** — [`TouchDesigner/TDMCPSkills`](https://github.com/TouchDesigner/TDMCPSkills) の `skills/` を `{target}/.claude/skills/` へ**直接置く**（プラグインとしては入れない。理由は setup-unity の公式 unity プラグインと同じで、個人マシンのキャッシュを経由せずリポジトリの現物を全員が読むため）
-   - 配る版は `upstream.mjs` が固定した **release tag**。`main` は配らない（上流は release を正式版としている）
+   - 配る版は `upstream.mjs` が固定した **release tag**。`main` は配らない（上流は release を正式版としている）。tag を取得できなければ見送り、前回の配置と記録を残す
    - 再配布なので `LICENSE.md` も置く（`.claude/skills/TDMCP-SKILLS-LICENSE.md`。Shared Use License）
    - 上流から消えた skill は配備先からも消す。対象は前回配った記録にあるものだけ
    - 直置きで再現できない構成要素（`hooks/`）と、扱いを決めていない要素は配らず警告する
@@ -40,7 +40,7 @@ argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:13316/mcp
 ```
 
-  応答コードが返れば起動している（認証が有効なら `401`）。接続できなければ未起動
+  `000` が出る（接続できない）なら未起動。それ以外の応答コードなら起動している（認証が有効なら `401`）
 
 ### Step 2: インストール実行
 

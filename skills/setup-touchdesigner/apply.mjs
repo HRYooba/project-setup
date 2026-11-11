@@ -59,10 +59,9 @@ const recorded = readRecordedState(claudeDir, SKILL_KEY);
 const tdSkills = vendorUpstreamPlugin({
   repo: process.env.SETUP_TOUCHDESIGNER_SKILLS_REPO || TDMCP_SKILLS_REPO,
   ref: TDMCP_SKILLS_TAG,
-  refNotes: {
-    missing: "",
-    failed: (ref) => `（tag ${ref} を取得できないため HEAD）`,
-  },
+  // HEAD は上流の随時更新ブランチなので、tag を取れなければ配らない。
+  requireRef: true,
+  refNotes: { missing: "", failed: () => "" },
   claudeDir,
   recorded: recorded.tdmcpSkills,
   isOwn: () => false,

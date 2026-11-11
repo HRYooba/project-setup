@@ -158,3 +158,32 @@ test("既存の CLAUDE.md に節が無ければ、書かずに要マージとし
   assert.equal(readFileSync(claudeMd, "utf8"), "# 既存\n", "既存の CLAUDE.md を書き換えた");
   assert.match(out, /要マージ[\s\S]*\.claude\/CLAUDE\.md/);
 });
+
+test("上流の HEAD が tag より進んでいても、tag の版だけを配る", () => {
+  // 上流は main を随時更新ブランチ、release tag を正式版としている。
+  const repo = fakeUpstream(["td-general"]);
+  const tagSha = git(repo, "rev-parse", TDMCP_SKILLS_TAG + "^{commit}");
+  writeFile(join(repo, "skills", "td-unreleased", "SKILL.md"), "---\nname: td-unreleased\n---\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-qm", "after tag");
+  const target = tdProject();
+  runApply(target, repo);
+
+  assert.ok(!existsSync(join(target, ".claude", "skills", "td-unreleased")), "tag より後の skill を配った");
+  const state = readJson(join(target, ".claude", "sync-setup-state.json"))["setup-touchdesigner"];
+  assert.equal(state.tdmcpSkills.sha, tagSha, "tag 以外の sha を記録した");
+});
+
+test("tag を取得できなければ HEAD へ倒さず見送り、前回の配置と記録を残す", () => {
+  const repo = fakeUpstream(["td-general"]);
+  const target = tdProject();
+  runApply(target, repo);
+  const before = readJson(join(target, ".claude", "sync-setup-state.json"))["setup-touchdesigner"].tdmcpSkills;
+  git(repo, "tag", "-d", TDMCP_SKILLS_TAG);
+  const out = runApply(target, repo);
+
+  assert.match(out, /TDMCPSkills.*見送りました/);
+  assert.ok(existsSync(join(target, ".claude", "skills", "td-general", "SKILL.md")), "前回の配置を消した");
+  const after = readJson(join(target, ".claude", "sync-setup-state.json"))["setup-touchdesigner"].tdmcpSkills;
+  assert.deepEqual(after, before, "前回の記録を消した");
+});

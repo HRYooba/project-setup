@@ -19,7 +19,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 - 内容が同じなら何もしない
 - **差分があれば書かずに「要マージ」として報告する** — 現物とテンプレ両方のパスを出力する
 
-統合は skill 手順で Claude が行う。判断基準は `skills/merge-contract.md` に単一ソースとして置き、3 つの skill がそれを読む。要点は「テンプレが扱う話題はテンプレ側を正とし、プロジェクト固有の記述は残す。正面から矛盾する場合はユーザーに確認する」。
+統合は skill 手順で Claude が行う。判断基準は `skills/merge-contract.md` に単一ソースとして置き、各 skill がそれを読む。要点は「テンプレが扱う話題はテンプレ側を正とし、プロジェクト固有の記述は残す。正面から矛盾する場合はユーザーに確認する」。
 
 `skills/*/templates/claude-md.md` が配る節の単一ソースであり、配る文面をコード内の定数に持ったり、移行を完全一致リストで追いかけたりはしない（文面を変えるたびに伸びる＝腐る書き方のため）。
 
@@ -73,6 +73,7 @@ skills/
 ├─ sync-setup/
 │   ├─ SKILL.md
 │   ├─ sync-run.mjs     … 同期の実行本体（--phase=apply / publish）
+│   ├─ skill-keys.mjs   … 追随の対象になる skill の一覧
 │   ├─ skill-version.mjs … skill 版の読み取りと drift 判定（判定規則の正本）
 │   └─ state.mjs        … 状態ファイルの読み書きと旧名の解決（規則の正本）
 └─ setup-unity/

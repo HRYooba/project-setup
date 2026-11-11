@@ -33,6 +33,7 @@ export const DEFAULT_UNSUPPORTED = ["hooks", ".mcp.json"];
  * @param {string|null} o.ref       配る sha / tag。null なら上流 HEAD
  * @param {{ missing: string, failed: (ref: string) => string }} o.refNotes
  *                                  ref が無い／取得できないときに状態文言の末尾へ付ける注記
+ * @param {boolean} [o.requireRef]  ref を取得できなければ HEAD へ倒さず見送る
  * @param {string} o.claudeDir      配備先の .claude
  * @param {object} [o.recorded]     前回の記録（{ sha, placed }）
  * @param {(rel: string) => boolean} o.isOwn  自前の配布物か（相対パス `skills/x/SKILL.md` など）
@@ -52,6 +53,7 @@ export function vendorUpstreamPlugin({
   unsupported: unsupportedNames = DEFAULT_UNSUPPORTED,
   licenseName,
   tmpPrefix,
+  requireRef = false,
 }) {
   // 前回の記録は配備先リポジトリにコミットされたファイルなので、削除対象の名前として信用しない。
   // 配る種別に限り、名前は単一のパス要素だけを受ける（`..` や区切りを含む名前で .claude の外を消させない）。
@@ -81,7 +83,8 @@ export function vendorUpstreamPlugin({
     }
 
     // 指定の ref へ移す。--depth 1 の clone には HEAD しか無いので個別に fetch する。
-    // 失敗したら HEAD のまま続ける（配置は決定的に完了させる）。
+    // 失敗したら HEAD のまま続ける（配置は決定的に完了させる）。ただし HEAD が正式版でない上流
+    // （release tag だけを配るもの）は requireRef で見送らせ、前回の記録を残す。
     let refNote = ref ? "" : refNotes.missing;
     if (ref) {
       const moved =
@@ -89,7 +92,10 @@ export function vendorUpstreamPlugin({
           .status === 0 &&
         spawnSync("git", ["-C", tmp, "checkout", "--quiet", "FETCH_HEAD"], { encoding: "utf8", timeout: 60000 })
           .status === 0;
-      if (!moved) refNote = refNotes.failed(ref);
+      if (!moved) {
+        if (requireRef) return skip(`見送りました（${ref} を取得できません）`);
+        refNote = refNotes.failed(ref);
+      }
     }
 
     const head = spawnSync("git", ["-C", tmp, "rev-parse", "HEAD"], { encoding: "utf8", timeout: 30000 });
