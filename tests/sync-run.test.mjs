@@ -361,3 +361,12 @@ test("dry-run: skillVersion 未記録の旧配備先はプラグイン版の旧�
   assert.equal(status, 0);
   assert.match(stdout, /setup-github: v1\.0\.0 → v1\.3\.0/);
 });
+
+test("dry-run: setup-touchdesigner の drift も計画に載る", () => {
+  const target = tempDir("syncrun-td-");
+  writeState(target, { "setup-touchdesigner": { skillVersion: "1.0.0", flags: [] } });
+  const installPath = fakePluginRoot({ "setup-touchdesigner": "1.1.0" });
+  const { status, stdout } = runSyncRun(target, "9.9.9", { dryRun: true, installPath });
+  assert.equal(status, 0);
+  assert.match(stdout, /setup-touchdesigner: v1\.0\.0 → v1\.1\.0/);
+});

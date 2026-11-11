@@ -20,8 +20,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 /* global process */
 
-// 追随の対象になる skill。状態ファイルのキーでもある。
-export const SKILL_KEYS = ["setup-github", "setup-unity"];
 
 // このマシンに登録済みの marketplace が公式 unity プラグインに対して pin している sha。
 // 読めなければ null。

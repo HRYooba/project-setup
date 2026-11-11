@@ -6,6 +6,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 |:------|:-----|
 | `setup-github` | GitHub 開発フロー一式を導入する。ブランチ保護（pre-push。既定 ON・質問で外せる）、PR 前レビュー運用（`/code-review` + `/security-review` のソフト指示）、git 運用規約（Git Flow / Conventional Commits）、create-issue skill。任意で Copilot PR 自動レビュー（自動アサイン / watch-pr / resolve-pr）と AGENTS.md 自動生成 |
 | `setup-unity` | Unity 開発規約一式を導入する。rules（Unity 操作 / フォルダ構成 / Hierarchy / アセット命名 / コーディング規約 / テスト）、skills（lint-unity）、agents（unity-linter）、テスト設計・実装ガイド（references）。Unity 操作は **Unity CLI** 固定。コーディング規約を機械で止める Roslyn analyzer と PR ゲートの GitHub Actions も配る。任意でレイヤードアーキテクチャ規約 |
+| `setup-touchdesigner` | TouchDesigner を AI エージェントで開発する一式を導入する。公式 [TDMCPSkills](https://github.com/TouchDesigner/TDMCPSkills)（`td-*` skill）を release tag 固定で `.claude/skills/` へ直置きし、`.mcp.json` へ TDMCP の接続を登録し、CLAUDE.md へ TouchDesigner 操作の方針を配る |
 | `sync-setup` | プラグインのテンプレート更新に、展開済みリポジトリを追随させる。保存フラグで apply.mjs を再適用し、同期 PR を作成して CI が通れば merge する。UserPromptSubmit hook が最初のプロンプトへ差し込む、または手動で `/sync-setup` を実行する |
 
 どちらも**冪等**（再実行安全）で、導入オプションは実行時に対話で確認する。配置物は対象リポジトリの `.claude/` などにコミットされるため、plugin を持たないチームメイトにもそのまま効く。
@@ -18,7 +19,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 - 内容が同じなら何もしない
 - **差分があれば書かずに「要マージ」として報告する** — 現物とテンプレ両方のパスを出力する
 
-統合は skill 手順で Claude が行う。判断基準は `skills/merge-contract.md` に単一ソースとして置き、3 つの skill がそれを読む。要点は「テンプレが扱う話題はテンプレ側を正とし、プロジェクト固有の記述は残す。正面から矛盾する場合はユーザーに確認する」。
+統合は skill 手順で Claude が行う。判断基準は `skills/merge-contract.md` に単一ソースとして置き、各 skill がそれを読む。要点は「テンプレが扱う話題はテンプレ側を正とし、プロジェクト固有の記述は残す。正面から矛盾する場合はユーザーに確認する」。
 
 `skills/*/templates/claude-md.md` が配る節の単一ソースであり、配る文面をコード内の定数に持ったり、移行を完全一致リストで追いかけたりはしない（文面を変えるたびに伸びる＝腐る書き方のため）。
 
@@ -26,7 +27,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 
 プラグインのテンプレートを更新したとき、展開済みの各プロジェクトを **「検知」と「実行」を分けて** 追随させる:
 
-- apply.mjs は適用時の **skill 版**（`skills/<skill>/SKILL.md` の `version:`）と有効フラグを `.claude/sync-setup-state.json` に記録する（setup-github / setup-unity が同じファイルへ各自のキーでマージ）。
+- apply.mjs は適用時の **skill 版**（`skills/<skill>/SKILL.md` の `version:`）と有効フラグを `.claude/sync-setup-state.json` に記録する（setup-* が同じファイルへ各自のキーでマージ）。
 - setup-github が配る 2 つの hook が、記録版と現行の skill 版を **skill ごとに**比較して同期へ繋ぐ（比較の実体は `.claude/hooks/lib/sync-setup-drift.mjs`。差が無ければ即終了。ネットワーク・git は叩かない）。プラグイン全体の版で判定しないのは、setup-unity のテンプレだけ変わった更新で setup-github だけの配備先まで drift 扱いになるため。
   - `sync-setup-check.mjs`（SessionStart）: `systemMessage` でユーザーの画面に 1 行出す。**知らせる役**。
   - `sync-setup-prompt.mjs`（UserPromptSubmit）: そのセッションの最初のプロンプトを `updatedInput` で包み、`/sync-setup` を先に実行させる。**実行のトリガー**。1 セッション 1 回（`session_id` で記録）。スラッシュコマンド・`!`・`#` で始まるプロンプトは展開が壊れるため書き換えず `additionalContext` で渡す。
@@ -34,7 +35,7 @@ Claude Code 用のプロジェクト初期セットアップ plugin。次の ski
 - 実際の同期は `sync-setup` skill（`sync-run.mjs`）が **ユーザーのセッションで** 行う。`--phase=apply`（ガード → sparse worktree 作成 → apply 再適用）→ **要マージの .md を Claude が統合** → `--phase=publish`（commit → push → PR 作成 → worktree 撤去 → CI 待ち → merge）の 3 段。要マージの統合・矛盾メモ・unity プラグインの sha 同期・CI の失敗があれば merge せず PR で人へ回す（条件は `skills/sync-setup/auto-merge.mjs`）。
 - 重複 PR 防止（`gh pr list`）・試行上限（同一版 最大2回）・merge 禁止・**作業ツリー分離** を **コードで担保** する（指示文頼みにしない）。同期は origin の default から切った使い捨て worktree の中だけで走るので、ユーザーが編集中でもブランチは動かない。判断を要するのは .md の統合工程だけで、そこを飛ばせないよう `--phase` は必須。事前確認は `sync-run.mjs --dry-run`。hook の無効化は環境変数 `SYNC_SETUP_DISABLE=1`。
 
-既存の展開済みプロジェクトは、一度 setup-github / setup-unity を再実行すれば状態ファイルが生成され、以後の追随対象になる。
+既存の展開済みプロジェクトは、一度 setup-* を再実行すれば状態ファイルが生成され、以後の追随対象になる。
 
 ## インストール
 
@@ -51,15 +52,17 @@ scope は `user`（デフォルト）を推奨。全プロジェクトで skill 
 ```
 /project-setup:setup-github
 /project-setup:setup-unity
+/project-setup:setup-touchdesigner
 ```
 
-または「GitHub 運用ルールを導入して」「Unity 規約を入れて」のように依頼する。
+または「GitHub 運用ルールを導入して」「Unity 規約を入れて」「TDMCP を入れて」のように依頼する。
 
 ## 構成
 
 ```
 skills/
-├─ merge-contract.md … 要マージファイルの統合手順（3 skill 共通・単一ソース）
+├─ merge-contract.md … 要マージファイルの統合手順（setup-* 共通・単一ソース）
+├─ shared/            … setup-* の apply.mjs が共通で使う処理（状態記録・要マージ・上流プラグインの直置き）
 ├─ setup-github/
 │   ├─ SKILL.md
 │   ├─ apply.mjs        … インストーラ本体（Node 標準のみ・依存なし）
@@ -70,6 +73,7 @@ skills/
 ├─ sync-setup/
 │   ├─ SKILL.md
 │   ├─ sync-run.mjs     … 同期の実行本体（--phase=apply / publish）
+│   ├─ skill-keys.mjs   … 追随の対象になる skill の一覧
 │   ├─ skill-version.mjs … skill 版の読み取りと drift 判定（判定規則の正本）
 │   └─ state.mjs        … 状態ファイルの読み書きと旧名の解決（規則の正本）
 └─ setup-unity/
@@ -81,6 +85,12 @@ skills/
         ├─ project/     … 常時導入分。**.claude/ の外**へ配る
         │                  （Assets/Analyzers/ の Roslyn analyzer と .github/ の PR ゲート）
         └─ architecture/ … レイヤードアーキテクチャ規約導入時のみ
+└─ setup-touchdesigner/
+    ├─ SKILL.md
+    ├─ apply.mjs
+    ├─ upstream.mjs     … 配る TDMCPSkills の release tag
+    └─ templates/
+        └─ claude-md.md … CLAUDE.md へ配る節
 
 analyzers/                … 配布 analyzer の C# ソースとテスト
 ├─ build.mjs              … dotnet build → DLL を templates/project/ へ焼き込み
@@ -91,7 +101,7 @@ scripts/
 └─ check-skill-version-bump.mjs … 配布物を変えた PR の skill 版 bump 忘れを CI で止める
 ```
 
-テンプレートは plugin に同梱されたスナップショットであり、この plugin 単体で完結する（外部ファイルを参照しない）。
+テンプレートは plugin に同梱されたスナップショット。例外は上流の公式プラグイン（setup-unity の unity プラグイン、setup-touchdesigner の TDMCPSkills）で、コピーを持たず適用時に上流から引く。
 
 ## テスト
 
