@@ -53,8 +53,13 @@ export function vendorUpstreamPlugin({
   licenseName,
   tmpPrefix,
 }) {
-  const prevPlaced = recorded?.placed && typeof recorded.placed === "object" ? recorded.placed : {};
-  const prevOf = (kind) => (Array.isArray(prevPlaced[kind]) ? prevPlaced[kind].map(String) : []);
+  // 前回の記録は配備先リポジトリにコミットされたファイルなので、削除対象の名前として信用しない。
+  // 配る種別に限り、名前は単一のパス要素だけを受ける（`..` や区切りを含む名前で .claude の外を消させない）。
+  const rawPlaced = recorded?.placed && typeof recorded.placed === "object" ? recorded.placed : {};
+  const prevPlaced = Object.fromEntries(Object.entries(rawPlaced).filter(([kind]) => kind in copyDirs));
+  const isPlainName = (n) => n !== "" && n !== "." && n !== ".." && !/[\\/:]/.test(n);
+  const prevOf = (kind) =>
+    Array.isArray(prevPlaced[kind]) ? prevPlaced[kind].map(String).filter(isPlainName) : [];
   const skip = (state) => ({ state, record: recorded, unsupported: [], unknown: [], collided: [] });
   const inertSet = new Set(inert);
   const unsupportedSet = new Set(unsupportedNames);
