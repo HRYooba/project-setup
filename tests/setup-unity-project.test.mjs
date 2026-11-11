@@ -744,3 +744,22 @@ test("checkout は LFS の実体を引かない", () => {
   assert.match(workflow, /^\s*lfs: false$/m, "checkout が LFS の実体を引く形になっている");
   assert.doesNotMatch(workflow, /^\s*lfs: true$/m);
 });
+
+test("状態ファイルの記録に .. を含む名前があっても、.claude の外を消さない", () => {
+  // 記録は配備先にコミットされたファイルなので、削除対象の名前として信用しない。
+  const repo = fakeUpstream((root) => {
+    writeFile(join(root, "skills", "demo", "SKILL.md"), "---\nname: demo\n---\n");
+  });
+  const target = unityProject();
+  const victim = join(target, "keep-me.txt");
+  writeFile(victim, "x\n");
+  writeFile(
+    join(target, ".claude", "sync-setup-state.json"),
+    JSON.stringify({
+      "setup-unity": { unityPlugin: { sha: "0".repeat(40), placed: { skills: ["../../keep-me.txt"], "..": ["x"] } } },
+    })
+  );
+  runApply(target, [], { SETUP_UNITY_PLUGIN_REPO: repo });
+
+  assert.ok(existsSync(victim), "記録の名前を辿って .claude の外を消した");
+});

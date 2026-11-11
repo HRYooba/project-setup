@@ -56,14 +56,15 @@
 //     （ツール設定系。setup-github の導入 PR を素通しするため）。優先順位: 明示指定 >
 //     配備済み config の温存 > lib からの移行 > デフォルト。
 //     `--review-excludes=`（空値）で明示的に除外なしへ戻せる。
-// 依存なし（Node 標準のみ / Node 16.7+ の fs.cpSync を使用）。このスキル 1 ディレクトリで
-// 完結する（外部モジュールを import しない＝単体コピーで動く）。
+// Node 標準のみ（Node 16.7+ の fs.cpSync を使用）。setup-* 共通の処理は skills/shared/ から import する。
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { consolidateSyncState } from "../sync-setup/state.mjs";
+import { createMergeQueue, deployClaudeMdSection } from "../shared/markdown-merge.mjs";
+import { readOwnSkillVersion, writeSyncState } from "../shared/skill-state.mjs";
 /* global process, console */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -133,12 +134,12 @@ const removed = [];
 const warnings = [];
 // 反映を LLM 判断へ委ねる Markdown。apply.mjs は書かず、ここへ積んで報告するだけ。
 // 実際の統合は SKILL 手順で Claude が現物とテンプレを読んで行う（詳細は deployMarkdown）。
-const needsMerge = [];
+const mergeQueue = createMergeQueue("setup-github-md-");
 
 // テンプレ由来の Markdown を配る。
 //   既存が無い          → そのまま書く（判断の余地がない）
 //   既存 == テンプレ    → 何もしない
-//   既存 != テンプレ    → **書かずに** needsMerge へ積む
+//   既存 != テンプレ    → **書かずに** mergeQueue へ積む
 // 機械的な上書きはプロジェクト側で育った記述を消し、機械的なスキップはテンプレ更新を
 // 永久に届かなくする。どちらも避けるため、差分があるときの反映は SKILL 手順で Claude が
 // 文脈判断して行う（テンプレが扱う話題はテンプレ側を正とし、プロジェクト固有の追記は残す）。
@@ -151,7 +152,7 @@ function deployMarkdown(dst, src, label) {
     return "新規配置";
   }
   if (readFileSync(dst, "utf8") === content) return "変更なし";
-  needsMerge.push({ label, dst, src });
+  mergeQueue.push(label, dst, src);
   return "要マージ";
 }
 
@@ -165,48 +166,6 @@ function git(...a) {
   } catch {
     return null;
   }
-}
-
-// このスキル自身の版を読む（同じディレクトリの `SKILL.md` の frontmatter `version:`）。
-// **プラグイン全体の版ではない。** プラグイン版は marketplace の更新トリガーであって
-// 「どの skill が変わったか」を表さないため、これで判定すると他スキルの更新でも
-// 配備先が drift 扱いになる。本文の `version:` 行を拾わないよう frontmatter だけを見る。
-// 読めなければ null（＝状態ファイルを書かない＝自動追随は無効のまま）。
-function readOwnSkillVersion() {
-  try {
-    const src = readFileSync(join(here, "SKILL.md"), "utf8").replace(/^\uFEFF/, "");
-    const fm = src.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-    if (!fm) return null;
-    const m = fm[1].match(/^version:[ \t]*["']?(\d+(?:\.\d+){0,2})["']?[ \t]*$/m);
-    return m ? m[1] : null;
-  } catch {
-    return null;
-  }
-}
-
-// 状態ファイル `.claude/sync-setup-state.json` へ自分のキー（skillKey）をマージ更新する。
-// setup-github / setup-unity が同じファイルに各自のキーで書くため、相手のキーや未知フィールドは
-// 消さない（読み → 該当キーだけ差し替え → 書き戻し）。両 hook（sync-setup-check.mjs /
-// sync-setup-prompt.mjs）がこのファイルの記録版と現行の skill 版を比較し、更新時に `/sync-setup`
-//（sync-run.mjs）へ繋ぐ。比較の実体は lib/sync-setup-drift.mjs。
-//
-// 記録するのは skill 版だけ。プラグイン版は書かない（どのプラグイン世代を当てたかは同期
-// コミットの subject が git 履歴に残す。誰も読まない記録は黙って古くなるだけ）。
-// 旧配備先に残る `version`（プラグイン版）は読み手のフォールバックが読む。初回の同期で
-// `skillVersion` に置き換わり、そこから先は使われない。
-function writeSyncState(skillKey, skillVersion, flags) {
-  const p = join(claudeDir, "sync-setup-state.json");
-  let obj = {};
-  if (existsSync(p)) {
-    try {
-      const parsed = JSON.parse(readFileSync(p, "utf8").replace(/^\uFEFF/, ""));
-      if (parsed && typeof parsed === "object") obj = parsed;
-    } catch {
-      warnings.push("sync-setup-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）");
-    }
-  }
-  obj[skillKey] = { skillVersion, flags };
-  writeFileSync(p, JSON.stringify(obj, null, 2) + "\n", "utf8");
 }
 
 // ---- 1. base テンプレートのコピー ----
@@ -505,28 +464,13 @@ const claudeMdPath = join(claudeDir, "CLAUDE.md");
 const claudeMdSrc = join(templatesDir, "claude-md.md");
 const claudeMdSection = readFileSync(claudeMdSrc, "utf8");
 
-// テンプレは「節」を配るので全文一致では判定できない。節の非空行がすべて配備先にあれば
-// 反映済みとみなす。判定基準をテンプレ本体から導出するので、別途マーカー文字列を維持する
-// 必要がない（文面を変えれば行が一致しなくなり、その時だけ要マージになる）。
-function sectionApplied(dstText, sectionText) {
-  return sectionText
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .every((l) => dstText.includes(l));
-}
-
-let claudeMdState;
-if (!existsSync(claudeMdPath)) {
-  writeFileSync(claudeMdPath, claudeMdSection, "utf8");
-  copied.push(".claude/CLAUDE.md");
-  claudeMdState = "新規作成";
-} else if (sectionApplied(readFileSync(claudeMdPath, "utf8"), claudeMdSection)) {
-  claudeMdState = "変更なし";
-} else {
-  needsMerge.push({ label: ".claude/CLAUDE.md", dst: claudeMdPath, src: claudeMdSrc });
-  claudeMdState = "要マージ";
-}
+const claudeMdState = deployClaudeMdSection(mergeQueue, {
+  dst: claudeMdPath,
+  section: claudeMdSection,
+  label: ".claude/CLAUDE.md",
+  mergeSrc: claudeMdSrc,
+});
+if (claudeMdState === "新規作成") copied.push(".claude/CLAUDE.md");
 mdStates.push(`.claude/CLAUDE.md: ${claudeMdState}`);
 
 
@@ -738,7 +682,7 @@ if (migratedState) console.log(`状態ファイル: ${migratedState}`);
 // 比較し、更新時に `/sync-setup`（sync-run.mjs）の実行を促す。フラグは「有効値」を明示保存する
 // （配備済み設定からの継承に依存せず、テンプレ同期の再適用が決定的に同じ構成を再現できるように）。
 const syncStates = [];
-const skillVersion = readOwnSkillVersion();
+const skillVersion = readOwnSkillVersion(here);
 if (skillVersion) {
   // csv 化は末尾スラッシュを外して可読性を上げる（apply.mjs 側の normTarget が付け直す）。
   const csv = (arr) => arr.map((s) => s.replace(/\/+$/, "")).join(",");
@@ -747,7 +691,10 @@ if (skillVersion) {
   if (!prePush) syncFlags.push("--no-pre-push");
   syncFlags.push(`--review-targets=${csv(effectiveTargets)}`);
   syncFlags.push(`--review-excludes=${csv(effectiveExcludes)}`);
-  writeSyncState("setup-github", skillVersion, syncFlags);
+  // 記録するのは skill 版とフラグ。フラグは「有効値」を明示保存する（再適用が同じ構成を再現できるように）。
+  if (writeSyncState(claudeDir, "setup-github", { skillVersion, flags: syncFlags })) {
+    warnings.push("sync-setup-state.json が不正な JSON のため作り直します（他スキルのキーは失われる可能性あり）");
+  }
   copied.push(".claude/sync-setup-state.json");
   syncStates.push(`setup-github v${skillVersion}（flags: ${syncFlags.join(" ") || "なし"}）`);
 } else {
@@ -835,14 +782,7 @@ if (agentsState) {
 }
 // 要マージは「apply.mjs が意図的に書かなかったファイル」。SKILL 手順がこの一覧を読んで
 // Claude にマージさせる。ここで止めずに続行するのは、他の配置物は決定的に配り切るため。
-if (needsMerge.length) {
-  console.log("要マージ（apply.mjs は書いていない。Claude が現物とテンプレを読んで統合する）:");
-  for (const m of needsMerge) {
-    console.log(`  * ${m.label}`);
-    console.log(`      現物    : ${m.dst}`);
-    console.log(`      テンプレ: ${m.src}`);
-  }
-}
+mergeQueue.print();
 if (warnings.length) {
   console.log("警告:");
   for (const w of warnings) console.log(`  ! ${w}`);
