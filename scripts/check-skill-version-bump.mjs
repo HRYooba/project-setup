@@ -6,9 +6,10 @@
 // 代わりに手で bump する数字が判定に載るので、忘れると更新が**黙って**どの配備先にも届かない。
 // エラーも出ないので誰も気づけない。だから機械で止める。
 //
-// 判定: merge-base から作業ツリーまでで `skills/<skill>/templates/**` か `skills/<skill>/apply.mjs` が変わったなら、
-// その skill の SKILL.md の version が base より大きくなっていること。
-// この 2 つが「配備先のファイルを変えうる入力」のすべて（SKILL.md 自身と他のヘルパーは配らない）。
+// 判定: merge-base から作業ツリーまでで、その skill の「配備先のファイルを変えうる入力」が変わったなら、
+// その skill の SKILL.md の version が base より大きくなっていること。入力は
+// `skills/<skill>/templates/**` と、`skills/<skill>/apply.mjs` から相対 import で辿れるモジュールすべて
+// （skills/shared/ の共通処理を含む）。import から導出するので、依存を足しても一覧の手入れは要らない。
 //
 // 使い方:
 //   node scripts/check-skill-version-bump.mjs <base-ref>
@@ -19,7 +20,8 @@
 // 依存なし（Node 標準のみ）。
 
 import { execFileSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cmpVer, parseSkillVersion, readSkillVersion, SKILL_KEYS } from "../skills/sync-setup/skill-version.mjs";
 /* global process, console */
@@ -44,8 +46,29 @@ try {
   process.exit(1);
 }
 
-// 配布物を変えうる入力。ここを増やすときは「配備先のファイルが変わるか」で決める。
-const deployables = (skill) => [`skills/${skill}/templates`, `skills/${skill}/apply.mjs`];
+// apply.mjs から相対 import で辿れるモジュール（自身を含む）をリポジトリ相対パスで返す。
+function importClosure(entry) {
+  const seen = new Set();
+  const stack = [resolve(repoRoot, entry)];
+  while (stack.length) {
+    const file = stack.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    let src;
+    try {
+      src = readFileSync(file, "utf8");
+    } catch {
+      continue; // 消えたファイルは差分側が拾う
+    }
+    for (const m of src.matchAll(/^\s*(?:import|export)\b[^;]*?from\s+["'](\.{1,2}\/[^"']+)["']/gm)) {
+      stack.push(resolve(dirname(file), m[1]));
+    }
+  }
+  return [...seen].map((p) => relative(repoRoot, p).split(sep).join("/")).sort();
+}
+
+// 配布物を変えうる入力。「配備先のファイルが変わるか」で決める。
+const deployables = (skill) => [`skills/${skill}/templates`, ...importClosure(`skills/${skill}/apply.mjs`)];
 
 const failures = [];
 for (const skill of SKILL_KEYS) {
