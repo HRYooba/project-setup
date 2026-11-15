@@ -21,7 +21,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { consolidateSyncState } from "../sync-setup/state.mjs";
 import { pinnedUnityPluginSha } from "../sync-setup/skill-version.mjs";
-import { createMergeQueue, deployClaudeMdSection } from "../shared/markdown-merge.mjs";
+import { createMergeQueue, deployClaudeMdSection, sameIgnoringEol } from "../shared/markdown-merge.mjs";
 import { readOwnSkillVersion, readRecordedState, writeSyncState } from "../shared/skill-state.mjs";
 import {
   disablePluginSkills,
@@ -253,7 +253,8 @@ for (const f of readdirSync(rulesDir).filter((n) => n.endsWith(".md"))) {
   const before = rulesBefore.get(f);
   if (before === undefined) {
     mdStates.push(`rules/${f}: 新規配置`);
-  } else if (before === wanted) {
+  } else if (sameIgnoringEol(before, wanted)) {
+    if (before !== wanted) writeFileSync(p, before, "utf8"); // 改行コードだけの差は現物の改行を保つ
     mdStates.push(`rules/${f}: 変更なし`);
   } else {
     writeFileSync(p, before, "utf8"); // apply.mjs は書かない（現物を維持する）
@@ -357,7 +358,8 @@ for (const rel of PROJECT_MERGE_PATHS) {
   const before = projectBefore.get(rel);
   if (before === undefined) {
     projectMergeStates.set(rel, "配置");
-  } else if (before === wanted) {
+  } else if (sameIgnoringEol(before, wanted)) {
+    if (before !== wanted) writeFileSync(p, before, "utf8"); // 改行コードだけの差は現物の改行を保つ
     projectMergeStates.set(rel, "変更なし");
   } else {
     writeFileSync(p, before, "utf8"); // apply.mjs は書かない（現物を維持する）

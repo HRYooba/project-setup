@@ -6,7 +6,7 @@ description: >
   「このプロジェクトに TDMCP.tox を置いて」などと依頼したときに使用する。
   TDMCP 本体（TDMCP.tox）を固定した release から取得してプロジェクト直下へ置き、
   `.mcp.json` へ TDMCP の接続を登録し、CLAUDE.md へ TouchDesigner 操作の方針を配る。skill（td-*）は TDMCP コンポーネントが入れる。
-version: 2.0.0
+version: 2.0.1
 argument-hint: "[導入先ディレクトリ（省略時はカレント）]"
 ---
 

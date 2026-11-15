@@ -20,6 +20,12 @@ export function sectionApplied(dstText, sectionText) {
     .every((l) => dstText.includes(l));
 }
 
+// 配備先は Windows の checkout で CRLF になりうるが、テンプレは LF で持つ。改行コードだけの差は
+// 統合する中身が無いので、テンプレと現物の一致は改行コードを揃えてから比べる。
+export function sameIgnoringEol(a, b) {
+  return a.replace(/\r\n/g, "\n") === b.replace(/\r\n/g, "\n");
+}
+
 // 要マージの一覧と、統合の入力にする「テンプレの最終内容」の置き場をまとめて持つ。
 // 入力を常に最終内容のファイルに揃えるため、置換などで加工した内容は stage() で一時ファイルへ書く。
 export function createMergeQueue(stagingPrefix) {
