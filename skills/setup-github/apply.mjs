@@ -63,7 +63,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, write
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { consolidateSyncState } from "../sync-setup/state.mjs";
-import { createMergeQueue, deployClaudeMdSection } from "../shared/markdown-merge.mjs";
+import { createMergeQueue, deployClaudeMdSection, sameIgnoringEol } from "../shared/markdown-merge.mjs";
 import { readOwnSkillVersion, writeSyncState } from "../shared/skill-state.mjs";
 /* global process, console */
 
@@ -138,7 +138,7 @@ const mergeQueue = createMergeQueue("setup-github-md-");
 
 // テンプレ由来の Markdown を配る。
 //   既存が無い          → そのまま書く（判断の余地がない）
-//   既存 == テンプレ    → 何もしない
+//   既存 == テンプレ    → 何もしない（改行コードだけの差も同じとみなし、現物の改行のまま残す）
 //   既存 != テンプレ    → **書かずに** mergeQueue へ積む
 // 機械的な上書きはプロジェクト側で育った記述を消し、機械的なスキップはテンプレ更新を
 // 永久に届かなくする。どちらも避けるため、差分があるときの反映は SKILL 手順で Claude が
@@ -151,7 +151,7 @@ function deployMarkdown(dst, src, label) {
     copied.push(label);
     return "新規配置";
   }
-  if (readFileSync(dst, "utf8") === content) return "変更なし";
+  if (sameIgnoringEol(readFileSync(dst, "utf8"), content)) return "変更なし";
   mergeQueue.push(label, dst, src);
   return "要マージ";
 }

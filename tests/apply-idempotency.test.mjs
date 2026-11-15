@@ -11,6 +11,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { autoMergeBlockers } from "../skills/sync-setup/auto-merge.mjs";
 import { APPLY, APPLY_UNITY, skillVersion, tempDir } from "./helpers.mjs";
 /* global process */
 
@@ -158,6 +159,24 @@ test("カスタマイズされた rules/*.md は上書きされず要マージ�
   assert.equal(readFileSync(rulePath, "utf8"), customized, "カスタマイズが上書きされた");
 });
 
+// Windows の checkout では配備先が CRLF になる。中身が同じなら統合するものが無く、
+// 要マージにすると sync-setup の自動 merge が止まる（sync-run.mjs は出力の「要マージ（」で判定する）。
+test("改行コードだけが違う rules/*.md は要マージにせず、現物の改行のまま残す", () => {
+  const target = tempDir("apply-test-");
+  runApply(target);
+  const rulePath = join(target, ".claude", "rules", "git-conventions.md");
+  const crlf = readFileSync(rulePath, "utf8").replace(/\r?\n/g, "\r\n");
+  writeFileSync(rulePath, crlf, "utf8");
+
+  const out = runApply(target);
+
+  assert.match(out, /\.claude\/rules\/git-conventions\.md: 変更なし/);
+  assert.equal(readFileSync(rulePath, "utf8"), crlf, "改行コードが書き換えられた");
+  const needsMerge = out.includes("要マージ（");
+  assert.equal(needsMerge, false, out);
+  assert.deepEqual(autoMergeBlockers({ needsMerge }), []);
+});
+
 test("gate/nudge(PreToolUse) の登録は再実行で解除され、他人の hook は残る", () => {
   const target = tempDir("apply-test-");
   mkdirSync(join(target, ".claude"), { recursive: true });
@@ -279,6 +298,23 @@ test("setup-unity: カスタマイズされた rules/*.md は cpSync に上書�
   // 要マージのファイルは「配置ファイル」に出さない（実際に書いていないため）。
   const placed = out.slice(out.indexOf("配置ファイル:"), out.indexOf("Markdown（"));
   assert.ok(!placed.includes("rules/coding-standards.md"), "書いていないファイルが配置ファイルに出ている");
+});
+
+test("setup-unity: 改行コードだけが違う rules/*.md は cpSync 後も現物のまま変更なしになる", () => {
+  const target = tempDir("apply-test-");
+  mkdirSync(join(target, "ProjectSettings"), { recursive: true });
+  writeFileSync(join(target, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 2022.3.0f1\n", "utf8");
+  runApplyUnity(target);
+
+  const rulePath = join(target, ".claude", "rules", "coding-standards.md");
+  const crlf = readFileSync(rulePath, "utf8").replace(/\r?\n/g, "\r\n");
+  writeFileSync(rulePath, crlf, "utf8");
+
+  const out = runApplyUnity(target);
+
+  assert.match(out, /rules\/coding-standards\.md: 変更なし/);
+  assert.equal(readFileSync(rulePath, "utf8"), crlf, "cpSync が改行コードを書き換えた");
+  assert.ok(!out.includes("要マージ（"), out);
 });
 
 test("setup-unity: このスキルが配らないファイルは再適用で取り除かれる", () => {
