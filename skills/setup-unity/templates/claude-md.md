@@ -6,7 +6,7 @@
   - 終了・再起動: `unity close` は保存しないので、先に `unity command editor save_all` を実行してから `unity close <project>` を実行する。`--force` を使うのは、graceful な終了が timeout したとき、または Pipeline に繋がらない Editor（Safe Mode・起動時のダイアログで止まっている）だけ
   - Safe Mode: `.cs` を直して `unity status --until-ready` で抜けるのを待つ。抜けなければ上の手順で閉じ、開き直す
   - 聞くもの: `--accept-upgrades`（プロジェクトのファイルを書き換える）と `unity bug`（ログを外部へ送る）だけ
-- **コンパイル確認**: `.cs` を変更したら `unity command recompile --timeout 120` → `unity command recompile_status` を回し、`failed` と `errors` を読んで直す。Editor がフォーカスされていなくても通り、`AssetDatabase.Refresh()` も要らない（未 import のファイルも recompile が拾う）。`status` の終了値は `completed` と `up_to_date` の 2 つ（変更が無ければ後者）で、片方だけを待つと戻らない
+- **コンパイル確認**: `.cs` を変更したら `unity command recompile --timeout 120` → `unity command recompile_status` で結果を待ち、`failed` と `errors` を読んで直す。`recompile_status` の待ちは run_in_background で投げるか、スクリプトファイルへ書き出した中で行い、前景のコマンドにループや sleep を置かない。Editor がフォーカスされていなくても通り、`AssetDatabase.Refresh()` も要らない（未 import のファイルも recompile が拾う）。`status` の終了値は `completed` と `up_to_date` の 2 つ（変更が無ければ後者）で、片方だけを待つと戻らない
 - **規約の機械チェック**: `warning UCS` は `recompile_status` に出ない（返るのは `errors` だけ）。`unity command console --level warn` で読む。**再コンパイルが起きた回にしか出ない**うえ console は過去ぶんを溜めた buffer なので、recompile の前に `unity command console --tail 1` で `cursor` を控え、`--since <cursor>` で今回ぶんだけ読む。0 件を「違反なし」と読まない
 - **テスト**: `{{APP_ROOT}}` 配下の `.cs` を変更したなら、PR を作る前に `/code-review`（必要なら `/security-review`）の指摘を反映した**後**に回す
 - **テストの対象**: 回すのは**このプロジェクト自身のテストアセンブリだけ**。`unity test` を無指定で撃つと `Packages/` 配下の外部アセットのテストまで回り、こちらの都合で直せないものが混ざる。対象は `Assets/` 配下の `*.asmdef` から**その場で導出**して `--filter` に渡す（アセンブリ名をこの CLAUDE.md へ書き写さない。asmdef が増減すると黙って嘘になる）
