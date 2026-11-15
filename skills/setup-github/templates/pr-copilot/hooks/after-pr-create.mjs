@@ -1,4 +1,4 @@
-// PostToolUse(Bash) hook: `gh pr create` の直後に走る PR 後処理。
+// PostToolUse(Bash / PowerShell) hook: `gh pr create` の直後に走る PR 後処理。
 //
 // コード変更を含む PR のみを対象に:
 //   1. Copilot に自動でレビュー依頼（requested_reviewers 登録）
@@ -55,7 +55,13 @@ try {
 const command = data?.tool_input?.command ?? "";
 if (!PR_CREATE_ATTEMPT_RE.test(command)) done();
 
-const stdout = data?.tool_response?.stdout ?? "";
+// Bash ツールの tool_response は { stdout, ... }。PowerShell ツールの形は文書化されていないため、
+// 文字列そのもの・output フィールドも受ける。
+const response = data?.tool_response;
+const stdout =
+  typeof response === "string"
+    ? response
+    : ([response?.stdout, response?.output].find((v) => typeof v === "string" && v) ?? "");
 if (!stdout) done();
 
 // PR URL を抽出: https://<host>/<owner>/<repo>/pull/<number>。

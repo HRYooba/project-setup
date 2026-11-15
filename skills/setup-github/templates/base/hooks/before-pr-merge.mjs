@@ -1,4 +1,5 @@
-// PreToolUse(Bash) hook: Claude の `gh pr merge` を、マージを止める条件があるとき拒否する。
+// PreToolUse(Bash / PowerShell) hook: Claude の `gh pr merge` を、マージを止める条件があるとき拒否する。
+// 両ツールとも入力のコマンド文字列は tool_input.command にある。
 // 条件の定義は lib/merge-readiness.mjs が正本。
 //
 // GitHub 側の check（merge-gate.yml）はブランチ保護の無い private / Free プランでは

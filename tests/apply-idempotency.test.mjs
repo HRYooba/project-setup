@@ -80,9 +80,12 @@ test("初回適用 → 再実行で重複せず、review-config が温存され�
   for (const m of MARKS) assert.equal(count(md1, m), 1, `${m} が 1 回でない`);
 
   const settings1 = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
-  // PreToolUse はマージ判定の 1 本だけ（gate / nudge は配らない）。
-  const preToolUse = (s) => s.hooks.PreToolUse.flatMap((g) => g.hooks.map((h) => h.command));
-  assert.deepEqual(preToolUse(settings1), ['node "$CLAUDE_PROJECT_DIR/.claude/hooks/before-pr-merge.mjs"']);
+  // PreToolUse はマージ判定の 1 本だけ（gate / nudge は配らない）。Bash と PowerShell の handler を持つ。
+  const preToolUse = (s) => s.hooks.PreToolUse.flatMap((g) => g.hooks.map((h) => `${h.if} ${h.command}`));
+  assert.deepEqual(preToolUse(settings1), [
+    'Bash(gh pr merge *) node "$CLAUDE_PROJECT_DIR/.claude/hooks/before-pr-merge.mjs"',
+    'PowerShell(gh pr merge *) node "$CLAUDE_PROJECT_DIR/.claude/hooks/before-pr-merge.mjs"',
+  ]);
   assert.equal(settings1.hooks.SessionStart.length, 2); // core.hooksPath + sync-setup-check
 
   // 再実行（フラグ無し）: 温存・重複なし
@@ -452,6 +455,75 @@ test("pr-copilot 配備済みはフラグ無し再実行でも自動継承され
   assert.match(out, /pr-copilot は配備済みを自動継承/);
   const settings = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
   assert.equal(settings.hooks.PostToolUse.length, 1);
+});
+
+// gh を PowerShell ツールで打っても PR の hook が発火するよう、Bash と PowerShell の両方に掛ける。
+// `if` は 1 ルールで 1 ツールしか名指せないため、handler をツールごとに持つ。
+const PR_HOOKS = [
+  { event: "PreToolUse", script: "before-pr-merge.mjs", pattern: "gh pr merge *", timeout: 30 },
+  { event: "PostToolUse", script: "after-pr-create.mjs", pattern: "gh pr create *", timeout: 15 },
+];
+const prHookGroups = (settings, script) =>
+  Object.values(settings.hooks)
+    .flat()
+    .filter((g) => (g.hooks ?? []).some((h) => h.command?.includes(script)));
+
+test("PR の hook は Bash と PowerShell の両ツールで起動する登録になる", () => {
+  const target = tempDir("apply-test-");
+  runApply(target, ["--pr-copilot"]);
+  const settings = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
+  for (const { event, script, pattern } of PR_HOOKS) {
+    const groups = settings.hooks[event].filter((g) => g.hooks.some((h) => h.command.includes(script)));
+    assert.equal(groups.length, 1, `${script} のグループが 1 つでない`);
+    assert.equal(groups[0].matcher, "Bash|PowerShell");
+    assert.deepEqual(
+      groups[0].hooks.map((h) => h.if),
+      [`Bash(${pattern})`, `PowerShell(${pattern})`]
+    );
+  }
+});
+
+test("Bash だけの旧登録は再実行で PowerShell にも掛かり、他人の hook は動かさず、重複しない", () => {
+  const target = tempDir("apply-test-");
+  mkdirSync(join(target, ".claude"), { recursive: true });
+  const legacyHandler = ({ script, pattern, timeout }) => ({
+    type: "command",
+    command: `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${script}"`,
+    if: `Bash(${pattern})`,
+    timeout,
+  });
+  const userHook = { type: "command", command: "node /somewhere/user-own-hook.mjs" };
+  const legacy = {
+    hooks: {
+      // before-pr-merge は単独のグループ、after-pr-create は他人の hook と同居するグループに居る。
+      PreToolUse: [{ matcher: "Bash", hooks: [legacyHandler(PR_HOOKS[0])] }],
+      PostToolUse: [{ matcher: "Bash", hooks: [userHook, legacyHandler(PR_HOOKS[1])] }],
+    },
+  };
+  writeFileSync(join(target, ".claude", "settings.json"), JSON.stringify(legacy, null, 2) + "\n", "utf8");
+
+  const out = runApply(target, ["--pr-copilot"]);
+  assert.match(out, /PreToolUse\(before-pr-merge\.mjs\): updated/);
+  assert.match(out, /PostToolUse\(after-pr-create\.mjs\): updated/);
+  const settings1 = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
+  for (const { script, pattern } of PR_HOOKS) {
+    const groups = prHookGroups(settings1, script);
+    assert.equal(groups.length, 1, `${script} のグループが 1 つでない`);
+    assert.equal(groups[0].matcher, "Bash|PowerShell");
+    assert.deepEqual(
+      groups[0].hooks.map((h) => h.if),
+      [`Bash(${pattern})`, `PowerShell(${pattern})`]
+    );
+  }
+  // 他人の hook は元のグループ・matcher のまま残る。
+  const userGroups = settings1.hooks.PostToolUse.filter((g) => g.hooks.some((h) => h.command === userHook.command));
+  assert.deepEqual(userGroups, [{ matcher: "Bash", hooks: [userHook] }]);
+
+  const out2 = runApply(target);
+  assert.match(out2, /PreToolUse\(before-pr-merge\.mjs\): already-registered/);
+  assert.match(out2, /PostToolUse\(after-pr-create\.mjs\): already-registered/);
+  const settings2 = JSON.parse(readFileSync(join(target, ".claude", "settings.json"), "utf8"));
+  assert.deepEqual(settings2, settings1, "再実行で settings.json が変わった");
 });
 
 // 同期結果の報告 hook（旧 setup-sync-report.mjs）は配らない。同期はユーザーのセッションで走り、
