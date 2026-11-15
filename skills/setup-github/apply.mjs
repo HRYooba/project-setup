@@ -35,7 +35,7 @@
 //       生成スクリプトは Claude hook ではないため .claude/hooks/ ではなく .githooks/ に置く）
 //     - .github/workflows/agents-md-sync.yml（AGENTS.md 乖離の CI ガード。--no-verify や
 //       Web UI 編集などローカル pre-commit が効かない経路のドリフトを PR で検出）
-//     - .claude/settings.json へ PostToolUse(Bash) を登録
+//     - .claude/settings.json へ PostToolUse(Bash|PowerShell) を登録
 //
 // 使い方: node apply.mjs [target-dir] [--pr-copilot] [--no-pre-push] [--review-targets=src,shared]
 //         [--review-excludes=.claude,.github]
@@ -496,22 +496,38 @@ if (settingsReadable) {
   // 所有権は部分一致 needle をやめ、スクリプト hook は一意なファイル名、hooksPath は完全一致で
   // 判定する。似ているが別物（conflicts）を見つけたら上書きせず警告してスキップする
   // （例: ユーザー独自の `git config core.hooksPath .husky && ...` を壊さない）。
+  // entry は handler を複数持てる（`if` は 1 ルールで 1 ツールしか名指せないため、ツールごとに
+  // handler を分ける）。自分の handler は entry の hooks 一式へまとめて置き換える。
   let settingsChanged = false;
   const register = (event, { label, owns, conflicts, conflictWarn, entry }) => {
     const groups = settings.hooks[event] ?? [];
-    for (const g of groups) {
-      const i = (g?.hooks ?? []).findIndex((h) => typeof h?.command === "string" && owns(h.command));
-      if (i >= 0) {
-        const desired = entry.hooks[0];
-        if (JSON.stringify(g.hooks[i]) !== JSON.stringify(desired)) {
-          g.hooks[i] = desired;
-          settingsChanged = true;
-          hookStates.push(`${event}(${label}): updated`);
-        } else {
-          hookStates.push(`${event}(${label}): already-registered`);
-        }
-        return;
+    const isOwn = (h) => typeof h?.command === "string" && owns(h.command);
+    const home = groups.find((g) => Array.isArray(g?.hooks) && g.hooks.some(isOwn));
+    if (home) {
+      const before = JSON.stringify(groups);
+      // 他人の handler と同居するグループの matcher は書き換えない（他人の hook の発火範囲が
+      // 変わるため）。matcher が違えば自分の handler だけ抜いて entry を別グループで足す。
+      const solo = home.hooks.every(isOwn);
+      const sameMatcher = home.matcher === entry.matcher;
+      const at = home.hooks.findIndex(isOwn);
+      for (const g of groups) {
+        if (Array.isArray(g?.hooks)) g.hooks = g.hooks.filter((h) => !isOwn(h));
       }
+      if (solo || sameMatcher) {
+        home.hooks.splice(at, 0, ...entry.hooks);
+        if (entry.matcher !== undefined) home.matcher = entry.matcher;
+      } else {
+        groups.push(entry);
+      }
+      // 自分の handler を抜いて空になったグループだけ落とす。
+      settings.hooks[event] = groups.filter((g) => !Array.isArray(g?.hooks) || g.hooks.length > 0);
+      if (JSON.stringify(settings.hooks[event]) !== before) {
+        settingsChanged = true;
+        hookStates.push(`${event}(${label}): updated`);
+      } else {
+        hookStates.push(`${event}(${label}): already-registered`);
+      }
+      return;
     }
     if (conflicts) {
       for (const g of groups) {
@@ -557,6 +573,11 @@ if (settingsReadable) {
     hookStates.push(`${event}(${label}): deregistered`);
   };
 
+  // シェルコマンドを見る hook は Bash と PowerShell の両ツールに掛ける。`if` は 1 ルールで
+  // 1 ツールしか名指せないため、同じ command の handler をツールごとに並べる。
+  const shellHandlers = ({ command, pattern, timeout }) =>
+    ["Bash", "PowerShell"].map((tool) => ({ type: "command", command, if: `${tool}(${pattern})`, timeout }));
+
   // PR 作成 gate / effort nudge は配らない。実体は上で削除済み。ここでは settings.json に
   // 残っている登録を解除して掃除を貫徹する。
   deregister("PreToolUse", {
@@ -573,16 +594,13 @@ if (settingsReadable) {
     label: "before-pr-merge.mjs",
     owns: (cmd) => cmd.includes("before-pr-merge.mjs"),
     entry: {
-      matcher: "Bash",
-      hooks: [
-        {
-          type: "command",
-          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/before-pr-merge.mjs"',
-          if: "Bash(gh pr merge *)",
-          // gh を 3 回呼ぶ（PR・スレッド・compare）
-          timeout: 30,
-        },
-      ],
+      matcher: "Bash|PowerShell",
+      // gh を 3 回呼ぶ（PR・スレッド・compare）
+      hooks: shellHandlers({
+        command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/before-pr-merge.mjs"',
+        pattern: "gh pr merge *",
+        timeout: 30,
+      }),
     },
   });
 
@@ -653,16 +671,13 @@ if (settingsReadable) {
       label: "after-pr-create.mjs",
       owns: (cmd) => cmd.includes("after-pr-create.mjs"),
       entry: {
-        matcher: "Bash",
-        hooks: [
-          {
-            type: "command",
-            command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/after-pr-create.mjs"',
-            // gate 側と同様、gh pr create のときだけ起動して毎 Bash の node 起動税を避ける
-            if: "Bash(gh pr create *)",
-            timeout: 15,
-          },
-        ],
+        matcher: "Bash|PowerShell",
+        // gate 側と同様、gh pr create のときだけ起動して毎コマンドの node 起動税を避ける
+        hooks: shellHandlers({
+          command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/after-pr-create.mjs"',
+          pattern: "gh pr create *",
+          timeout: 15,
+        }),
       },
     });
   }
